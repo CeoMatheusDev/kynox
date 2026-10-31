@@ -1,0 +1,57 @@
+//************************************************************************//
+//  root.zig                                                              //
+//************************************************************************//
+//                        This file is part of:                           //
+//                              Kynox                                   //
+//             https://github.com/CeoMatheusDev/Kynox                   //
+//************************************************************************//
+// Copyright (C) 2020 - 2026 Matheus.A.Santos contributors.               //
+// Copyright (C) 2026 Kynox - All Rights Reserved.                      //
+//                                                                        //
+// SPDX-License-Identifier: GPL-3.0-only                                  //
+//************************************************************************//
+//  Toolchain:  Zig 0.17.0 · C23 (ISO/IEC 9899:2024) · x86-64 (AMD64)     //
+//************************************************************************//
+
+//! Aggregated entry point of the Kynox shared module.
+//!
+//! The shared module contains the contracts and the architecture support
+//! that the bootloader (KNB) and the kernel (KNK) both depend on:
+//!
+//!   * `handoff`  - the boot handoff contract;
+//!   * `memmap`  - helpers for the memory map;
+//!   * `elf64`   - the ELF64 reader used to load the kernel image;
+//!   * `usermode`- the layout of the window of the user mode;
+//!   * `display` - the display metadata contract of the user mode;
+//!   * `port`    - x86_64 port I/O primitives;
+//!   * `serial`  - the 16550 serial driver used by both sides of the handoff.
+//!
+//! The module deliberately contains no operating system dependency so that it
+//! can be compiled for the UEFI environment, for the freestanding kernel and
+//! for the host based unit tests.
+
+pub const handoff = @import("handoff.zig");
+pub const memmap = @import("memmap.zig");
+pub const elf64 = @import("elf64.zig");
+pub const usermode = @import("usermode.zig");
+pub const display = @import("display.zig");
+pub const input = @import("input.zig");
+pub const compositor = @import("compositor.zig");
+pub const port = @import("arch/x86_64/port.zig");
+pub const serial = @import("arch/x86_64/serial.zig");
+
+// The unit tests of the modules live in the modules themselves, and this
+// block is what brings them into the test binary.
+//
+// Without this reference, the test binary is built with **zero** tests,
+// and it passes no matter what: a test that is green without running is
+// not evidence of anything.
+test {
+    _ = @import("handoff.zig");
+    _ = @import("memmap.zig");
+    _ = @import("elf64.zig");
+    _ = @import("usermode.zig");
+    _ = @import("display.zig");
+    _ = @import("input.zig");
+    _ = @import("compositor.zig");
+}
