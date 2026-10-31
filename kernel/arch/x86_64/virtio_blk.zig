@@ -15,12 +15,11 @@
 
 //! Interfaces provisórias do driver virtio-blk.
 //!
-//! **Este módulo não é um driver funcional.** Não existe detecção de
-//! dispositivo, handshake de status, negociação de features, virtqueue
-//! programada, barra mapeada nem pedido enviado: nada aqui toca um
-//! dispositivo. As duas funções abaixo são apenas os pontos de entrada onde
-//! o driver real será ligado à camada de blocos
-//! (`kernel/storage/block.zig`).
+//! **Este arquivo e um stub legado, nao o driver ativo do sistema.** Suas
+//! funcoes sem argumentos sempre retornam `NotImplemented`. O caminho real
+//! de VirtIO Block esta em `kernel/drivers/kvdi/block.zig`, integrado ao
+//! kernel por `kernel/main.zig`, com transporte PCI, DMA, virtqueue e I/O
+//! sincrono. Nao confunda este stub com o driver KVDI.
 //!
 //! O contrato deste incremento é que **nenhuma operação de bloco reporta
 //! sucesso**. Em Zig, uma função `!void` cujo corpo termina sem `return`
@@ -44,10 +43,8 @@ const std = @import("std");
 /// `virtio.QueueError` e `block.Error`, para que o contrato de erro faça
 /// parte da assinatura pública em vez de ser inferido do corpo.
 pub const BlkError = error{
-    /// Não existe driver virtio-blk: nenhum dispositivo foi detectado,
-    /// nenhuma virtqueue foi programada e nenhum pedido foi enviado. Toda
-    /// operação de bloco devolve este erro enquanto não houver
-    /// implementação real de I/O.
+    /// Este stub legado nao envia pedidos. O driver funcional e separado
+    /// e pertence ao subsistema KVDI.
     NotImplemented,
 };
 
