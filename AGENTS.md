@@ -259,3 +259,17 @@ Uma tarefa está concluída somente quando:
 - Limitações e validações pendentes estão explícitas.
 
 **Prioridade final:** correção → segurança → determinismo → desempenho medido → ergonomia de manutenção. O objetivo é um kernel rápido porque sua arquitetura é correta, não porque removeu verificações essenciais.
+
+
+## 10. Tecnologia própria e compatibilidade binária
+
+Leia **`KYNOX_NATIVE.md`** antes de criar ou alterar formatos executáveis, loaders, runtimes, bibliotecas, ABIs, drivers ou subsistemas.
+
+O Kynox prioriza implementação própria. Não introduza Wine, WSL, Proton, glibc, musl, loaders ou runtimes de terceiros como fundamento da compatibilidade. Use especificações públicas como contratos de interoperabilidade e implemente os mecanismos no próprio Kynox.
+
+A plataforma deve manter três ambientes separados:
+- **Kynox Native:** formato executável, ABI, loader, runtime, bibliotecas e SDK próprios. Audite/evolua KEX antes de criar outro formato.
+- **Linux Compatibility:** executar binários Linux x86-64 originais, começando por ELF64 e evoluindo syscall ABI, processos, memória, sinais, threads, TLS e linking dinâmico.
+- **Windows Compatibility:** executar binários Windows x86-64 originais, começando por PE32+ e evoluindo Win64 ABI, loader, NT/Win32 APIs, DLLs, TLS e unwind/exceptions.
+
+ELF e PE são formatos, não compatibilidade completa de sistema operacional. Nunca declare suporte amplo por apenas carregar um arquivo. Mantenha as ABIs de compatibilidade isoladas da ABI nativa do kernel; processos compatíveis continuam sob isolamento e enforcement de capabilities do Kynox. Toda expansão exige matriz de suporte, testes de conformidade, fuzzing e critérios objetivos.
