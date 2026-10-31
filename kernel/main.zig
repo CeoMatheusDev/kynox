@@ -2277,7 +2277,6 @@ fn discoverAcpi(boot: *const handoff.BootHandoff) void {
     platform.overrides = found.madt.overrides;
     platform.override_count = found.madt.override_count;
     platform.processors = processors;
-    platform.processor_count = found.madt.count;
 
     serial.printLine("[KNK] acpi: MADT at 0x{x}, {d} enabled processors", .{
         found.madt_address, found.madt.count,

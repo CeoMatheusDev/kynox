@@ -239,7 +239,10 @@ fn write32(offset: u64, value: u32) void {
 ///
 /// O ID esta no byte mais significativo do registrador de ID.
 pub fn readApicId() u32 {
-    return read32(ApicOffset.id) >> 24;
+    // O ID de APIC local do xAPIC tem 8 bits; o restante do registrador nao e
+    // o identificador. A mascara evita que um byte alto qualquer chegue ao
+    // campo de destino de uma entrada do I/O APIC, que tambem tem 8 bits.
+    return (read32(ApicOffset.id) >> 24) & 0xFF;
 }
 
 /// Le a versao da APIC local.
