@@ -23,10 +23,10 @@
 //!   * um ponteiro para a tarefa que está executando;
 //!   * um ponteiro para o escalonador da CPU.
 //!
-//! A inicialização dos APs (SIPI/trampoline) e as IPIs entre CPUs são
-//! trabalho futuro. Este módulo fornece as estruturas de dados e as
-//! funções de consulta que o escalonador e o kernel usarão quando o SMP
-//! estiver ativo.
+//! O kernel ja prepara pilhas e trampoline, envia INIT/SIPI e recebe os APs
+//! em `kynox_ap_entry`. Nesta etapa os APs ficam em espera e ainda nao
+//! participam do escalonamento normal. Filas per-CPU, migracao de tarefas,
+//! coordenacao por IPI e integracao SMP do scheduler continuam pendentes.
 
 const std = @import("std");
 const spinlock = @import("spinlock.zig");
