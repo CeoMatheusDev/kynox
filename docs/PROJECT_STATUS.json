@@ -1,18 +1,73 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project": "Kynox",
   "snapshot_date": "2026-10-31",
-  "audit_type": "source_tree_and_build_graph_review",
-  "tests_executed_during_audit": false,
+  "audit_type": "source_tree_review_plus_executed_build_and_host_tests",
+  "toolchain": {
+    "zig_version": "0.17.0",
+    "declared_minimum": "0.17.0",
+    "source": "ziglang 0.17.0 distribution (PyPI wheel); version confirmed by zig version",
+    "note": "GitHub releases of ziglang publish 0.15.x; 0.17.0 must be obtained from a channel that publishes it"
+  },
   "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
+  "percentage_note": "no percentage was changed by the 2026-10-31 audit; executed host tests are validation evidence, not new functionality",
   "status_values": [
-    "implemented",
+    "not_started",
+    "scaffolding",
     "in_progress",
-    "partial",
-    "planned",
+    "implemented",
+    "integrated",
+    "validated",
     "blocked"
   ],
-  "validation_note": "Repository test sources and build targets were inspected. No build or QEMU test was executed during this snapshot.",
+  "status_migration": {
+    "from_schema": 1,
+    "mapping": {
+      "partial": "in_progress",
+      "planned": "not_started"
+    },
+    "note": "the mandated vocabulary has no \"partial\" value; \"partial\" meant a started subsystem with missing paths"
+  },
+  "validation_status_values": [
+    "not_executed",
+    "build_passed",
+    "host_tests_passed",
+    "qemu_passed",
+    "blocked_environment"
+  ],
+  "executed_validations": [
+    {
+      "command": "zig version",
+      "result": "0.17.0",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build",
+      "result": "success: 13/13 steps; kynox-boot.efi 181760 B, kynox-kernel 65770762 B, kynox.img 134217728 B",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build test",
+      "result": "success: 39/39 steps, 615/615 tests passed",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build qemu-test",
+      "result": "not executed: qemu-system-x86_64 and OVMF absent; package mirrors unreachable",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build qemu-storage-test",
+      "result": "not executed: same environment limitation",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build qemu-interactive-test",
+      "result": "not executed: same environment limitation",
+      "date": "2026-10-31"
+    }
+  ],
+  "runtime_evidence_note": "No QEMU or hardware run was performed. Any runtime statement about the produced image is unverified for this snapshot.",
   "subsystems": [
     {
       "id": "uefi_bootloader",
@@ -23,12 +78,32 @@
         "shared/handoff.zig",
         "build.zig"
       ],
-      "gaps": [
-        "firmware matrix",
-        "high-half/relocation validation",
-        "failure recovery"
+      "implemented": [
+        "UEFI application (KNB) with firmware console, framebuffer discovery and FS access",
+        "kernel image read from the boot volume and placed as ET_DYN or fixed ELF64",
+        "versioned KNB->KNK handoff (magic, version, header_size, flags, validated fields)",
+        "ExitBootServices retry loop on stale memory-map key"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no host tests for the loader logic",
+        "no firmware/hardware matrix",
+        "handoff processor_count fixed to 1",
+        "boot never observed in this environment"
+      ],
+      "pending_work": [
+        "host tests for the pure loader/memory-map logic",
+        "record QEMU boot evidence",
+        "document firmware prerequisites in docs/BUILD.md"
+      ],
+      "tests": [],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [],
+        "commands": [],
+        "last_run": null,
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "builds (kynox-boot.efi, 181760 bytes); no runtime evidence"
+      }
     },
     {
       "id": "kernel_cpu_interrupts",
@@ -38,12 +113,38 @@
         "kernel/arch/x86_64/",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "exception recovery audit",
-        "per-CPU state",
-        "hardware coverage"
+      "implemented": [
+        "x86_64 entry in assembly with kernel-owned boot stack",
+        "GDT/TSS/IDT installation with verification markers",
+        "exception and interrupt stubs with a single frame shape",
+        "deliberate-fault exception self test at the end of boot",
+        "NX enablement enforced before user pages are mapped"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "exception recovery audit incomplete",
+        "per-CPU state incomplete",
+        "no hardware diversity validation",
+        "boot path unverified here"
+      ],
+      "pending_work": [
+        "exercise the exception paths in QEMU and record results",
+        "per-CPU GDT/TSS/IST ownership before SMP scheduling"
+      ],
+      "tests": [
+        "arch-tests (91 tests: segment, frame, paging, spinlock, apic, pci, virtio)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "arch-tests (91 tests: segment, frame, paging, spinlock, apic, pci, virtio)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "physical_memory_heap_dma",
@@ -54,28 +155,74 @@
         "kernel/memory/heap.zig",
         "kernel/memory/dma.zig"
       ],
-      "gaps": [
-        "allocator scalability",
-        "reclaim",
-        "IOMMU"
+      "implemented": [
+        "physical frame manager over the handoff memory map",
+        "kernel heap with explicit limits",
+        "DMA allocation, mapping and window write probe"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "allocator scalability and fragmentation policy",
+        "reclaim",
+        "no IOMMU protection"
+      ],
+      "pending_work": [
+        "stress/fragmentation tests",
+        "double-free and reserved-frame negative tests in the boot path"
+      ],
+      "tests": [
+        "kernel-tests (22 tests)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "kernel-tests (22 tests)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "virtual_memory",
       "maturity_percent": 45,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/paging.zig"
       ],
-      "gaps": [
-        "general VM regions",
-        "demand paging",
-        "COW",
-        "TLB shootdown",
-        "ASLR"
+      "implemented": [
+        "four-level paging with explicit page flags",
+        "per-process user windows (code/data/stack offsets in shared/usermode.zig)",
+        "W^X encoded where flags are produced, with negative tests",
+        "isUserRange/isUserRangeIn validation used by every user-pointer syscall"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no general VM region allocator",
+        "no demand paging, COW or ASLR",
+        "no TLB shootdown",
+        "high-half kernel not implemented"
+      ],
+      "pending_work": [
+        "region abstraction for user and kernel mappings",
+        "TLB invalidation protocol before multi-CPU scheduling"
+      ],
+      "tests": [
+        "arch-tests (paging subset)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "arch-tests (paging subset)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "acpi_pci_apic",
@@ -86,45 +233,117 @@
         "kernel/arch/x86_64/pci.zig",
         "kernel/arch/x86_64/apic.zig"
       ],
-      "gaps": [
-        "dynamic APIC base everywhere",
-        "IOAPIC routing",
-        "hardware matrix"
+      "implemented": [
+        "ACPI RSDP/XSDT/MADT parsing with checksum and table validation",
+        "PCI config-space access with BAR helpers and capability walking",
+        "LAPIC xAPIC register access, EOI, TPR and IPI primitives"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "MADT is parsed but NOT consumed by the boot path",
+        "LAPIC base is the constant 0xFEE00000",
+        "no IOAPIC routing",
+        "no hardware discovery matrix"
+      ],
+      "pending_work": [
+        "wire ACPI/MADT into LAPIC base selection (audit A-03)",
+        "IOAPIC discovery and interrupt routing"
+      ],
+      "tests": [
+        "arch-tests (acpi, pci, apic subsets)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "arch-tests (acpi, pci, apic subsets)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "MADT output has no consumer in kernel/main.zig (audit A-03)"
+      }
     },
     {
       "id": "smp",
       "maturity_percent": 30,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
         "kernel/arch/x86_64/ap_trampoline.s",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "AP scheduler participation",
-        "per-CPU timer/IPI",
-        "SMP stress"
+      "implemented": [
+        "AP stacks, trampoline, INIT/SIPI startup path invoked during boot",
+        "per-CPU structure and AP registration"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "APs do not run the scheduler workload",
+        "no per-CPU timers/IPIs for scheduling",
+        "no SMP stress test"
+      ],
+      "pending_work": [
+        "put APs on the scheduler path with per-CPU run queues",
+        "IPI for reschedule and TLB shootdown"
+      ],
+      "tests": [
+        "arch-tests (smp pure parts)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "arch-tests (smp pure parts)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "scheduler",
       "maturity_percent": 55,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/task/scheduler.zig",
         "kernel/task/context.zig",
         "kernel/arch/x86_64/task.s"
       ],
-      "gaps": [
-        "per-CPU queues",
-        "migration",
-        "fairness",
-        "SMP safety"
+      "implemented": [
+        "timer-driven preemption",
+        "task contexts and state machine",
+        "context-switch assembly",
+        "scheduler statistics"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "effectively BSP-centric",
+        "no migration or fairness policy",
+        "no SMP safety proof"
+      ],
+      "pending_work": [
+        "per-CPU run queues",
+        "migration protocol",
+        "fairness/latency metrics"
+      ],
+      "tests": [
+        "arch-tests (task/context pure parts)",
+        "ipc-tests (blocking wakeups)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "arch-tests (task/context pure parts)",
+          "ipc-tests (blocking wakeups)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "user_processes_ring3",
@@ -136,28 +355,83 @@
         "shared/usermode.zig",
         "user/"
       ],
-      "gaps": [
-        "general process lifecycle",
-        "resource limits",
-        "stress isolation"
+      "implemented": [
+        "user-mode tasks with separate address spaces",
+        "two embedded native applications exercised by the boot script",
+        "lifecycle probe (normal exit and user fault)"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no general process creation/teardown API",
+        "no resource limits",
+        "no isolation stress test",
+        "execution unverified here"
+      ],
+      "pending_work": [
+        "process lifecycle API",
+        "resource accounting and limits"
+      ],
+      "tests": [
+        "fs-loader-tests (loader/materializer)",
+        "arch-tests (paging)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "fs-loader-tests (loader/materializer)",
+          "arch-tests (paging)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "native_syscall_abi",
       "maturity_percent": 55,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/syscall.zig",
         "kernel/arch/x86_64/syscall.s",
         "sdk/src/syscall.zig"
       ],
-      "gaps": [
-        "versioned ABI",
-        "more syscalls",
-        "pointer validation suite"
+      "implemented": [
+        "SYSCALL/SYSRET door with MSR programming and verification",
+        "22 syscalls (1-11, 13-23; 12 reserved) with frame contract",
+        "user-pointer validation on every buffer argument",
+        "SDK wrappers and typed error catalog"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "kernel declares no ABI version",
+        "SDK claims revision 13, catalog says 12",
+        "no ABI conformance suite",
+        "no fuzzing of malformed arguments"
+      ],
+      "pending_work": [
+        "add kernel-side ABI revision constant and assert it in the SDK (audit A-04)",
+        "conformance tests for the published table"
+      ],
+      "tests": [
+        "sdk-tests (4)",
+        "arch-tests (frame/syscall pure parts)",
+        "ipc-tests (send/receive semantics)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "sdk-tests (4)",
+          "arch-tests (frame/syscall pure parts)",
+          "ipc-tests (send/receive semantics)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "docs/specs/syscall-abi.md written in this audit"
+      }
     },
     {
       "id": "ipc",
@@ -167,12 +441,35 @@
         "kernel/ipc/channel.zig",
         "kernel/task/scheduler.zig"
       ],
-      "gaps": [
-        "shared memory",
-        "service discovery",
-        "backpressure/cancellation"
+      "implemented": [
+        "bounded channels with send/receive",
+        "blocking receive and receive with timeout",
+        "wait/wakeup integrated with the scheduler"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no shared-memory IPC",
+        "no service discovery",
+        "no cancellation semantics"
+      ],
+      "pending_work": [
+        "shared memory objects with ownership rules",
+        "service registry"
+      ],
+      "tests": [
+        "ipc-tests (6)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "ipc-tests (6)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "capabilities",
@@ -182,12 +479,38 @@
         "kernel/security/capability.zig",
         "kernel/arch/x86_64/syscall.zig"
       ],
-      "gaps": [
-        "complete object coverage",
-        "lifecycle audit",
-        "adversarial tests"
+      "implemented": [
+        "typed capability kinds",
+        "per-holder rights",
+        "delegation and revocation",
+        "enforcement in syscall paths (send/receive/display/input)"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "incomplete object coverage",
+        "no auditing",
+        "no adversarial tests"
+      ],
+      "pending_work": [
+        "cover every kernel object",
+        "process-death cleanup policy"
+      ],
+      "tests": [
+        "security-tests (18)",
+        "ipc-tests"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "security-tests (18)",
+          "ipc-tests"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "elf64_loader",
@@ -198,95 +521,235 @@
         "kernel/elf_loader.zig",
         "kernel/elf_materializer.zig"
       ],
-      "gaps": [
-        "dynamic linking",
-        "shared libraries",
-        "TLS",
-        "more relocations"
+      "implemented": [
+        "ELF64 header/program-header parsing with bounds checks",
+        "load planning, segment validation, relative relocations",
+        "materialization into a process window",
+        "native image builder for tests"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no dynamic linking, shared libraries or TLS",
+        "relocation coverage limited",
+        "no fuzzing of malformed ELF"
+      ],
+      "pending_work": [
+        "relocation matrix",
+        "malformed-input corpus"
+      ],
+      "tests": [
+        "fs-loader-tests (154)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "fs-loader-tests (154)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "kex_native_format",
       "maturity_percent": 55,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "formats/kex.zig",
         "kernel/elf_loader.zig",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "signature/trust",
-        "dependency metadata",
-        "ABI versioning",
-        "complete toolchain"
+      "implemented": [
+        "KEX v1 container around ELF64 with manifest capability entries and CRC validation",
+        "kernel integration in the loader path"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no signature/trust model",
+        "no dependency metadata",
+        "no ABI version field in the manifest",
+        "no final specification document"
+      ],
+      "pending_work": [
+        "write the KEX specification",
+        "decide signature policy"
+      ],
+      "tests": [
+        "kex-tests (7)",
+        "fs-loader-tests (loader integration)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "kex-tests (7)",
+          "fs-loader-tests (loader integration)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "kpk_package_format",
       "maturity_percent": 45,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "formats/kpk.zig",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "package manager",
-        "signatures",
-        "dependency resolution",
-        "atomic updates"
+      "implemented": [
+        "package codec with validation and checksum",
+        "pack/unpack exercised in the boot script",
+        "write path installed in the RamFS during boot"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no package manager",
+        "no signatures",
+        "no dependency resolution",
+        "no atomic update"
+      ],
+      "pending_work": [
+        "specify package metadata",
+        "trust policy"
+      ],
+      "tests": [
+        "kpk-tests (9)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "kpk-tests (9)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "native_sdk_runtime",
       "maturity_percent": 40,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "sdk/src/",
         "sdk/README.md",
         "user/"
       ],
-      "gaps": [
-        "stable public API",
-        "native libraries",
-        "dynamic linker",
-        "toolchain"
+      "implemented": [
+        "SDK modules: raw syscall layer, typed wrappers, shared display/input/compositor contracts",
+        "two sample applications built from the SDK",
+        "assembly startup with window_base contract"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no stable public API guarantee",
+        "no native libraries",
+        "no dynamic linker",
+        "no allocator/libc"
+      ],
+      "pending_work": [
+        "publish the minimal API surface for the alpha",
+        "deprecation policy"
+      ],
+      "tests": [
+        "sdk-tests (4)",
+        "user-composition-tests (22)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "sdk-tests (4)",
+          "user-composition-tests (22)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "sdk/README.md rewritten in this audit"
+      }
     },
     {
       "id": "ramfs",
       "maturity_percent": 55,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/fs/ramfs.zig",
         "kernel/fs/fs.zig"
       ],
-      "gaps": [
-        "persistent general backend",
-        "permissions",
-        "scale",
-        "crash recovery"
+      "implemented": [
+        "in-memory filesystem with inode/block allocation, directories and file operations",
+        "round-trip and large-file checks in the boot script"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no permissions",
+        "scale limited",
+        "no crash recovery",
+        "no persistence by itself"
+      ],
+      "pending_work": [
+        "permissions model",
+        "larger file/scale strategy"
+      ],
+      "tests": [
+        "fs-loader-tests (154)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "fs-loader-tests (154)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "kfsx_vfs",
       "maturity_percent": 35,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/fs/kfsx.zig",
         "kernel/fs/fs.zig"
       ],
-      "gaps": [
-        "multiple real backends",
-        "complete VFS operations",
-        "permissions",
-        "concurrency"
+      "implemented": [
+        "mount namespace with longest-prefix routing",
+        "mount generations",
+        "RamFS volume routing"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no multiple real backends",
+        "incomplete VFS operation set",
+        "no permissions",
+        "no concurrency guarantees"
+      ],
+      "pending_work": [
+        "VFS operation contract",
+        "a second backend to prove the abstraction"
+      ],
+      "tests": [
+        "fs-loader-tests (154)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "fs-loader-tests (154)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "knv_volume",
@@ -296,12 +759,36 @@
         "kernel/fs/knv.zig",
         "kernel/fs/knv_volume.zig"
       ],
-      "gaps": [
-        "journal",
-        "atomic dual-image commit",
-        "power-loss recovery"
+      "implemented": [
+        "deterministic little-endian volume image codec",
+        "validation and CRC",
+        "commit and recover paths",
+        "QEMU two-boot persistence script (unexecuted here)"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no journal",
+        "no atomic dual-image replacement",
+        "no power-loss consistency proof"
+      ],
+      "pending_work": [
+        "journal or dual-image commit",
+        "fault-injection recovery tests"
+      ],
+      "tests": [
+        "fs-loader-tests (154)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "fs-loader-tests (154)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "physical_block_storage",
@@ -313,13 +800,40 @@
         "kernel/storage/block.zig",
         "tests/integration/virtio-block-persistence.sh"
       ],
-      "gaps": [
-        "interrupt/MSI-X",
-        "multi-queue",
-        "hardware coverage",
-        "performance tuning"
+      "implemented": [
+        "modern PCI VirtIO Block discovery and feature negotiation",
+        "DMA virtqueue setup",
+        "synchronous read/write/flush",
+        "block layer API (block.Device)"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "polling completion only",
+        "no interrupt/MSI-X",
+        "no multi-queue",
+        "no hardware coverage"
+      ],
+      "pending_work": [
+        "interrupt-driven completion",
+        "timeout/reset path",
+        "device error recovery"
+      ],
+      "tests": [
+        "block-api-tests (4)",
+        "kvdi-tests (167)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "block-api-tests (4)",
+          "kvdi-tests (167)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "kvdi_virtio",
@@ -329,28 +843,72 @@
         "kernel/drivers/kvdi/",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "async completion",
-        "multi-device/queue",
-        "more device classes"
+      "implemented": [
+        "modular transport layer (PCI capabilities/BAR validation)",
+        "virtqueue implementation with containment/quarantine and fault-injection support",
+        "device bring-up in the kernel entry path"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no async completion",
+        "no multi-device/multi-queue scale",
+        "device class coverage is block-only"
+      ],
+      "pending_work": [
+        "interrupt path",
+        "second device class to validate the abstraction"
+      ],
+      "tests": [
+        "kvdi-tests (167)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "kvdi-tests (167)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "networking",
       "maturity_percent": 10,
-      "status": "partial",
+      "status": "scaffolding",
       "evidence": [
         "kernel/arch/x86_64/virtio_net.zig",
         "kernel/drivers/kvdi/"
       ],
-      "gaps": [
-        "network driver",
-        "Ethernet/IP/TCP/UDP",
-        "socket API",
-        "network service"
+      "implemented": [
+        "VirtIO network identifiers/features and module scaffolding only"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no working driver",
+        "no Ethernet/ARP/IP/UDP/TCP",
+        "no sockets",
+        "no network service"
+      ],
+      "pending_work": [
+        "implement the VirtIO-net driver over KVDI",
+        "then the protocol stack"
+      ],
+      "tests": [
+        "none"
+      ],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [
+          "none"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "groundwork only; no functional network path"
+      }
     },
     {
       "id": "graphics_compositor",
@@ -361,92 +919,239 @@
         "shared/compositor.zig",
         "shared/display.zig"
       ],
-      "gaps": [
-        "GPU acceleration",
-        "isolated service",
-        "display modes/hotplug"
+      "implemented": [
+        "rasterizer with clipping tests",
+        "opaque window compositor with damage tracking",
+        "framebuffer bridge and boot-time scene presentation",
+        "surface presentation syscall"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no GPU acceleration",
+        "compositor runs in the kernel",
+        "no display modes/hotplug",
+        "no multi-client isolation"
+      ],
+      "pending_work": [
+        "move composition behind a service boundary",
+        "frame pacing metrics"
+      ],
+      "tests": [
+        "raster-tests (5)",
+        "compositor-tests (9)",
+        "damage-tests (15)",
+        "user-composition-tests (22)",
+        "display-tests (7)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "raster-tests (5)",
+          "compositor-tests (9)",
+          "damage-tests (15)",
+          "user-composition-tests (22)",
+          "display-tests (7)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "input",
       "maturity_percent": 40,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/input/",
         "kernel/graphics/pointer_input.zig",
         "kernel/graphics/event_queue.zig"
       ],
-      "gaps": [
-        "mouse/HID/USB",
-        "hotplug",
-        "keymaps",
-        "input service"
+      "implemented": [
+        "PS/2 keyboard decode path",
+        "input event queue",
+        "pointer movement helpers",
+        "input_poll/input_wait syscalls with capability checks"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no mouse/HID/USB devices",
+        "no hotplug",
+        "no keymap/layout support",
+        "no input service"
+      ],
+      "pending_work": [
+        "PS/2 mouse",
+        "USB HID via a proper stack",
+        "keymaps"
+      ],
+      "tests": [
+        "keyboard-tests (4)",
+        "keyboard-motion-tests (13)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "keyboard-tests (4)",
+          "keyboard-motion-tests (13)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "desktop_windowing",
       "maturity_percent": 35,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/graphics/desktop.zig",
         "kernel/graphics/window_manager.zig",
         "kernel/graphics/session.zig"
       ],
-      "gaps": [
-        "taskbar",
-        "launcher",
-        "shell",
-        "terminal",
-        "file manager",
-        "settings"
+      "implemented": [
+        "managed desktop scene with window handles and focus/input routing",
+        "boot graphics demo presented during startup"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no taskbar/launcher/shell/terminal/file manager/settings",
+        "no independent compositor process",
+        "no session model"
+      ],
+      "pending_work": [
+        "shell and launcher as ring-3 programs",
+        "session/desktop service"
+      ],
+      "tests": [
+        "damage-tests (15)",
+        "user-composition-tests (22)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "damage-tests (15)",
+          "user-composition-tests (22)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "linux_binary_compatibility",
       "maturity_percent": 0,
-      "status": "planned",
+      "status": "not_started",
       "evidence": [],
-      "gaps": [
-        "Linux ELF process ABI",
-        "syscall translation",
-        "signals/futexes/TLS",
-        "dynamic linker and libraries"
+      "implemented": [],
+      "limitations": [
+        "no Linux personality",
+        "no syscall translation",
+        "no signals/futex/TLS",
+        "no dynamic linker or libraries"
       ],
-      "validation": "not_run_in_this_audit"
+      "pending_work": [
+        "specify the minimal static ELF64 matrix",
+        "implement the isolated personality"
+      ],
+      "tests": [
+        "none"
+      ],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [
+          "none"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "no implementation; must remain 0%"
+      }
     },
     {
       "id": "windows_binary_compatibility",
       "maturity_percent": 0,
-      "status": "planned",
+      "status": "not_started",
       "evidence": [],
-      "gaps": [
-        "PE32+ loader",
-        "Win64 ABI",
-        "NT/Win32 APIs",
-        "DLL/TLS/unwind",
-        "runtime libraries"
+      "implemented": [],
+      "limitations": [
+        "no PE32+ loader",
+        "no Win64 ABI",
+        "no NT/Win32 services",
+        "no DLL/TLS/unwind"
       ],
-      "validation": "not_run_in_this_audit"
+      "pending_work": [
+        "specify the PE32+ console scope",
+        "implement the isolated personality"
+      ],
+      "tests": [
+        "none"
+      ],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [
+          "none"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "no implementation; must remain 0%"
+      }
     },
     {
       "id": "security_hardening",
       "maturity_percent": 45,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "kernel/security/",
         "kernel/arch/x86_64/paging.zig",
         "kernel/drivers/kvdi/containment.zig"
       ],
-      "gaps": [
-        "SMEP/SMAP policy",
-        "ASLR/KASLR",
-        "threat models",
-        "fuzzing/audit"
+      "implemented": [
+        "ring-3 isolation",
+        "page permission checks and NX enforcement",
+        "capability model",
+        "KVDI device containment and bus-master revocation"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no SMEP/SMAP policy",
+        "no ASLR/KASLR",
+        "no formal threat model per subsystem",
+        "no fuzzing or security audit"
+      ],
+      "pending_work": [
+        "threat model per subsystem",
+        "SMEP/SMAP when supported",
+        "fuzzing harnesses"
+      ],
+      "tests": [
+        "security-tests (18)",
+        "arch-tests (W^X/NX tests)",
+        "kvdi-tests (containment)"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "security-tests (18)",
+          "arch-tests (W^X/NX tests)",
+          "kvdi-tests (containment)"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+      }
     },
     {
       "id": "tests_validation",
@@ -457,29 +1162,78 @@
         "tests/",
         "kernel/"
       ],
-      "gaps": [
-        "run/publish current results",
-        "CI matrix",
-        "fuzzing",
-        "hardware matrix"
+      "implemented": [
+        "19 host test artifacts wired into zig build test (615 tests)",
+        "QEMU boot/storage/interactive scripts with serial-marker assertions",
+        "framebuffer/presentation comparison scripts"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no CI",
+        "no recorded QEMU result in the repository",
+        "eight files unreachable from any target",
+        "no fuzzing",
+        "no hardware matrix"
+      ],
+      "pending_work": [
+        "run and record the QEMU suites",
+        "add CI",
+        "decide keep/delete for unreachable files",
+        "host tests for the bootloader"
+      ],
+      "tests": [
+        "all 19 host artifacts"
+      ],
+      "validation": {
+        "status": "host_tests_passed",
+        "host_tests": [
+          "all 19 host artifacts"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "615/615 passed on 2026-10-31; QEMU suites not executed (no QEMU/OVMF)"
+      }
     },
     {
       "id": "performance_observability",
       "maturity_percent": 40,
-      "status": "partial",
+      "status": "in_progress",
       "evidence": [
         "tools/benchmarks/",
         "kernel/main.zig"
       ],
-      "gaps": [
-        "reproducible baselines",
-        "percentiles",
-        "cross-hardware metrics",
-        "regression thresholds"
+      "implemented": [
+        "scheduler/syscall/graphics counters",
+        "TSC-based cycle conversion",
+        "framebuffer write benchmark at boot",
+        "serial diagnostics"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "benchmark sources are not in the build graph (tools/benchmarks/syscall_bench.zig unreachable)",
+        "no baselines, percentiles or thresholds",
+        "no cross-hardware data"
+      ],
+      "pending_work": [
+        "wire benchmarks into a target",
+        "record baseline methodology"
+      ],
+      "tests": [
+        "none"
+      ],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [
+          "none"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "no measurement claim is made"
+      }
     },
     {
       "id": "build_tooling",
@@ -490,16 +1244,96 @@
         "tools/",
         "scripts/"
       ],
-      "gaps": [
-        "reproducible CI",
-        "debug workflow",
-        "SDK/toolchain completeness"
+      "implemented": [
+        "Zig 0.17.0 build graph: bootloader, kernel, native apps, image, host tests, QEMU steps",
+        "image generator (tools/fatimg.zig)",
+        "ELF-to-Zig byte embedder (tools/bin2zig.zig)",
+        "zero external dependencies"
       ],
-      "validation": "not_run_in_this_audit"
+      "limitations": [
+        "no CI",
+        "no reproducible-toolchain documentation",
+        "no symbol/debug workflow",
+        "version strings not centralized"
+      ],
+      "pending_work": [
+        "docs/BUILD.md with exact requirements",
+        "single version source",
+        "CI"
+      ],
+      "tests": [
+        "build executed 2026-10-31: 13/13 steps"
+      ],
+      "validation": {
+        "status": "build_passed",
+        "host_tests": [
+          "build executed 2026-10-31: 13/13 steps"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "zig build and zig build test executed in this audit"
+      }
+    }
+  ],
+  "open_findings": [
+    {
+      "id": "A-01",
+      "severity": "P1",
+      "summary": "project version strings disagree (0.1.0-dev.3 vs 0.1.0-dev.1); no single source of truth"
+    },
+    {
+      "id": "A-02",
+      "severity": "P1",
+      "summary": "QEMU/OVMF unavailable in the audit environment; boot and storage persistence unverified"
+    },
+    {
+      "id": "A-03",
+      "severity": "P1",
+      "summary": "ACPI/MADT parsed but not consumed; LAPIC base is the constant 0xFEE00000"
+    },
+    {
+      "id": "A-04",
+      "severity": "P1",
+      "summary": "ABI revision claimed only by the SDK (13); catalog says 12; kernel exposes none"
+    },
+    {
+      "id": "A-07",
+      "severity": "P2",
+      "summary": "two VirtIO/virtqueue implementations plus a test-only legacy stub"
+    },
+    {
+      "id": "A-09",
+      "severity": "P2",
+      "summary": "kernel/main.zig (4738 lines) mixes init, probes, reports and benchmarks"
+    },
+    {
+      "id": "A-11",
+      "severity": "P3",
+      "summary": "no CI configuration"
+    },
+    {
+      "id": "A-12",
+      "severity": "P3",
+      "summary": "bootloader has zero host tests"
+    },
+    {
+      "id": "A-13",
+      "severity": "P3",
+      "summary": "eight files unreachable from the build graph and scripts"
+    },
+    {
+      "id": "A-14",
+      "severity": "P3",
+      "summary": "no recorded QEMU result anywhere in the repository"
     }
   ],
   "known_documentation_mismatches": [
-    "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; do not confuse it with the active KVDI block driver.",
-    "README previously implied zig build check ran interactive checks; build.zig check does not depend on qemu-interactive-test."
+    "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; the active driver is kernel/drivers/kvdi/block.zig (documented in README, PROJECT_STATUS and the stub itself).",
+    "The SDK previously documented ABI level 9 and \"no new syscall numbers\"; the code exposes 22 calls and declares 13. sdk/README.md was rewritten on 2026-10-31; docs/specs/syscall-abi.md is now the reference.",
+    "kernel/arch/x86_64/virtio_blk.zig used to reference a non-existent docs/adr/ADR-F04-block-driver-proposta.md; corrected. ADRs belong in docs/decisions/ per strategy.md.",
+    "No CI result or QEMU transcript has ever been recorded in the repository; README and release notes state only executed results."
   ]
 }

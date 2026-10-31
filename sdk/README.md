@@ -1,111 +1,93 @@
-# SDK nativo Kynox — F5.1
+# Kynox native SDK
 
-Estado: **implementado, aguardando compilação e validação em Zig 0.17.0 e QEMU**.
+Public interface for native Kynox applications. The SDK is the only supported
+boundary between a user program and the kernel: applications must not import
+kernel modules.
 
-Este módulo é uma interface independente do kernel para aplicações
-`x86_64-freestanding`. Baseia-se exclusivamente em
-`docs/specs/syscall-abi.md` (VSC-0001, versão 9).
+- Target: `x86_64-freestanding`, Zig **0.17.0**.
+- ABI reference: [`docs/specs/syscall-abi.md`](../docs/specs/syscall-abi.md).
+- Status: **in progress**. The syscall numbers in use are stable within this
+  tree; the ABI revision is not yet enforced by the kernel
+  (`docs/audits/2026-10-31-audit.md`, A-04). Expect additive changes.
 
-- `sdk/src/syscall.zig`: passagem de argumentos via RAX/RDI/RSI/RDX/R8,
-  retorno em RAX e retorno secundário em RDX, números e erros da ABI.
-- `sdk/src/root.zig`: operações de console, processo, IPC, capacidades
-  e arquivos. Os valores retornados são os bits da ABI; use
-  `syscall.errorCode(status)` para identificar erros.
-- `user/hello.zig`: primeira aplicação migrada para a interface pública.
+## Layout
 
-O SDK não implementa alocador, libc, POSIX, criação dinâmica de processos
-nem descoberta de serviços. Nenhum novo número de syscall foi introduzido.
+| File | Responsibility |
+|---|---|
+| `src/syscall.zig` | raw ABI: numbers, error catalog, result decoding. No policy. |
+| `src/root.zig` | typed wrappers: console, process, IPC, capabilities, filesystem, display, input |
+| `src/../shared/display.zig`, `input.zig`, `compositor.zig` | wire structures shared with the kernel |
 
-**Validação pendente no Fedora:**
+## Entry contract
 
-```sh
-zig version
-zig build
-zig build test
-zig build qemu-test
+A native program is entered by the kernel as:
+
+```zig
+export fn kynox_user_main(window_base: u64, role: u64) noreturn
 ```
 
-Não publicar como versão estável antes de validar esses comandos.
+`window_base` is the base of the process's user window (code at `+0x0`, data at
+`+0x1000`, two stack pages at `+0x4000`; see `shared/usermode.zig`). `role` is
+the launch role assigned by the kernel. The program must never assume a fixed
+base address.
 
-## Incrementos F4–F6 publicados nesta branch
+## Usage
 
-- **F4:** `user/hello.zig` exercita `fs_open`, `fs_read` e
-  `fs_close` sobre `/apps/hello.txt` por meio do SDK.
-  A aplicação encerra com código não zero em caso de falha.
-- **F5:** teste de `ping` na aplicação nativa; catálogo tipado dos
-  códigos de erro da ABI em `sdk/src/syscall.zig`.
-- **F6:** `kernel/graphics/raster.zig` oferece desenho em superfícies
-  lineares de 32 bits e testes host de limites e clipping.
-  Ainda não está conectado ao framebuffer do boot.
+```zig
+const sdk = @import("kynox_sdk");
 
-### Critérios para revisão
+// Console output (descriptor 1).
+_ = sdk.write("hello from user mode\n");
 
-Executar no Fedora, com Zig 0.17.0:
+// A call that proves the user→kernel→user transition.
+if (sdk.syscall.knownError(sdk.ping())) |err| return err; // any coded error
 
-```sh
-git switch feat/native-sdk
-git pull --ff-only origin feat/native-sdk
-zig build
-zig build test
-zig build qemu-test
+// Filesystem: open/read/close are validated against the caller's address space.
+const fd = sdk.fsOpen("/apps/hello.txt", 0);
+if (sdk.syscall.knownError(fd) == null) {
+    var buffer: [64]u8 = undefined;
+    const read = sdk.fsRead(fd, &buffer);
+    _ = sdk.fsClose(fd);
+    _ = read;
+}
 ```
 
-Verificar que `toolchain ELF` continua aparecendo no console e que a
-aplicação termina com código zero. O teste de boot atual verifica a
-execução, mas não identifica separadamente cada falha do SDK.
-**Não considerar F4–F6 concluídas** com base apenas neste incremento:
-faltam persistência, KFSX, compositor, entrada e janelas.
+Errors are returned as bit patterns: a negative value is `-(error code)`. Use
+`sdk.syscall.knownError(status)`, `isError(status)` and `errorCode(status)` to
+decode them; the catalog is `sdk.syscall.Error`.
 
-### F6.1 — Compositor de janelas opacas
+The SDK does **not** provide an allocator, a libc, POSIX, dynamic process
+creation, service discovery, dynamic linking or a threading API. Programs are
+statically linked into the boot image by `build.zig` and written to the RamFS
+by the kernel.
 
-O módulo `kernel/graphics/compositor.zig` implementa composição
-determinística de retângulos opacos em uma `raster.Surface`. A última
-janela visível na lista tem prioridade de desenho. Não há alocação dinâmica
-nem dependência de dispositivos; a superfície de destino precisa ter sido
-validada e mapeada pelo chamador.
+## Syscalls exposed
 
-Os testes de sobreposição, visibilidade e clipping estão ligados ao
-`zig build test`. Ainda faltam o driver de apresentação, a composição
-incremental (dirty rectangles), eventos de entrada e uma API de janelas
-para processos usuários. **Não confundir o compositor de host com uma
-interface gráfica em execução no Kynox.**
+22 numbers, `1–11` and `13–23`; number 12 is reserved. The full argument and
+result contract, plus the validation rules and the error table, are in
+[`docs/specs/syscall-abi.md`](../docs/specs/syscall-abi.md). Do not add a number
+to the SDK without adding it to that document.
 
-### F6.2 — Apresentação no framebuffer UEFI
+## Validation state
 
-O kernel agora chama `presentGraphicsDemo()` imediatamente após
-`paging.activate()` e a sondagem de escrita no framebuffer. A rotina
-valida dimensões, limites da região mapeada, formato de 32 bpp e máscaras
-BGRA antes de desenhar uma cena estática com duas janelas sobrepostas.
+Executed on 2026-10-31 with Zig 0.17.0 (host):
 
-A saída esperada em hardware compatível é:
+| Command | Result |
+|---|---|
+| `zig build` | success — bootloader, kernel, both native applications and the EFI image |
+| `zig build test` | success — 615/615 tests, including `sdk-tests` (4) |
 
-```text
-[KNK] graphics: framebuffer scene presented (2048x2048)
-```
+Not executed: `zig build qemu-test`, `zig build qemu-storage-test`,
+`zig build qemu-interactive-test` (no QEMU/OVMF in that environment). The SDK
+wrappers therefore compile and their pure logic is tested, but the runtime path
+inside QEMU is unverified for this snapshot.
 
-Caso a geometria ou as máscaras não sejam suportadas, o kernel registra
-o motivo e continua sem tentar desenhar. O teste automatizado atual não
-inspeciona pixels; verificar visualmente em `zig build qemu` e executar
-`zig build test` e `zig build qemu-test`. Esta integração não foi
-compilada nem executada no ambiente do agente.
+## Guidelines for contributors
 
-## F6.3 — Composição incremental (em desenvolvimento)
-
-O compositor em `kernel/graphics/compositor.zig` oferece agora
-`composeDirty(surface, background, windows, dirty)`, que recompõe apenas a
-interseção de um retângulo com o framebuffer e retorna o número de pixels
-redesenhados. A ordem de composição das janelas permanece estável; regiões
-fora do retângulo não são modificadas. Há testes host para sobreposição,
-clipping e dimensões extremas. O caminho de boot ainda usa `compose` para
-apresentar a cena inicial completa.
-
-Validação pendente no Fedora com Zig 0.17.0:
-
-```sh
-zig build test
-zig build
-zig build qemu-test
-```
-
-A F6.3 não inclui ainda rastreamento automático de regiões danificadas,
-movimentação de janelas ou dispositivos de entrada.
+- Keep `src/syscall.zig` free of policy: it encodes the ABI, nothing else.
+- Every wrapper must propagate the raw status; do not translate errors into
+  abstract ones that lose the code.
+- New wire structures belong in `shared/` and need a `wire_size`, a version
+  field and bounds checks in the kernel.
+- Update `docs/specs/syscall-abi.md`, `CHANGELOG.md` and the status inventory in
+  the same change that adds or changes a call.

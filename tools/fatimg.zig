@@ -20,7 +20,10 @@
 //!
 //! ```text
 //! /EFI/BOOT/BOOTX64.EFI    the UEFI loader
-//! /boot/kynox-kernel.elf   the kernel image
+//! /boot/KYNOXK.ELF         the kernel image (8.3 name, written in upper case)
+//!
+//! The loader path must match `kernel_path` in `boot/uefi/main.zig`
+//! (`\boot\kynoxk.elf`); the FAT lookup is case insensitive.
 //! ```
 //!
 //! The image is a FAT16 volume, written from scratch so that the build and

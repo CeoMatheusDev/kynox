@@ -4,7 +4,7 @@
 
 The long-term goal is a native operating system with its own technology stack, plus independently implemented compatibility environments for **Linux and Windows binaries**. Those compatibility environments are planned; they are not available yet.
 
-> **Development status:** early-stage OS engineering. Source code and test infrastructure exist across several subsystems, but the system is not a general-purpose desktop OS and is not production-ready.
+> **Development status:** early-stage OS engineering. Source code and test infrastructure exist across several subsystems; the host build and host unit tests execute and pass, while the boot/runtime paths have not been observed in the environment of the last audit. The system is not a general-purpose desktop OS and is not production-ready.
 
 ## Progress overview
 
@@ -16,7 +16,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Kernel CPU, exceptions and interrupts | **60%** | Core paths exist; hardening and hardware coverage remain |
 | Physical memory, heap and DMA | **60%** | Core allocators and DMA path exist; scalability/reclaim remain |
 | Virtual memory and address spaces | **45%** | User mappings and isolation foundations; advanced VM remains |
-| ACPI, PCI and APIC | **50%** | Parsers and access paths exist; discovery/routing need completion |
+| ACPI, PCI and APIC | **50%** | Parsers and access paths exist; MADT is parsed but not consumed, LAPIC base is still a constant |
 | SMP | **30%** | AP startup exists; normal per-CPU scheduling is incomplete |
 | Scheduler and task switching | **55%** | Preemptive task switching exists; SMP scheduling remains |
 | User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI is still small |
@@ -32,16 +32,24 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host and QEMU test targets exist; current results need to be run and recorded |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (615 tests); QEMU targets exist but have never been recorded, and there is no CI |
+| Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
+| Build and developer tooling | **60%** | Zig build graph, image generator and zero external dependencies; toolchain docs, versioning and CI remain |
 
 The full evidence-based inventory, including gaps and next steps, is maintained in **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** and the machine-readable **[PROJECT_STATUS.json](docs/PROJECT_STATUS.json)**.
 
 ### Status labels
 
+The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
+`not_started`, `scaffolding`, `in_progress`, `implemented`, `integrated`,
+`validated`, `blocked`.
+
+- **Scaffolding:** only identifiers, types or groundwork exist.
+- **In progress:** a meaningful part exists, but the complete subsystem contract is not delivered.
 - **Implemented:** code exists and is connected to a real execution path for the stated scope.
-- **Partial / In progress:** a meaningful part exists, but the complete subsystem contract is not delivered.
-- **Planned:** no implementation of the stated capability has been established.
+- **Integrated:** the active execution path uses it end to end.
 - **Validated:** relevant tests were actually executed in a named environment. A test target in the build graph alone is not validation.
+- **Blocked:** work cannot proceed without an external condition (hardware, firmware, decision).
 
 ### Important limitations
 
@@ -53,6 +61,9 @@ The full evidence-based inventory, including gaps and next steps, is maintained 
 - KEX is the Kynox executable container around an ELF64 payload. It is **not** Linux binary compatibility.
 - Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made.
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
+- ACPI/MADT is parsed and tested, but the boot path never consumes it: the LAPIC base is still the constant `0xFEE00000` (audit A-03).
+- The project version is not centralized (`build.zig.zon` says `0.1.0-dev.3`, the loader and kernel print `0.1.0-dev.1`) and the ABI revision is declared only by the SDK (13, with the error catalog saying 12). Both are open audit findings A-01/A-04.
+- There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below).
 
 ## What's already in the tree
 
@@ -64,16 +75,23 @@ The full evidence-based inventory, including gaps and next steps, is maintained 
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (615) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
 
-Requires **Zig 0.17.0**.
+Requires **Zig 0.17.0** (pinned by `build.zig.zon` → `minimum_zig_version`).
 
 ```sh
-zig version
+zig version          # must print 0.17.0
 zig build
 ```
+
+> Zig 0.17.0 is not published on the GitHub releases page (which carried 0.15.x
+> at the time of the audit). Obtain it from a distribution channel that
+> publishes 0.17.0 — the audit verified the build with the `ziglang` 0.17.0
+> package from PyPI. There are no other build prerequisites: `build.zig.zon`
+> declares no external dependency.
 
 Build outputs include:
 
@@ -99,13 +117,34 @@ zig build check
 
 Run the commands locally before reporting them as passing. See [AGENTS.md](AGENTS.md) for the development contract.
 
+### Verification record (2026-10-31)
+
+| Command | Result |
+|---|---|
+| `zig version` | `0.17.0` |
+| `zig build` | success — 13/13 steps; `kynox-boot.efi` 181,760 B, `kynox-kernel` 65,770,762 B, `kynox.img` 128 MiB |
+| `zig build test` | success — 39/39 steps, **615/615 tests passed** |
+| `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
+| `zig build qemu-storage-test` | **not executed** — same reason |
+| `zig build qemu-interactive-test` | **not executed** — same reason |
+
+The QEMU suites assert roughly 45 serial markers (handoff, GDT/IDT, NX, PCI, DMA,
+virtqueue, timer, PS/2, incremental redraw, filesystem, KNV commit/recover, KPK,
+task creation, native ELF execution, page permissions). Their results must be
+recorded in the release notes once a machine with QEMU + OVMF runs them.
+
 ## Architecture and development documents
 
 - [AGENTS.md](AGENTS.md) — mandatory rules for coding agents and contributors.
 - [strategy.md](strategy.md) — architecture strategy, phases and roadmap.
 - [KYNOX_NATIVE.md](KYNOX_NATIVE.md) — own-technology policy and native/Linux/Windows execution architecture.
 - [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — detailed progress, evidence, gaps and priorities.
-- [docs/PROJECT_STATUS.json](docs/PROJECT_STATUS.json) — machine-readable progress inventory.
+- [docs/PROJECT_STATUS.json](docs/PROJECT_STATUS.json) — machine-readable progress inventory (schema v2).
+- [docs/specs/boot-handoff-spec.md](docs/specs/boot-handoff-spec.md) — normative KNB→KNK handoff contract.
+- [docs/specs/syscall-abi.md](docs/specs/syscall-abi.md) — normative native syscall ABI.
+- [docs/audits/2026-10-31-audit.md](docs/audits/2026-10-31-audit.md) — audit, findings and prioritized plan.
+- [CHANGELOG.md](CHANGELOG.md) — release history and unreleased changes.
+- [docs/releases/0.1.0-alpha.1.md](docs/releases/0.1.0-alpha.1.md) — release notes (draft; the tag does not exist).
 
 ## License
 
