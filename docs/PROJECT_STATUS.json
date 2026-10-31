@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "project": "Kynox",
+  "snapshot_date": "2026-10-31",
+  "audit_type": "source_tree_and_build_graph_review",
+  "tests_executed_during_audit": false,
+  "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
+  "status_values": [
+    "implemented",
+    "in_progress",
+    "partial",
+    "planned",
+    "blocked"
+  ],
+  "validation_note": "Repository test sources and build targets were inspected. No build or QEMU test was executed during this snapshot.",
+  "subsystems": [
+    {
+      "id": "uefi_bootloader",
+      "maturity_percent": 70,
+      "status": "in_progress",
+      "evidence": [
+        "boot/uefi/",
+        "shared/handoff.zig",
+        "build.zig"
+      ],
+      "gaps": [
+        "firmware matrix",
+        "high-half/relocation validation",
+        "failure recovery"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "kernel_cpu_interrupts",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/arch/x86_64/",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "exception recovery audit",
+        "per-CPU state",
+        "hardware coverage"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "physical_memory_heap_dma",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/memory/physical.zig",
+        "kernel/memory/heap.zig",
+        "kernel/memory/dma.zig"
+      ],
+      "gaps": [
+        "allocator scalability",
+        "reclaim",
+        "IOMMU"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "virtual_memory",
+      "maturity_percent": 45,
+      "status": "partial",
+      "evidence": [
+        "kernel/arch/x86_64/paging.zig"
+      ],
+      "gaps": [
+        "general VM regions",
+        "demand paging",
+        "COW",
+        "TLB shootdown",
+        "ASLR"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "acpi_pci_apic",
+      "maturity_percent": 50,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/arch/x86_64/acpi.zig",
+        "kernel/arch/x86_64/pci.zig",
+        "kernel/arch/x86_64/apic.zig"
+      ],
+      "gaps": [
+        "dynamic APIC base everywhere",
+        "IOAPIC routing",
+        "hardware matrix"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "smp",
+      "maturity_percent": 30,
+      "status": "partial",
+      "evidence": [
+        "kernel/arch/x86_64/smp.zig",
+        "kernel/arch/x86_64/ap_trampoline.s",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "AP scheduler participation",
+        "per-CPU timer/IPI",
+        "SMP stress"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "scheduler",
+      "maturity_percent": 55,
+      "status": "partial",
+      "evidence": [
+        "kernel/task/scheduler.zig",
+        "kernel/task/context.zig",
+        "kernel/arch/x86_64/task.s"
+      ],
+      "gaps": [
+        "per-CPU queues",
+        "migration",
+        "fairness",
+        "SMP safety"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "user_processes_ring3",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/main.zig",
+        "kernel/arch/x86_64/paging.zig",
+        "shared/usermode.zig",
+        "user/"
+      ],
+      "gaps": [
+        "general process lifecycle",
+        "resource limits",
+        "stress isolation"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "native_syscall_abi",
+      "maturity_percent": 55,
+      "status": "partial",
+      "evidence": [
+        "kernel/arch/x86_64/syscall.zig",
+        "kernel/arch/x86_64/syscall.s",
+        "sdk/src/syscall.zig"
+      ],
+      "gaps": [
+        "versioned ABI",
+        "more syscalls",
+        "pointer validation suite"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "ipc",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/ipc/channel.zig",
+        "kernel/task/scheduler.zig"
+      ],
+      "gaps": [
+        "shared memory",
+        "service discovery",
+        "backpressure/cancellation"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "capabilities",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/security/capability.zig",
+        "kernel/arch/x86_64/syscall.zig"
+      ],
+      "gaps": [
+        "complete object coverage",
+        "lifecycle audit",
+        "adversarial tests"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "elf64_loader",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "shared/elf64.zig",
+        "kernel/elf_loader.zig",
+        "kernel/elf_materializer.zig"
+      ],
+      "gaps": [
+        "dynamic linking",
+        "shared libraries",
+        "TLS",
+        "more relocations"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "kex_native_format",
+      "maturity_percent": 55,
+      "status": "partial",
+      "evidence": [
+        "formats/kex.zig",
+        "kernel/elf_loader.zig",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "signature/trust",
+        "dependency metadata",
+        "ABI versioning",
+        "complete toolchain"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "kpk_package_format",
+      "maturity_percent": 45,
+      "status": "partial",
+      "evidence": [
+        "formats/kpk.zig",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "package manager",
+        "signatures",
+        "dependency resolution",
+        "atomic updates"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "native_sdk_runtime",
+      "maturity_percent": 40,
+      "status": "partial",
+      "evidence": [
+        "sdk/src/",
+        "sdk/README.md",
+        "user/"
+      ],
+      "gaps": [
+        "stable public API",
+        "native libraries",
+        "dynamic linker",
+        "toolchain"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "ramfs",
+      "maturity_percent": 55,
+      "status": "partial",
+      "evidence": [
+        "kernel/fs/ramfs.zig",
+        "kernel/fs/fs.zig"
+      ],
+      "gaps": [
+        "persistent general backend",
+        "permissions",
+        "scale",
+        "crash recovery"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "kfsx_vfs",
+      "maturity_percent": 35,
+      "status": "partial",
+      "evidence": [
+        "kernel/fs/kfsx.zig",
+        "kernel/fs/fs.zig"
+      ],
+      "gaps": [
+        "multiple real backends",
+        "complete VFS operations",
+        "permissions",
+        "concurrency"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "knv_volume",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/fs/knv.zig",
+        "kernel/fs/knv_volume.zig"
+      ],
+      "gaps": [
+        "journal",
+        "atomic dual-image commit",
+        "power-loss recovery"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "physical_block_storage",
+      "maturity_percent": 65,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/drivers/kvdi/block.zig",
+        "kernel/main.zig",
+        "kernel/storage/block.zig",
+        "tests/integration/virtio-block-persistence.sh"
+      ],
+      "gaps": [
+        "interrupt/MSI-X",
+        "multi-queue",
+        "hardware coverage",
+        "performance tuning"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "kvdi_virtio",
+      "maturity_percent": 65,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/drivers/kvdi/",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "async completion",
+        "multi-device/queue",
+        "more device classes"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "networking",
+      "maturity_percent": 10,
+      "status": "partial",
+      "evidence": [
+        "kernel/arch/x86_64/virtio_net.zig",
+        "kernel/drivers/kvdi/"
+      ],
+      "gaps": [
+        "network driver",
+        "Ethernet/IP/TCP/UDP",
+        "socket API",
+        "network service"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "graphics_compositor",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "kernel/graphics/",
+        "shared/compositor.zig",
+        "shared/display.zig"
+      ],
+      "gaps": [
+        "GPU acceleration",
+        "isolated service",
+        "display modes/hotplug"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "input",
+      "maturity_percent": 40,
+      "status": "partial",
+      "evidence": [
+        "kernel/input/",
+        "kernel/graphics/pointer_input.zig",
+        "kernel/graphics/event_queue.zig"
+      ],
+      "gaps": [
+        "mouse/HID/USB",
+        "hotplug",
+        "keymaps",
+        "input service"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "desktop_windowing",
+      "maturity_percent": 35,
+      "status": "partial",
+      "evidence": [
+        "kernel/graphics/desktop.zig",
+        "kernel/graphics/window_manager.zig",
+        "kernel/graphics/session.zig"
+      ],
+      "gaps": [
+        "taskbar",
+        "launcher",
+        "shell",
+        "terminal",
+        "file manager",
+        "settings"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "linux_binary_compatibility",
+      "maturity_percent": 0,
+      "status": "planned",
+      "evidence": [],
+      "gaps": [
+        "Linux ELF process ABI",
+        "syscall translation",
+        "signals/futexes/TLS",
+        "dynamic linker and libraries"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "windows_binary_compatibility",
+      "maturity_percent": 0,
+      "status": "planned",
+      "evidence": [],
+      "gaps": [
+        "PE32+ loader",
+        "Win64 ABI",
+        "NT/Win32 APIs",
+        "DLL/TLS/unwind",
+        "runtime libraries"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "security_hardening",
+      "maturity_percent": 45,
+      "status": "partial",
+      "evidence": [
+        "kernel/security/",
+        "kernel/arch/x86_64/paging.zig",
+        "kernel/drivers/kvdi/containment.zig"
+      ],
+      "gaps": [
+        "SMEP/SMAP policy",
+        "ASLR/KASLR",
+        "threat models",
+        "fuzzing/audit"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "tests_validation",
+      "maturity_percent": 65,
+      "status": "in_progress",
+      "evidence": [
+        "build.zig",
+        "tests/",
+        "kernel/"
+      ],
+      "gaps": [
+        "run/publish current results",
+        "CI matrix",
+        "fuzzing",
+        "hardware matrix"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "performance_observability",
+      "maturity_percent": 40,
+      "status": "partial",
+      "evidence": [
+        "tools/benchmarks/",
+        "kernel/main.zig"
+      ],
+      "gaps": [
+        "reproducible baselines",
+        "percentiles",
+        "cross-hardware metrics",
+        "regression thresholds"
+      ],
+      "validation": "not_run_in_this_audit"
+    },
+    {
+      "id": "build_tooling",
+      "maturity_percent": 60,
+      "status": "in_progress",
+      "evidence": [
+        "build.zig",
+        "tools/",
+        "scripts/"
+      ],
+      "gaps": [
+        "reproducible CI",
+        "debug workflow",
+        "SDK/toolchain completeness"
+      ],
+      "validation": "not_run_in_this_audit"
+    }
+  ],
+  "known_documentation_mismatches": [
+    "kernel/drivers/kvdi/root.zig overview contains stale claims that no block driver or block I/O exists; kernel/main.zig actually initializes kvdi.block.Driver and registers a block.Device.",
+    "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; do not confuse it with the active KVDI block driver.",
+    "SMP module comments include older statements that AP startup is future work; kernel/main.zig invokes smp.startAps(), while AP scheduler integration remains incomplete.",
+    "README previously implied zig build check ran interactive checks; build.zig check does not depend on qemu-interactive-test."
+  ]
+}
