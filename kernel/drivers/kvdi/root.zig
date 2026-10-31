@@ -35,14 +35,15 @@
 //!   * `virtqueue`     - a fila dividida: descritores, anel `available` e
 //!                       anel `used`.
 //!
-//! Nada aqui le ou escreve setor. O incremento atual leva a inicializacao ate
-//! `DRIVER_OK` com a fila 0 programada, habilitada e vazia; publicar pedidos,
-//! consumir conclusoes e notificar o dispositivo sao operacoes da fila, e o
-//! driver de bloco que as usa ainda nao existe:
+//! A KVDI possui transporte moderno PCI, fila dividida e driver VirtIO Block
+//! em `block.zig`. O caminho ativo e integrado pelo kernel: negocia features,
+//! prepara memoria DMA, ativa a fila, publica pedidos sincronamente e valida
+//! conclusoes. A conclusao ainda usa polling; nao ha caminho MSI/MSI-X
+//! integrado para completar I/O de forma assincrona, nem suporte multi-queue.
 //!
-//!   * nenhuma leitura ou escrita de disco;
-//!   * nenhuma interrupcao do dispositivo (o `used` e observado por consulta);
-//!   * nenhum driver funcional, inclusive o de blocos.
+//! O driver de bloco recebe transporte/fila/memoria ja preparados. Descoberta
+//! PCI, propriedade DMA, ativacao e contenção permanecem orquestradas pelo
+//! chamador no kernel.
 //!
 //! O modulo nao importa `pci.zig`: a raiz de um modulo Zig precisa estar
 //! acima de todos os arquivos que ele importa, e o subsistema e testado e
