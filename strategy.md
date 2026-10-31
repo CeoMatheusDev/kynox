@@ -17,7 +17,6 @@ Kynox será um sistema operacional nativo x86_64, com kernel e serviços escrito
 
 ### Não objetivos imediatos
 
-- Compatibilidade binária completa com Linux/Windows.
 - Suporte universal a todo hardware x86_64.
 - Microkernel puro completo antes de existir um sistema funcional.
 - Lock-free em todos os subsistemas.
@@ -567,3 +566,42 @@ A ordem pode mudar diante de bugs ou dependências encontradas no código, mas t
 ---
 
 **Princípio central:** construir primeiro mecanismos corretos, seguros e observáveis; depois políticas e serviços modulares; por fim otimizar com medições. O Kynox deve evoluir por incrementos verificáveis, mantendo o boot funcional e sem confundir visão de produto com capacidade já entregue.
+
+
+## 11. Formato executável nativo e compatibilidade Linux/Windows
+
+Compatibilidade binária com Linux e Windows é um **objetivo explícito de produto**, não um não-objetivo. A prioridade continua sendo consolidar primeiro o ambiente nativo; compatibilidade será construída em camadas sem substituir a identidade nem a ABI do Kynox.
+
+Leia **`KYNOX_NATIVE.md`** como especificação de política e direção para esta área.
+
+### Três ambientes de execução
+
+| Ambiente | Contratos principais | Direção |
+|---|---|---|
+| Kynox Native | KEX, ABI nativa, loader, linker, runtime e SDK | Ambiente primário e totalmente controlado pelo projeto |
+| Linux Compatibility | ELF64 x86-64, Linux process ABI, syscall ABI, loader dinâmico e semântica de user-space | Executar binários Linux originais sem recompilação |
+| Windows Compatibility | PE32+, Win64 ABI, NT/Win32, DLL loader, TLS e unwind | Executar binários Windows originais sem recompilação |
+
+Não confundir formato com ABI: ELF não garante compatibilidade Linux; PE32+ não garante compatibilidade Windows. A execução real depende também de syscalls, convenções de processo, threads, memória, sinais/exceções, linking dinâmico, bibliotecas e serviços.
+
+### Arquitetura
+
+- Preservar a ABI nativa do Kynox como contrato primário.
+- Implementar loaders e personalidades Linux/Windows em camadas isoladas.
+- Compartilhar mecanismos internos seguros (address spaces, scheduler, handles, IPC, VFS e memória) sem expor a ABI de um sistema operacional à outra.
+- Parser ELF/PE deve ser independente de operações privilegiadas e testável em host.
+- Nunca usar execução em Ring 0 para contornar incompatibilidades.
+- Bibliotecas e runtimes necessários devem ser implementados pelo projeto; dependências externas exigem ADR, auditoria e justificativa.
+
+### Roadmap específico
+
+1. Auditar KEX, ELF, SDK, syscall ABI, processo/threads, VMM e linker existentes.
+2. Especificar e estabilizar KEX e a ABI nativa.
+3. Consolidar parser/loader nativo com relocations, imports, dependências e validação.
+4. Implementar Linux mínimo: ELF64 estático x86-64 e subconjunto de syscalls com testes de conformidade.
+5. Expandir Linux: loader dinâmico, TLS, relocations, bibliotecas e semântica de processos/threads.
+6. Implementar Windows mínimo: PE32+ x86-64 e aplicações de console com subconjunto documentado de NT/Win32.
+7. Expandir Windows: DLLs, TLS, unwind/exceptions, sincronização, APIs de processo/arquivo e posteriormente GUI.
+8. Fuzz, hardening, matriz de compatibilidade e benchmarks para cada incremento.
+
+A ordem entre etapas de Linux e Windows pode ser ajustada por dependências e valor, mas ambas permanecem objetivos arquiteturais. Não prometer compatibilidade universal: publicar formatos, APIs, versões, limitações e testes efetivamente suportados.
