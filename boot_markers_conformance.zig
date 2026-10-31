@@ -42,6 +42,7 @@ const sources = loader ++ "\n" ++
     kernel ++ "\n" ++
     @embedFile("boot/uefi/knb/console.zig") ++ "\n" ++
     @embedFile("kernel/arch/x86_64/interrupt.zig") ++ "\n" ++
+    @embedFile("kernel/drivers/kvdi/virtqueue_probe.zig") ++ "\n" ++
     @embedFile("kernel/arch/x86_64/paging.zig") ++ "\n" ++
     @embedFile("kernel/arch/x86_64/smp.zig") ++ "\n" ++
     @embedFile("kernel/arch/x86_64/syscall.zig") ++ "\n" ++

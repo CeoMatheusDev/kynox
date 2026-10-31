@@ -114,11 +114,81 @@ retained: the module keeps no pointer into firmware memory.
   environment (audit finding A-02), so this path is compiled and unit-tested
   only.
 
-## 8. Tests
+## 8. I/O APIC programming (2026-10-31)
 
-`kernel/arch/x86_64/acpi.zig` is reachable from the `arch-tests` artifact
-(`kernel/arch/x86_64/root.zig`). The suite builds synthetic RSDP/XSDT/RSDT/MADT
-images and covers:
+Discovery is not routing, and this section keeps the two apart.
+
+**What the module does.** `kernel/arch/x86_64/ioapic.zig` reads the
+identification and version registers of one controller, decodes the maximum
+redirection entry from the version register (bits 16..23 hold *count minus
+one*), and encodes/decodes a 64-bit redirection entry: vector, delivery mode
+(fixed/lowest/NMI/init/extINT), destination mode, polarity, trigger mode and
+mask bit. `Controller.init` validates the base address before touching it and
+rejects a controller whose version decode yields no entries.
+
+**What the boot path does.** `kernel/main.zig::installIoApic` runs after the
+page tables are active and after the local APIC is mapped:
+
+1. it takes the **first usable I/O APIC** recorded from the MADT (already
+   validated during discovery: nonzero, page-aligned, inside the identity
+   window);
+2. it maps the 0x20-byte MMIO window with `paging.mapDevicePage` — the device
+   page, not the kernel image;
+3. `Controller.init`, then `maskAll()`: every entry is masked before any of
+   them is written;
+4. it derives the route of each ISA line in use from `acpi.isaRoute(irq,
+   overrides)` — the effective GSI (ISA identity when there is no override),
+   polarity and trigger — and programs the entry with vector `32 + irq`,
+   destination = BSP APIC id, **masked**;
+5. it logs one line per line with `isa irq`, `gsi`, vector, polarity and
+   trigger, so a wrong override is visible in the log rather than inferred.
+
+**Delivery stays on the 8259** unless the build option `-Dioapic-delivery=true`
+sets `kynox_config.ioapic_delivery`. With the option, the sequence is
+`timer.disablePic()` (mask both 8259s) *then* unmask the entries; without it,
+the entries stay masked and the log says so. The two controllers must never
+forward the same line, and the 8259 path is the one with real boot history.
+
+**End-of-interrupt.** `timer.endOfInterrupt(vector)` chooses the EOI target
+from the same switch: the local APIC when the I/O APIC delivers, the 8259
+otherwise. Sending an EOI to the wrong controller leaves the interrupt
+controller waiting and blocks every later interrupt of that priority.
+
+**Known limits.** Level-triggered lines need the source's EOI acknowledgement
+(and, for PCI, the `0x0C` command port); only ISA edge/level lines derived from
+the MADT are configured. No entry is programmed for the PCI GSI range, no
+interrupt remapping (VT-d/AMD-Vi), no x2APIC MSI, no per-CPU distribution of
+GSIs, and nothing here was executed on a hypervisor: the module and the boot
+path are compiled and unit-tested, not validated by a recorded boot.
+
+## 9. Processor table and AP startup (M0.5, host-only)
+
+`kernel/arch/x86_64/smp.zig` builds its CPU table from the **enabled**
+processors of the MADT (`configureFromMadt`), in table order, skipping
+duplicates and capping at `max_cpus` (16). The BSP is the entry whose APIC id
+matches the local APIC id, and its logical number is what `cpuId()` returns —
+translated through the table, not assumed to be zero. A MADT that names no
+processor leaves a single online BSP: boot never depends on a complete table.
+
+`startAps()` refuses to send an IPI in two situations, and logs which:
+
+- no AP was discovered (single-CPU machine);
+- the trampoline has not been published below 1 MiB
+  (`publishTrampoline`, no caller yet — the BSP does not copy
+  `ap_trampoline.s` into low memory).
+
+With both preconditions met, each AP gets INIT, then two SIPIs to the
+trampoline page, and the BSP waits a bounded number of `pause` iterations for
+`online`; an AP that does not answer is reported as such and stays
+`initializing`. **No AP has ever been started in this tree**: the runtime
+evidence is missing, so SMP remains `in_progress` and no SMP behaviour is
+claimed.
+
+## 10. Tests
+
+`kernel/arch/x86_64/acpi.zig`, `ioapic.zig` and `smp.zig` are reachable from
+the `arch-tests` artifact (`kernel/arch/x86_64/root.zig`). The suite builds
+synthetic RSDP/XSDT/RSDT/MADT images and covers:
 
 - checksum, signature and length rejection at each level;
 - RSDT fallback for ACPI 1.0 and XSDT preference for revision 2 (two-level RSDP
@@ -129,7 +199,14 @@ images and covers:
 - I/O APIC and override parsing, entry-length rejection, overflow accounting;
 - local-APIC and I/O-APIC address validation, including misalignment and the
   4 GiB limit;
-- `apic.setBase`/`resetBase` behaviour and the specific error for each refusal.
+- `apic.setBase`/`resetBase` behaviour and the specific error for each refusal;
+- ISA routes: identity when there is no override, override GSI/polarity/trigger
+  when there is, and a reserved (value 3) flag field falling back to the
+  conforming high/edge encoding;
+- redirection entries: vector/GSI bounds, low/high-word encoding, mask bit,
+  destination placement, version decode and MMIO window size;
+- the CPU table: MADT order, disabled and duplicate processors skipped, BSP
+  chosen by APIC id, empty MADT leaving one online BSP, cap at `max_cpus`.
 
 The discovery test uses an injected table source, so no page table or firmware
 state is needed.

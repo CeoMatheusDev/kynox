@@ -1,6 +1,6 @@
 # ADR-0001 · Extract boot-time probes and reports out of `kernel/main.zig`
 
-- Status: **accepted**, not implemented (decision recorded, code unchanged)
+- Status: **accepted**, first probe extracted on 2026-10-31; the rest is still deferred
 - Date: 2026-10-31
 - Related: audit finding A-09; `strategy.md` §3.2 (module boundaries) and §5
 
@@ -88,6 +88,34 @@ Not scheduled. It is deliberately deferred until a QEMU-capable environment
 exists, so the moves can be validated by a boot before and after. When it
 starts, one probe per commit, with `zig build test` and a recorded boot on both
 sides.
+
+## Execution record (2026-10-31)
+
+One probe moved, without changing boot order or marker text:
+
+- `probeVirtqueueLayout` left `kernel/main.zig`. Its logic (build a
+  `kvdi.virtqueue.Queue`, publish one descriptor, read the layout) is now
+  `kernel/drivers/kvdi/virtqueue_probe.zig`, returning a `Result` value; the
+  boot prints `prefix` plus `Result.format(&buffer)` at the same call site.
+- The module does not write to the console, so the marker contract is tested on
+  the host: `the rendered text is the serial marker asserted by the boot suite`
+  and `the marker prefix is the one the integration scripts require` assert the
+  exact strings, and `log-assertions-test.sh` asserts the full line.
+- `boot_markers_conformance.zig` embeds the new file, because the marker prefix
+  is now a literal there; without that line the guard reported the marker as
+  lost (it did, and the failure is what proved the guard still works).
+
+Why it did not go to `kernel/diagnostics/` as option B describes: a Zig module
+root must sit above every file it imports, and the probe imports
+`kvdi/virtqueue.zig`. A `kernel/diagnostics/` root cannot reach
+`kernel/drivers/kvdi/` without a second module instance of the same file. The
+probe therefore lives next to the code it proves, and moves to `diagnostics/`
+when the kernel module itself is reorganized. That is the reversal criterion
+firing in miniature: the boundary is a real constraint, not a preference.
+
+The remaining probes and the `report*` functions stay where they are: moving
+them cannot be validated by a boot here, which is the migration plan's own
+condition.
 
 ## Reversal criteria
 

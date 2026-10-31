@@ -415,14 +415,14 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
             // the error of the timeout of the contract of the calls.
             const scheduler = @import("../../task/scheduler.zig");
             const must_switch = scheduler.scheduler.tick(syscall.failure(syscall.Error.timeout));
-            timer.acknowledge(@intCast(vector));
+            timer.endOfInterrupt(@intCast(vector));
             return if (must_switch) 1 else 0;
         }
 
         if (vector == first_hardware_vector + 1) {
             @import("../../input/ps2.zig").onInterrupt();
         }
-        timer.acknowledge(@intCast(vector));
+        timer.endOfInterrupt(@intCast(vector));
     }
 
     // Interrupcao do timer local da APIC (vetor timer_vector, usado em SMP).

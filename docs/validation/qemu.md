@@ -112,3 +112,43 @@ validated, and only then may `docs/PROJECT_STATUS.md` percentages move.
 - Timeout-based termination: a slow host can trip the deadline; raise
   `--timeout` and record that it was raised.
 - No CI: the run depends on the operator having QEMU and OVMF installed.
+
+## 8. Provisioning attempt — 2026-10-31 (stage 1 of the runtime task)
+
+The suite was re-run against the tree of this date, and an isolated
+provisioning script was written so that a future environment (or a CI runner)
+can obtain the pieces without touching a system directory:
+
+- `scripts/provision-qemu.sh` — downloads a static `qemu-system-x86_64`
+  (ziglang/qemu-static release) and the OVMF firmware (rust-osdev/ovmf-prebuilt)
+  into `.tools/` (ignored by Git), verifies the archives, and prints the
+  `OVMF_CODE`/`OVMF_VARS`/`PATH` exports to use. It never writes outside the
+  repository and never needs root. `--check` reports what is already present.
+- `docs/validation/logs/2026-10-31-qemu-attempt.txt` — verbatim log of the
+  three suites and of the provisioning attempt.
+
+**Result: still not executed.** The three targets fail as before
+(`no OVMF firmware found`, exit 2). The provisioning script fails one step
+earlier, at the download:
+
+```
+provision-qemu: download failed: … curl: (35) OpenSSL SSL_connect:
+SSL_ERROR_SYSCALL in connection to release-assets.githubusercontent.com:443
+```
+
+`api.github.com` answers (200), but release assets are served from
+`release-assets.githubusercontent.com`, which this sandbox cannot reach; the
+same happens for `objects.githubusercontent.com`. No package manager is
+available (unprivileged user), there is no `qemu-system-x86_64`, no `/dev/kvm`
+and no `vmx`/`svm` CPU flag, so a source build is impossible here as well.
+
+**Consequences, stated plainly:**
+
+- no serial log exists for this tree, so no subsystem gained runtime evidence;
+- `-Dioapic-delivery=true` compiles, but no boot proves it delivers an
+  interrupt;
+- the IOAPIC entries are programmed masked, so the compiled default keeps the
+  8259 as the only delivery path;
+- the CI workflow added on this date installs QEMU and OVMF on the runner and
+  fails loudly when it cannot; **it has not run yet**, so it is not evidence
+  either.

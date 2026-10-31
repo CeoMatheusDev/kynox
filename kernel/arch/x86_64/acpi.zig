@@ -367,6 +367,57 @@ pub fn parseMadt(bytes: []const u8, processors: []Processor) Error!Madt {
 }
 
 // ---------------------------------------------------------------------------
+// Rotas de interrupcao
+// ---------------------------------------------------------------------------
+
+/// Rota efetiva de uma linha de interrupcao ISA.
+///
+/// O valor e calculado a partir dos overrides da MADT: a linha `irq` pode ser
+/// redirecionada para outra GSI e pode inverter polaridade ou mudar de
+/// disparo. Sem override, a rota e a identidade e a convencao da ISA
+/// (ativo em nivel alto, disparo por borda).
+pub const IsaRoute = struct {
+    /// GSI que entrega a linha.
+    gsi: u32 = 0,
+    /// Polaridade: 0 = ativo em nivel alto, 1 = ativo em nivel baixo.
+    polarity: u1 = 0,
+    /// Disparo: 0 = borda, 1 = nivel.
+    trigger: u1 = 0,
+    /// A rota veio de um interrupt source override.
+    overridden: bool = false,
+};
+
+/// Barramento ISA no campo `bus` de um override da MADT.
+pub const isa_bus: u8 = 0;
+
+/// Resolve a rota de uma linha ISA.
+///
+/// A primeira entrada com o mesmo barramento e a mesma origem vence; a busca
+/// e linear porque a tabela e pequena e imutavel depois do boot. Valores
+/// reservados nas flags (3) sao tratados como "conforme o barramento", que e
+/// o comportamento que a ACPI define para eles.
+pub fn isaRoute(irq: u8, overrides: []const IsaOverride) IsaRoute {
+    var route: IsaRoute = .{ .gsi = irq };
+    for (overrides) |override| {
+        if (override.bus != isa_bus) continue;
+        if (override.source != irq) continue;
+
+        route.gsi = override.gsi;
+        route.overridden = true;
+        route.polarity = switch (override.flags & 0b11) {
+            2 => 1, // ativo em nivel baixo
+            else => 0, // conforme o barramento (ativo em nivel alto)
+        };
+        route.trigger = switch ((override.flags >> 2) & 0b11) {
+            2 => 1, // nivel
+            else => 0, // conforme o barramento (borda)
+        };
+        return route;
+    }
+    return route;
+}
+
+// ---------------------------------------------------------------------------
 // Descoberta a partir do RSDP
 // ---------------------------------------------------------------------------
 
@@ -848,4 +899,55 @@ test "the discovery rejects an unreadable RSDP" {
         error.UnreadableTable,
         discoverMadt(memory.source(), 0x3FF0, &processors),
     );
+}
+
+test "an ISA line without an override keeps its number and the ISA convention" {
+    const route = isaRoute(1, &.{});
+    try std.testing.expectEqual(@as(u32, 1), route.gsi);
+    try std.testing.expectEqual(@as(u1, 0), route.polarity);
+    try std.testing.expectEqual(@as(u1, 0), route.trigger);
+    try std.testing.expect(!route.overridden);
+}
+
+test "an override moves the ISA line to another GSI" {
+    // QEMU/q35 publishes the classic 8259 compatibility table: IRQ0 -> GSI2.
+    const overrides = [_]IsaOverride{
+        .{ .bus = 0, .source = 0, .gsi = 2, .flags = 0 },
+        .{ .bus = 0, .source = 1, .gsi = 1, .flags = 0 },
+    };
+    const timer_route = isaRoute(0, &overrides);
+    try std.testing.expectEqual(@as(u32, 2), timer_route.gsi);
+    try std.testing.expect(timer_route.overridden);
+    try std.testing.expectEqual(@as(u32, 1), isaRoute(1, &overrides).gsi);
+    // A line that has no entry keeps the identity mapping.
+    try std.testing.expectEqual(@as(u32, 4), isaRoute(4, &overrides).gsi);
+}
+
+test "an override carries polarity and trigger" {
+    // Bits [1:0] = 2: active low. Bits [3:2] = 2: level triggered.
+    const active_low_level = [_]IsaOverride{
+        .{ .bus = 0, .source = 9, .gsi = 23, .flags = 0b1010 },
+    };
+    const route = isaRoute(9, &active_low_level);
+    try std.testing.expectEqual(@as(u32, 23), route.gsi);
+    try std.testing.expectEqual(@as(u1, 1), route.polarity);
+    try std.testing.expectEqual(@as(u1, 1), route.trigger);
+
+    // Reserved values (3 in both fields) mean "conforming": the ISA default
+    // of active high and edge triggered, not a random interpretation.
+    const reserved = [_]IsaOverride{
+        .{ .bus = 0, .source = 5, .gsi = 5, .flags = 0b1111 },
+    };
+    const conforming = isaRoute(5, &reserved);
+    try std.testing.expectEqual(@as(u1, 0), conforming.polarity);
+    try std.testing.expectEqual(@as(u1, 0), conforming.trigger);
+}
+
+test "an override for another bus is ignored" {
+    const overrides = [_]IsaOverride{
+        .{ .bus = 2, .source = 1, .gsi = 9, .flags = 0 },
+    };
+    const route = isaRoute(1, &overrides);
+    try std.testing.expectEqual(@as(u32, 1), route.gsi);
+    try std.testing.expect(!route.overridden);
 }

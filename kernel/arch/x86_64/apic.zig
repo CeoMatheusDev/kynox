@@ -190,7 +190,15 @@ pub const IcrDeliveryStatus = enum(u32) {
 pub const timer_vector: u32 = 64;
 
 /// Acesso ao APIC local como ponteiro para a regiao mapeada de memoria.
-var apic: [*]u8 = undefined;
+///
+/// Antes de `map` o ponteiro aponta para a base padrao, nunca para um valor
+/// indefinido: `isMapped` consulta `mapped` e nenhum leitor de registrador
+/// roda antes disso, mas um ponteiro indefinido seria comportamento
+/// indefinido mesmo sem ser lido.
+var apic: [*]u8 = @ptrFromInt(@as(usize, default_base));
+
+/// O APIC local foi registrado por `map`.
+var mapped: bool = false;
 
 /// Mapeia o APIC local na regiao de memoria do kernel.
 ///
@@ -199,11 +207,18 @@ var apic: [*]u8 = undefined;
 /// registra o ponteiro para acesso aos registradores.
 pub fn map(base: u64) void {
     apic = @ptrFromInt(@as(usize, base));
+    mapped = true;
+}
+
+/// Esquece o mapeamento registrado (usado pelos testes e pelo desligamento).
+pub fn unmap() void {
+    apic = @ptrFromInt(@as(usize, default_base));
+    mapped = false;
 }
 
 /// Retorna true se o APIC local foi mapeado.
 pub fn isMapped() bool {
-    return @intFromPtr(apic) != 0;
+    return mapped;
 }
 
 /// Le um registrador de 32 bits do APIC local.
@@ -297,8 +312,11 @@ pub fn sendIpi(apic_id: u32, delivery_mode: u32, vector: u8) void {
     // ICR alto: ID de destino no byte mais significativo.
     write32(ApicOffset.icr_high, apic_id << 24);
     // ICR baixo: delivery mode + vector + edge trigger + physical destination.
-    const command: u32 = delivery_mode | IcrLevel.assert |
-        IcrTriggerMode.edge | IcrDestinationMode.physical | @as(u32, vector);
+    const command: u32 = delivery_mode |
+        @as(u32, @intFromEnum(IcrLevel.assert)) |
+        @as(u32, @intFromEnum(IcrTriggerMode.edge)) |
+        @as(u32, @intFromEnum(IcrDestinationMode.physical)) |
+        @as(u32, vector);
     write32(ApicOffset.icr_low, command);
 }
 
@@ -328,6 +346,23 @@ pub fn sendSipi(apic_id: u32, vector: u8) void {
         @as(u32, @intFromEnum(IcrTriggerMode.edge)) |
         @as(u32, @intFromEnum(IcrDestinationMode.physical)) |
         @as(u32, vector);
+    write32(ApicOffset.icr_low, command);
+}
+
+/// Envia uma IPI INIT para uma CPU de destino (modo fisico, nivel assert).
+///
+/// O INIT coloca o processador de aplicacao no estado de espera de SIPI. Ele
+/// e a primeira mensagem da sequencia INIT-SIPI-SIPI do protocolo de boot
+/// multiprocessador; sem ele o AP pode nao aceitar o vetor de inicializacao.
+pub fn sendInit(apic_id: u32) void {
+    while (read32(ApicOffset.icr_low) & @as(u32, @intFromEnum(IcrDeliveryStatus.pending)) != 0) {
+        cpu.pause();
+    }
+    write32(ApicOffset.icr_high, apic_id << 24);
+    const command: u32 = @as(u32, @intFromEnum(IcrDeliveryMode.init)) |
+        @as(u32, @intFromEnum(IcrLevel.assert)) |
+        @as(u32, @intFromEnum(IcrTriggerMode.edge)) |
+        @as(u32, @intFromEnum(IcrDestinationMode.physical));
     write32(ApicOffset.icr_low, command);
 }
 

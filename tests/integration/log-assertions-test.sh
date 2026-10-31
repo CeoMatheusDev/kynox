@@ -103,7 +103,7 @@ OLD_PREFIX_LOG="$WORK_DIR/02-old-prefix.log"
 cat > "$OLD_PREFIX_LOG" <<'EOF'
 [KNK] pci: bus 0 scan complete, virtio=1
 [KNK] dma: window map probe ok
-[KNK] virtio: split queue layout ok desc=0 avail=4096 used=8192 size=12288
+[KNK] virtio: split queue layout ok desc=0 avail=256 used=296 size=432
 [KNK] virtio-pci: modern device detected 00:3.0 id=0x1042 type=block
 [KNK] virtio-pci: 00:3.0 capabilities validated bar=4 common=+0x0/56 notify=+0x3000/4096 multiplier=4
 [KNK] virtio-pci: MMIO mapped 00:3.0 bar4 phys=0xfe000000 size=0x4000 virt=0x60000000 common=0x60000000 notify=0x60003000
@@ -183,7 +183,7 @@ lines = [
     "[KNK] Kynox Nucleus Kernel",
     "[KNK] pci: bus 0 scan complete, virtio=1",
     "[KNK] dma: window map probe ok",
-    "[KNK] virtio: split queue layout ok desc=0 avail=4096 used=8192 size=12288",
+    "[KNK] virtio: split queue layout ok desc=0 avail=256 used=296 size=432",
     "[KNK] kvdi: modern device detected 00:3.0 id=0x1042 type=block",
     "[KNK] kvdi: 00:3.0 capabilities validated bar=4 common=+0x0/56 notify=+0x3000/4096 multiplier=4",
     "[KNK] kvdi: MMIO mapped 00:3.0 bar4 phys=0xfe000000 size=0x4000 virt=0x60000000 common=0x60000000 notify=0x60003000",

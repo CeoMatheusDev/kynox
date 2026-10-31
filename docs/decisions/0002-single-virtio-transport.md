@@ -1,6 +1,6 @@
 # ADR-0002 · One VirtIO implementation: KVDI owns the transport
 
-- Status: **accepted**; `virtio.zig` reduced to a probe in a follow-up (not done)
+- Status: **accepted**; steps 1 and 2 executed on 2026-10-31, step 3 pending
 - Date: 2026-10-31
 - Related: audit findings A-06/A-07; `docs/specs/` has no VirtIO spec yet
 
@@ -56,6 +56,28 @@ Option **B**, in three separate changes, each reversible:
 
 No deletion happens in this decision record; the changes above are separate
 commits with their own validation.
+
+## Execution record (2026-10-31)
+
+- **Step 1 — done.** `kernel/drivers/kvdi/virtqueue.zig` already carried the
+  layout tests (`the split layout follows the specification offsets and
+  alignment`, `the physical addresses of the three areas are the layout
+  offsets`, rejection cases). Nothing had to be copied from `virtio.zig`: the
+  coverage was written against KVDI, which is stronger than moving it.
+- **Step 2 — done.** `kernel/main.zig::probeVirtqueueLayout` now builds a
+  `kvdi.virtqueue.Queue(16)` over the same static buffer and publishes one
+  descriptor. The marker text is unchanged (`[KNK] virtio: split queue layout
+  ok`), the numbers are the KVDI layout: `desc=0 avail=256 used=304 size=448`.
+  The previous numbers (`avail=4096 used=8192 size=12288`) were the legacy
+  page-aligned layout, which the driver never programmed — the exact misleading
+  evidence this ADR was filed about. `tests/integration/log-assertions-test.sh`
+  was updated to the new values; `tests/integration/boot-qemu.sh` asserts only
+  the prefix and is unaffected.
+- **Step 3 — pending.** `virtio.zig` still exports `VRing`/`DeviceQueue` and
+  `virtio_net.zig` still consumes them; no boot path does. Deletion is a
+  separate change because it removes three test-visible modules at once and
+  cannot be validated by a boot in this environment. `kernel/main.zig` no
+  longer imports the legacy module, so the boot path is already KVDI-only.
 
 ## Consequences
 

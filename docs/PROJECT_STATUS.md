@@ -39,7 +39,7 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (QEMU/hardware) evidence exists for this snapshot.
 
 **Validation distinction.** On 2026-10-31 the following were executed:
-`zig build` (13/13 steps) and `zig build test` (45/45 steps, **672/672 tests
+`zig build` (14/14 steps) and `zig build test` (47/47 steps, **694/694 tests
 passed**). `zig build qemu-test`, `qemu-storage-test`, `qemu-interactive-test`
 and `check` were **not executed** — the environment has no QEMU, no OVMF and no
 reachable package mirror. Host test results therefore appear as
@@ -50,8 +50,8 @@ reachable package mirror. Host test results therefore appear as
 | Command | Date | Result |
 |---|---|---|
 | `zig version` | 2026-10-31 | `0.17.0` |
-| `zig build` | 2026-10-31 | success — `kynox-boot.efi` 181,760 B · `kynox-kernel` 65,770,762 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test` | 2026-10-31 | success — 672 tests (22 artifacts): kvdi 167 · fs-loader 154 · arch 112 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3 |
+| `zig build` | 2026-10-31 | success — 14/14 steps; `kynox-boot.efi` 185,344 B · `kynox-kernel` 66,777,813 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
+| `zig build test` | 2026-10-31 | success — 694 tests (22 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
 | `zig build qemu-interactive-test` | — | **not executed** |
@@ -65,8 +65,8 @@ reachable package mirror. Host test results therefore appear as
 | Kernel entry / CPU / interrupts | **60%** | in_progress | x86-64 entry with kernel-owned stack, GDT/TSS, IDT, exception/interrupt stubs, timer, fault self-test, NX enforced before use | Exception recovery audit, per-CPU state, hardware coverage |
 | Physical memory / heap / DMA | **60%** | in_progress | PMM over the handoff map, kernel heap, DMA allocation/mapping and window probe | Scalability, fragmentation policy, reclaim, IOMMU |
 | Virtual memory / address spaces | **45%** | in_progress | Four-level paging, per-process user windows, W^X encoded with negative tests, `isUserRange` validation everywhere | Region abstraction, demand paging, COW, ASLR, TLB shootdown, high-half |
-| ACPI / PCI / APIC | **50%** | in_progress | ACPI RSDP/XSDT/MADT discovery at boot with validated LAPIC base and recorded IOAPICs/overrides, PCI config + BAR + capability walking, LAPIC xAPIC access and IPIs | **IOAPIC is discovered, not programmed**; overrides not applied to routing; no QEMU/hardware evidence |
-| SMP / AP startup | **30%** | in_progress | AP stacks, trampoline, INIT/SIPI path invoked at boot | APs do not run the scheduler; per-CPU timer/IPI; SMP stress |
+| ACPI / PCI / APIC | **50%** | in_progress | ACPI RSDP/XSDT/MADT discovery at boot with validated LAPIC base and recorded IOAPICs/overrides, I/O APIC access and redirection-entry programming for the ISA lines (masked), PCI config + BAR + capability walking, LAPIC xAPIC access and IPIs | **I/O APIC entries are programmed masked**; delivery still comes from the 8259 (I/O APIC delivery is an unproven build option); PCI GSI routing and interrupt remapping absent; no QEMU/hardware evidence |
+| SMP / AP startup | **30%** | in_progress | CPU table built from the MADT (APIC ids, BSP by id), AP stacks, trampoline, gated INIT/SIPI path | Trampoline is never copied below 1 MiB, so no AP starts; no same-timer kick per CPU; no IPI beyond INIT/SIPI; no SMP run ever recorded |
 | Scheduler / task switching | **55%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics | Effectively BSP-centric; per-CPU queues, migration, fairness, SMP safety |
 | User processes / Ring 3 | **60%** | in_progress | User-mode tasks, separate address spaces, two embedded native apps, lifecycle probe | General process API, resource limits, isolation stress |
 | Native syscall ABI | **55%** | in_progress | `syscall`/`iretq` door with MSR programming, 22 calls (12 reserved), pointer validation, SDK wrappers; one normative contract (`shared/syscall_abi.zig`, revision 1) aliased by kernel and SDK; conformance suite against the spec | Door never executed in a VM here; no argument fuzzing; revision checked at build/test time only |
@@ -88,9 +88,9 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation | Linux process ABI, syscall translation, signals/futex/TLS, dynamic linker |
 | Windows binary compatibility | **0%** | not_started | No implementation | PE32+ loader, Win64 ABI, NT/Win32, DLL/TLS/unwind |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 22 host artifacts (672 tests) in `zig build test`; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts | No CI, no recorded QEMU result, 8 unreachable files, no fuzzing, no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 22 host artifacts (694 tests) in `zig build test`, including a documentation link check; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
-| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | No CI; toolchain installed by hand; no reproducible-artifact story |
+| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, `docs-check`, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | CI defined but never run; toolchain installed by hand; no reproducible-artifact story |
 
 ## Implemented foundations
 
@@ -110,26 +110,37 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (672) and QEMU integration scripts.
+- Host unit tests (694) and QEMU integration scripts.
 
 ## Important limitations and corrections
 
-1. **SMP is not complete.** AP startup code exists and is invoked, but APs do not
-   run the normal scheduler workload. Do not describe Kynox as a fully SMP
-   operating system.
+1. **SMP is not complete — and no AP has ever run.** The CPU table is now built
+   from the MADT (enabled processors, BSP by APIC id, duplicates skipped), and
+   `startAps()` reports the blockage instead of sending SIPIs: the trampoline is
+   not copied below 1 MiB yet (`publishTrampoline` has no caller). Do not
+   describe Kynox as SMP, and do not read the boot log as evidence of a second
+   CPU: there is none.
 2. **The active VirtIO Block path is KVDI** (`kernel/drivers/kvdi/block.zig`),
-   used by `kernel/main.zig`. `kernel/arch/x86_64/virtio_blk.zig` is a legacy
-   stub that unconditionally returns `NotImplemented` and is referenced only by
-   the test root; it is not the active driver (removal decided in ADR-0003).
-3. **ACPI/MADT discovery runs, but the I/O APIC is not programmed.**
+   used by `kernel/main.zig`, and the boot marker `virtio: split queue layout
+   ok` is produced by a KVDI virtqueue probe
+   (`kernel/drivers/kvdi/virtqueue_probe.zig`, ADR-0002 steps 1–2).
+   `kernel/arch/x86_64/virtio_blk.zig` is a legacy stub that unconditionally
+   returns `NotImplemented` and is referenced only by the test root; it is not
+   the active driver (removal decided in ADR-0003). The duplicate queue code in
+   `kernel/arch/x86_64/virtio.zig` no longer has a boot-path caller; its
+   deletion is ADR-0002 step 3.
+3. **The I/O APIC is programmed, but it does not deliver.**
    `discoverAcpi` in `kernel/main.zig` reads the MADT through the RSDP before
    the kernel page tables replace the firmware identity map, validates the
    local APIC address and installs it with `apic.setBase`; an unusable table
-   leaves the documented default `0xFEE00000` in place and logs why. The I/O
-   APIC entries and interrupt source overrides are parsed, validated and
-   recorded, but no redirection-table entry is written and the overrides do
-   not change routing yet (audit A-03, resolved in part). No QEMU or hardware
-   run has validated the path.
+   leaves the documented default `0xFEE00000` in place and logs why.
+   `installIoApic` then maps the first usable controller, masks every entry and
+   programs IRQ0 (PIT) and IRQ1 (keyboard) with the effective GSI, polarity and
+   trigger from `acpi.isaRoute`, **masked**. Delivery stays on the 8259; the
+   build option `-Dioapic-delivery=true` switches it, masks both 8259s first,
+   and has never been booted. So: discovery and programming are host-tested,
+   routing is unproven, and no interrupt has been observed through the I/O
+   APIC (audit A-02/A-03).
 4. **VirtIO Block uses synchronous polling.** No interrupt/MSI-X completion,
    no multi-queue, no asynchronous I/O.
 5. **Persistence has bounded evidence.** KNV commit/recover code and a two-boot
@@ -175,13 +186,17 @@ Taken from the audit plan (see the audit for evidence and scope):
    The procedure and the failed attempt are in `docs/validation/qemu.md`;
    **no run has succeeded**.
 4. ~~Wire ACPI/MADT discovery into LAPIC/IOAPIC initialization~~ — done for the
-   LAPIC base, the IOAPIC list and the overrides; **IOAPIC programming and
-   routing remain**.
+   LAPIC base, the IOAPIC list, the overrides and the redirection entries
+   (masked); **delivery through the I/O APIC remains unproven and the
+   `ioapic-delivery` option has never been exercised**.
 5. ~~Decide the fate of the legacy `virtio_blk.zig` stub and of the parallel
    `arch/x86_64/virtio.zig` queue code~~ — decided in ADR-0002 and ADR-0003
-   (`docs/decisions/`); the code changes are pending.
+   (`docs/decisions/`). ADR-0002 steps 1–2 are executed; step 3 (deletion of
+   the duplicate queue and of `virtio_net.zig`, which depends on it) and
+   ADR-0003's deletion are pending.
 6. Extract boot-time probes from `kernel/main.zig` into a diagnostics module
-   (ADR-0001: accepted, deferred until a boot can be compared before/after).
+   (ADR-0001: accepted, deferred until a boot can be compared before/after;
+   ADR-0002 step 2 already repointed the virtqueue probe to KVDI).
 7. Complete SMP scheduler integration, then VMM regions/TLB shootdown.
 8. Strengthen native KEX/ELF ABI, linker and SDK before any compatibility
    personality.

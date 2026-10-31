@@ -108,7 +108,7 @@ change.
 | Command | Result |
 |---|---|
 | `zig version` | `0.17.0` |
-| `zig build` | success — 13/13 steps |
+| `zig build` | success — 14/14 steps |
 | `zig build test` | success — 39/39 steps, 615/615 tests |
 | `zig build qemu-test` | not executed — QEMU/OVMF unavailable |
 | `zig build qemu-storage-test` | not executed — same |

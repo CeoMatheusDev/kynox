@@ -194,6 +194,21 @@ pub fn build(b: *std.Build) void {
         .os_tag = .freestanding,
         .abi = .none,
     });
+    // Build-time switches that change kernel behaviour. They exist so a
+    // change that needs runtime validation is a documented build flag, not a
+    // silent edit: `zig build -Dioapic-delivery=true` compiles the delivery
+    // path, the default keeps the validated 8259 path.
+    const kernel_options = b.addOptions();
+    kernel_options.addOption(
+        bool,
+        "ioapic_delivery",
+        b.option(
+            bool,
+            "ioapic-delivery",
+            "Deliver hardware interrupts through the I/O APIC instead of the 8259 (needs a recorded QEMU boot)",
+        ) orelse false,
+    );
+
     const kernel_module = b.createModule(.{
         .root_source_file = b.path("kernel/main.zig"),
         .target = kernel_target,
@@ -213,6 +228,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     kernel_module.addImport("kynox_block", block_kernel_module);
+    kernel_module.addOptions("kynox_config", kernel_options);
 
     const kernel_keyboard_module = b.createModule(.{
         .root_source_file = b.path("kernel/input/keyboard.zig"),
@@ -550,6 +566,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     arch_test_module.addImport("kynox_shared", shared);
+    // `timer.zig` and `interrupt.zig` read the delivery switch at comptime;
+    // the host tests compile the same module with the default value.
+    arch_test_module.addOptions("kynox_config", kernel_options);
     const arch_tests = b.addTest(.{
         .name = "arch-tests",
         .root_module = arch_test_module,
@@ -679,6 +698,15 @@ pub fn build(b: *std.Build) void {
     qemu_run.step.dependOn(&image_step.step);
     qemu_run_step.dependOn(&image_step.step);
     qemu_run_step.dependOn(&qemu_run.step);
+
+    // Documentation link check: the Markdown is the only reference the
+    // project publishes, and a link to a deleted file is invisible in review.
+    // The step is part of `test` because it needs no device and no firmware.
+    const docs_step = b.step("docs-check", "Validate the relative links of the Markdown documentation");
+    const docs_check = b.addSystemCommand(&.{ "python3", "scripts/check-docs-links.py", "." });
+    docs_check.has_side_effects = true;
+    docs_step.dependOn(&docs_check.step);
+    unit_test_step.dependOn(&docs_check.step);
 
     const check_step = b.step("check", "Run the unit tests and the automated boot test");
     check_step.dependOn(unit_test_step);

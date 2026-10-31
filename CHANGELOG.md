@@ -71,8 +71,60 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 - `acpi.zig` is now reachable from the `arch-tests` root: its tests had never
   executed before this change.
 
+- `kernel/arch/x86_64/ioapic.zig` — I/O APIC register access and redirection
+  entries: MMIO offsets (select `0x00`, window `0x10`), version decode (version
+  in bits 0..7, entry count minus one in bits 16..23), 64-bit entry
+  encode/decode, `DeliveryMode`/`Polarity`/`Trigger`, `Controller` with
+  `init`/`ownsGsi`/`readEntry`/`program`/`mask`/`unmask`/`maskAll`/`allMasked`
+  and a small spinlock for the select/window pair. Eight host tests.
+- `acpi.IsaRoute` and `acpi.isaRoute(irq, overrides)` — effective GSI,
+  polarity and trigger of an ISA line, with the ISA bus default (high level,
+  edge) and the MADT interrupt-source-override flags decoded per bits [1:0] and
+  [3:2] (3 = reserved → conforming high/edge).
+- I/O APIC programming in the boot path (`installIoApic`): maps the controller
+  page, initialises it, masks every entry, programs the ISA lines in use
+  (`32 + irq`, BSP destination) with the properties from `isaRoute`, and logs
+  one line per route. Entries stay **masked**; delivery switches to the I/O
+  APIC only with the new build option `-Dioapic-delivery=true`
+  (`kynox_config.ioapic_delivery`, default `false`), which masks both 8259s
+  before unmasking any entry.
+- `timer.endOfInterrupt(vector)` and `timer.disablePic()` — the EOI target
+  follows the delivery switch (local APIC when the I/O APIC delivers, 8259
+  otherwise); masking the PIC is explicit and separate from the 8259 remap.
+- `apic.sendInit(apic_id)` — INIT IPI, first message of the INIT-SIPI-SIPI
+  sequence.
+- SMP CPU table from the MADT: `smp.configureFromMadt` (enabled processors in
+  table order, duplicates skipped, `max_cpus` cap), `apicIdFor`,
+  `cpuIndexForApicId`, `bspCpuIndex`, `discoveredCpuCount`; `cpuId()` now
+  translates the local APIC id through the table instead of assuming 0.
+- `smp.publishTrampoline` and the startup gate: `startAps()` sends nothing when
+  no AP was discovered or when the trampoline is not published below 1 MiB.
+  When both hold, each AP receives INIT + two SIPIs and the BSP waits a bounded
+  number of pauses for `online`; a silent AP is reported, never assumed online.
+- `scripts/check-docs-links.py` and the build step `docs-check` (also part of
+  `test`): every relative Markdown link must resolve in the tree.
+- `scripts/provision-qemu.sh` — isolated, root-free provisioning of a static
+  QEMU and OVMF into `.tools/` (ignored by Git); `--check` reports what is
+  present. Blocked in this sandbox (see `docs/validation/qemu.md` §8).
+- `.github/workflows/ci.yml` — build + host tests + documentation links, and a
+  separate QEMU job that installs `qemu-system-x86`/`ovmf` and **fails
+  explicitly** when it cannot, instead of reporting a green run that booted
+  nothing. Not executed yet.
+
 ### Changed
 
+- `probeVirtqueueLayout` (ADR-0002 step 2) now exercises
+  `kvdi.virtqueue` instead of the legacy queue: the marker
+  `[KNK] virtio: split queue layout ok` is unchanged, its numbers are the KVDI
+  layout (`desc=0 avail=256 used=304 size=448`). `kernel/main.zig` no longer
+  imports `arch/x86_64/virtio.zig`; the legacy module and `virtio_net.zig`
+  remain for their last step (deletion), which is recorded as pending.
+- `apic.zig` no longer leaves the register pointer `undefined` before `map`
+  (undefined pointer arithmetic in `isMapped`); it points at the default base
+  until mapped and `isMapped` reports an explicit flag. `sendIpi` mixed an enum
+  with an integer in a bitwise or, which did not compile once instantiated —
+  now explicit conversions.
+- `smp.startAps()` no longer assumes sequential APIC ids (BSP = 0, APs = 1..n).
 - `version.zig` now embeds `VERSION` instead of holding components, and resolves
   the official generation from the major: `display` is `Kynox One 0.1.0-alpha.1`,
   `generationFor`/`generationNameFor`/`generationOf`/`publicNameInto` reject
@@ -131,8 +183,9 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 | Command | Result |
 |---|---|
 | `zig version` | `0.17.0` |
-| `zig build` | success (13/13 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 672/672 tests, 45/45 steps (22 test artifacts, fresh cache) |
+| `zig build` | success (14/14 steps); `kynox.img` 128 MiB, 32 731 clusters |
+| `zig build test` | success — 694/694 tests, 47/47 steps (22 test artifacts, fresh cache, `docs-check` included) |
+| `zig build -Dioapic-delivery=true` | success (compiles; **never booted**, so no delivery is claimed) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |
 | `zig build qemu-storage-test` | not executed — fails through the same dependency |
 | `zig build qemu-interactive-test` | not executed — same missing firmware |
@@ -141,9 +194,11 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 ### Known limitations
 
 See `docs/PROJECT_STATUS.md` §"Important limitations and corrections" and the
-audit findings A-01 … A-18. The most important open items:
-IOAPIC programming and routing, runtime evidence at all (QEMU/OVMF), CI, and
-the architecture decisions listed in stage 5 of the readiness phase.
+audit findings A-01 … A-18. The most important open items: runtime evidence at
+all (QEMU/OVMF) — every I/O APIC and SMP claim above is host-tested only —,
+delivery through the I/O APIC, AP bring-up (the trampoline is not published),
+PCI GSI routing, and the remaining ADR steps (0001 reports/remaining probes,
+0002 step 3, 0003).
 
 ## [0.1.0-alpha.1] — UNRELEASED (draft)
 

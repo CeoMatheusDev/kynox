@@ -47,7 +47,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (672 tests); QEMU targets exist but have never been recorded, and there is no CI |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (694 tests, including a documentation link check); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -68,15 +68,15 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 
 ### Important limitations
 
-- Kynox has early SMP/AP startup code, but APs do not yet participate in the normal scheduler workload.
-- The active VirtIO Block path is **KVDI** (kernel/drivers/kvdi/block.zig), which implements synchronous requests. kernel/arch/x86_64/virtio_blk.zig is a separate legacy stub and is not the active driver; its removal is decided in ADR-0003 but not yet executed. The parallel queue code in kernel/arch/x86_64/virtio.zig is a duplicate of KVDI's virtqueue (ADR-0002).
+- Kynox has early SMP code: the CPU table is built from the MADT, but the trampoline is never published below 1 MiB, so `startAps()` refuses to send SIPIs and **no AP has ever run**. APs do not participate in the scheduler workload.
+- The active VirtIO Block path is **KVDI** (kernel/drivers/kvdi/block.zig), which implements synchronous requests. kernel/arch/x86_64/virtio_blk.zig is a separate legacy stub and is not the active driver; its removal is decided in ADR-0003 but not yet executed. The boot marker `virtio: split queue layout ok` now proves KVDI's virtqueue (ADR-0002 step 2); the parallel queue code left in kernel/arch/x86_64/virtio.zig is a duplicate with no boot-path caller, and its deletion is ADR-0002 step 3, still pending.
 - VirtIO Block completion currently uses polling; interrupt/MSI-X-driven asynchronous I/O and multi-queue support are not established.
 - KNV commit/recovery and a QEMU two-boot block persistence probe exist. This does not yet provide journaled, power-loss-safe filesystem guarantees.
 - KFSX currently provides a mount namespace and RamFS routing, not a mature multi-filesystem VFS.
 - KEX is the Kynox executable container around an ELF64 payload. It is **not** Linux binary compatibility.
 - Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made.
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
-- ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The **IOAPIC is not programmed**, so interrupt routing is unchanged, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
+- ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The I/O APIC redirection entries for IRQ0 (PIT) and IRQ1 (keyboard) are programmed **masked**, with the GSI/polarity/trigger taken from the interrupt source overrides; delivery still comes from the 8259, and the `-Dioapic-delivery=true` option that switches it has never been booted. No interrupt has been observed through the I/O APIC, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
 - The system version has a single source (`VERSION` → `version.zig`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM. The generation name is derived from the major, never typed by hand.
 - There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below). The three QEMU targets were attempted on 2026-10-31 and all stop at "no OVMF firmware found"; the procedure and the attempt table are in docs/validation/qemu.md.
 
@@ -90,7 +90,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (672) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (694) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -137,13 +137,13 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 | Command | Result |
 |---|---|
 | `zig version` | `0.17.0` |
-| `zig build` | success — 13/13 steps; `kynox-boot.efi` 181,760 B, `kynox-kernel` 65,770,762 B, `kynox.img` 128 MiB |
-| `zig build test` | success — 45/45 steps, **672/672 tests passed** |
+| `zig build` | success — 14/14 steps; `kynox-boot.efi` 185,344 B, `kynox-kernel` 66,777,813 B, `kynox.img` 128 MiB (32 731 clusters) |
+| `zig build test` | success — 47/47 steps, **694/694 tests passed** (fresh cache) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
 
-The QEMU suites assert 117 markers and patterns (handoff, GDT/IDT, NX, PCI, DMA,
+`zig build test` also runs the documentation link check (`docs-check`). The QEMU suites assert 117 markers and patterns (handoff, GDT/IDT, NX, PCI, DMA,
 virtqueue, timer, PS/2, incremental redraw, filesystem, KNV commit/recover, KPK,
 task creation, native ELF execution, page permissions). Their results must be
 recorded in the release notes once a machine with QEMU + OVMF runs them; the

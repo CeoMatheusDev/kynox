@@ -56,12 +56,12 @@
     },
     {
       "command": "zig build",
-      "result": "success: 13/13 steps; kynox-boot.efi 181760 B, kynox-kernel (debug) about 65.8 MB, kynox.img 128 MiB / 32731 clusters",
+      "result": "success: 14/14 steps; kynox-boot.efi 185344 B, kynox-kernel (debug) 66777813 B, kynox.img 128 MiB / 32731 clusters",
       "date": "2026-10-31"
     },
     {
       "command": "zig build test",
-      "result": "success: 45/45 steps, 672/672 tests passed",
+      "result": "success: 47/47 steps, 694/694 tests passed (22 test artifacts, fresh cache; includes docs-check)",
       "date": "2026-10-31"
     },
     {
@@ -243,37 +243,43 @@
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/acpi.zig",
+        "kernel/arch/x86_64/ioapic.zig",
         "kernel/arch/x86_64/pci.zig",
-        "kernel/arch/x86_64/apic.zig"
+        "kernel/arch/x86_64/apic.zig",
+        "kernel/main.zig"
       ],
       "implemented": [
         "ACPI RSDP/XSDT/MADT parsing with checksum and table validation",
         "MADT discovery from the RSDP at boot, before the kernel page tables replace the firmware identity map",
         "LAPIC base taken from the MADT, validated (non-zero, page-aligned, below 4 GiB) and refused with a logged reason when invalid",
         "IOAPIC entries and ISA interrupt source overrides parsed, validated and recorded",
+        "I/O APIC controller access and redirection-entry encoding (vector, delivery mode, polarity, trigger, mask, destination)",
+        "ISA routes derived from the overrides (effective GSI, polarity, trigger) for the two lines the kernel consumes",
+        "IOAPIC entries programmed at boot for IRQ0 (PIT) and IRQ1 (keyboard), masked, with the 8259 kept as the delivery path",
         "PCI config-space access with BAR helpers and capability walking",
         "LAPIC xAPIC register access, EOI, TPR and IPI primitives"
       ],
       "limitations": [
-        "IOAPIC addresses are recorded but the redirection table is not programmed",
-        "interrupt source overrides are parsed and counted, not applied to routing",
-        "interrupts still arrive through the 8259 PIC and the LAPIC timer",
-        "MADT processor count is reported, not used to start APs",
-        "no QEMU or hardware validation of the discovery path (audit A-02)"
+        "delivery of hardware interrupts still comes from the 8259 unless the build option ioapic-delivery=true is set, and that option has never been booted",
+        "entries are programmed masked: no interrupt has been observed to arrive through the I/O APIC",
+        "only ISA lines are routed; the PCI GSI range, level-triggered acknowledgement and interrupt remapping are not implemented",
+        "overrides beyond the ISA bus (PCI IRQ routing) are parsed but not applied",
+        "no QEMU or hardware validation of the discovery or programming path (audit A-02)"
       ],
       "pending_work": [
-        "IOAPIC redirection-table programming and routing from the overrides",
-        "use the MADT processor list as the source of truth for SMP bring-up",
+        "runtime evidence that a line delivered through the I/O APIC reaches the handler and is acknowledged",
+        "PCI GSI routing and level-triggered acknowledgement",
         "runtime validation under QEMU/OVMF (audit A-02)"
       ],
       "tests": [
-        "arch-tests acpi suite: synthetic RSDP/XSDT/RSDT/MADT images, corruption, truncation, RSDT fallback, injected table source",
+        "arch-tests acpi suite: synthetic RSDP/XSDT/RSDT/MADT images, corruption, truncation, RSDT fallback, injected table source, ISA route resolution",
+        "arch-tests ioapic suite: version decode, entry encode/decode, vector and GSI bounds, mask and destination placement, MMIO window",
         "arch-tests apic suite: base validation and refusal errors"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (112 tests, acpi + apic + pci + smp included)"
+          "arch-tests (128 tests, acpi + ioapic + apic + pci + smp included)"
         ],
         "commands": [
           "zig build test --summary all",
@@ -281,7 +287,7 @@
         ],
         "last_run": "2026-10-31",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "ACPI discovery is consumed by kernel/main.zig (discoverAcpi) and compiled into the image; no boot has been observed"
+        "notes": "ACPI discovery and I/O APIC programming are consumed by kernel/main.zig and compiled into the image; no boot has been observed"
       }
     },
     {
@@ -294,32 +300,36 @@
         "kernel/main.zig"
       ],
       "implemented": [
-        "AP stacks, trampoline, INIT/SIPI startup path invoked during boot",
-        "per-CPU structure and AP registration"
+        "CPU table built from the MADT enabled processors (order preserved, duplicates skipped, max_cpus cap)",
+        "BSP identified by APIC id; cpuId() translates the local APIC id through the table",
+        "AP stacks, trampoline and the INIT-SIPI-SIPI path",
+        "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
       "limitations": [
-        "APs do not run the scheduler workload",
+        "the trampoline is never copied below 1 MiB, so startAps() refuses to start any AP",
+        "no AP has ever run in this tree: no concurrent execution evidence",
         "no per-CPU timers/IPIs for scheduling",
         "no SMP stress test"
       ],
       "pending_work": [
+        "copy the trampoline to low memory and fill its ready/GDT/CR3/stack fields",
         "put APs on the scheduler path with per-CPU run queues",
         "IPI for reschedule and TLB shootdown"
       ],
       "tests": [
-        "arch-tests (smp pure parts)"
+        "arch-tests smp suite: table order, disabled and duplicate processors, BSP by APIC id, empty MADT fallback, max_cpus cap"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (smp pure parts)"
+          "arch-tests (128 tests, smp table included)"
         ],
         "commands": [
           "zig build test"
         ],
         "last_run": "2026-10-31",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "compiles and the CPU table is host-tested; AP startup is refused until the trampoline exists, and no boot has been observed"
       }
     },
     {

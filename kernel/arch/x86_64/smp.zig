@@ -33,6 +33,7 @@ const spinlock = @import("spinlock.zig");
 const apic = @import("apic.zig");
 const kynox = @import("kynox_shared");
 const x86_cpu = @import("cpu.zig");
+const acpi = @import("acpi.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -69,13 +70,68 @@ var cpus: [max_cpus]Cpu = @splat(.{});
 /// Número de CPUs online atualmente.
 var online_cpu_count: u8 = 1;
 
-/// Retorna o número da CPU atual.
+/// Número de CPUs descritas pela MADT (incluindo o BSP).
+var discovered_cpu_count: u8 = 1;
+
+/// Índice do BSP na tabela.
+var bsp_index: u8 = 0;
+
+/// O trampolim dos APs foi publicado abaixo de 1 MiB.
 ///
-/// Implementação provisória: retorna 0 (apenas o BSP existe). Quando o
-/// suporte a APs for adicionado, esta função lerá o ID de APIC local
-/// e o traduzirá para o número de CPU usando a tabela `cpus`.
+/// O kernel ainda não copia o trampolim (`ap_trampoline.s`) para a memória
+/// baixa nem preenche os campos que ele espera; por isso a flag começa falsa
+/// e `startAps` recusa enviar IPIs. Um AP iniciado em um endereço que não
+/// contém o trampolim executa o que estiver lá.
+var trampoline_ready: bool = false;
+
+/// Endereço físico onde o trampolim foi publicado.
+var trampoline_base: u64 = 0;
+
+/// Publica o trampolim para os APs.
+///
+/// Chamado pelo BSP depois de copiar o bloco para uma página abaixo de 1 MiB
+/// e de preencher CR3, pilha, GDT e o campo `ready`. **Nenhum chamador existe
+/// hoje**: a cópia é o próximo incremento do SMP, e até lá `startAps` registra
+/// o bloqueio em vez de enviar SIPI para memória indefinida.
+pub fn publishTrampoline(base: u64) void {
+    trampoline_base = base;
+    trampoline_ready = base != 0;
+}
+
+/// Número de CPUs descobertas na MADT, incluindo o BSP.
+pub fn discoveredCpuCount() u8 {
+    return discovered_cpu_count;
+}
+
+/// Número de processadores de aplicação descobertos (exclui o BSP).
+pub fn apCount() u8 {
+    if (discovered_cpu_count <= 1) return 0;
+    return discovered_cpu_count - 1;
+}
+
+/// Índice do BSP na tabela.
+pub fn bspCpuIndex() u8 {
+    return bsp_index;
+}
+
+/// Maps an APIC id to its index in the CPU table.
+pub fn cpuIndexForApicId(apic_id: u32) ?u8 {
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (cpus[index].apic_id == apic_id) return index;
+    }
+    return null;
+}
+
+/// Returns the logical number of the current CPU.
+///
+/// The number comes from the local APIC id, translated through the table
+/// built from the MADT. Before the APIC is mapped, and on a processor that
+/// the MADT did not name, the BSP index is returned: the kernel must keep
+/// running even when the firmware description is incomplete.
 pub fn cpuId() u8 {
-    return 0;
+    if (!apic.isMapped()) return bsp_index;
+    return cpuIndexForApicId(apic.readApicId()) orelse bsp_index;
 }
 
 /// Retorna o ponteiro para a estrutura da CPU atual.
@@ -196,15 +252,118 @@ pub fn initAps() void {
     }
 }
 
+/// Configures the CPU table from the processors of the MADT.
+///
+/// The kernel no longer assumes that APIC ids are sequential: the table is
+/// built from the entries the firmware published, in the order they appear,
+/// skipping disabled processors and duplicates. The BSP is the entry whose
+/// APIC id matches `bsp_apic_id`; the BSP is `online` from the start, the APs
+/// stay `initializing` until `kynox_ap_entry` runs on them.
+///
+/// When the MADT names no processor at all (or only disabled ones) the table
+/// keeps a single entry for the BSP. A boot must not depend on a table being
+/// complete.
+///
+/// Returns the number of entries in the table, including the BSP.
+pub fn configureFromMadt(processors: []const acpi.Processor, bsp_apic_id: u32) u8 {
+    cpus = @splat(.{});
+    discovered_cpu_count = 0;
+    online_cpu_count = 1;
+    bsp_index = 0;
+
+    for (processors) |processor| {
+        if (!processor.enabled) continue;
+        if (discovered_cpu_count >= max_cpus) break;
+        if (cpuIndexForApicId(processor.apic_id) != null) continue;
+
+        const index = discovered_cpu_count;
+        cpus[index] = .{
+            .id = index,
+            .apic_id = processor.apic_id,
+            .state = if (processor.apic_id == bsp_apic_id) .online else .initializing,
+            .current_task = null,
+        };
+        discovered_cpu_count += 1;
+    }
+
+    if (discovered_cpu_count == 0) {
+        cpus[0] = .{ .id = 0, .apic_id = bsp_apic_id, .state = .online };
+        discovered_cpu_count = 1;
+    }
+
+    bsp_index = cpuIndexForApicId(bsp_apic_id) orelse 0;
+    // The BSP is always online, even if the firmware did not describe it.
+    cpus[bsp_index].state = .online;
+    return discovered_cpu_count;
+}
+
+/// Returns the APIC id of a CPU index, or null when the index is not used.
+pub fn apicIdFor(cpu_index: u8) ?u32 {
+    if (cpu_index >= discovered_cpu_count) return null;
+    return cpus[cpu_index].apic_id;
+}
+
+/// True when the CPU at `cpu_index` reached `.online` before the deadline.
+fn waitForOnline(cpu_index: u8, spins: u64) bool {
+    var remaining = spins;
+    while (remaining > 0) : (remaining -= 1) {
+        if (cpus[cpu_index].state == .online) return true;
+        x86_cpu.pause();
+    }
+    return cpus[cpu_index].state == .online;
+}
+
+/// Starts the application processors discovered in the MADT.
+///
+/// The function is deliberately conservative. It checks two preconditions
+/// before sending any IPI:
+///
+///   * at least one AP was discovered — a single-CPU machine sends nothing;
+///   * the trampoline has been published below 1 MiB — the kernel does not
+///     copy it yet, and an AP started without it executes whatever is at the
+///     SIPI vector.
+///
+/// When a precondition fails, the reason is logged and no IPI is sent. When
+/// both hold, each discovered AP receives INIT-SIPI-SIPI and the BSP waits for
+/// its `online` flag with a bounded number of pauses; an AP that does not
+/// answer is reported and left `initializing`, never assumed online.
 pub fn startAps() void {
-    // M0.5: envia SIPI (Startup IPI) para cada AP. O BSP assume APIC IDs
-    // sequenciais (BSP=0, APs=1..max-1), convencao usada pelo QEMU/OVMF.
-    const trampoline_size = @intFromPtr(&kynox_ap_trampoline_size);
-    kynox.serial.printLine("[KNK] smp: starting APs (trampoline size={d})", .{trampoline_size});
-    var ap_id: u32 = 1;
-    while (ap_id < max_cpus) : (ap_id += 1) {
-        apic.sendSipiTwice(ap_id, 0x10); // vetor 0x10 = endereco 0x10000 (abaixo de 1 MiB)
-        kynox.serial.printLine("[KNK] smp: SIPI sent to APIC id={d}", .{ap_id});
+    const ap_total = apCount();
+    if (ap_total == 0) {
+        kynox.serial.printLine("[KNK] smp: no application processor beyond the BSP; nothing to start", .{});
+        return;
+    }
+
+    if (!trampoline_ready) {
+        kynox.serial.printLine(
+            "[KNK] smp: {d} APs discovered, startup blocked: the trampoline is not published below 1 MiB",
+            .{ap_total},
+        );
+        return;
+    }
+
+    kynox.serial.printLine("[KNK] smp: starting {d} APs from the MADT (trampoline at 0x{x})", .{
+        ap_total, trampoline_base,
+    });
+
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == bsp_index) continue;
+        const apic_id = cpus[index].apic_id;
+
+        // INIT, then two STARTUP IPIs, as the processor specification
+        // requires. The vector is the page of the trampoline.
+        apic.sendInit(apic_id);
+        apic.sendSipiTwice(apic_id, @intCast(trampoline_base >> 12));
+
+        if (waitForOnline(index, 50_000_000)) {
+            online_cpu_count = @min(online_cpu_count + 1, max_cpus);
+            kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} online", .{ index, apic_id });
+        } else {
+            kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} did not answer before the deadline", .{
+                index, apic_id,
+            });
+        }
     }
 }
 
@@ -222,3 +381,61 @@ pub extern const kynox_ap_trampoline_start: u8;
 
 /// Simbolo do tamanho do trampoline (definido em ap_trampoline.s).
 pub extern const kynox_ap_trampoline_size: u64;
+
+test "the CPU table follows the MADT order and skips disabled processors" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 4, .enabled = true },
+        .{ .apic_id = 9, .enabled = false },
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 4, .enabled = true },
+    };
+
+    const known = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(@as(u8, 2), known);
+    try std.testing.expectEqual(@as(u32, 4), apicIdFor(0).?);
+    try std.testing.expectEqual(@as(u32, 0), apicIdFor(1).?);
+    try std.testing.expect(apicIdFor(2) == null);
+    try std.testing.expectEqual(@as(u8, 1), bspCpuIndex());
+    try std.testing.expectEqual(@as(u8, 1), apCount());
+    try std.testing.expectEqual(@as(u8, 1), cpuId());
+}
+
+test "a table without the BSP keeps the BSP online at index zero" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 12, .enabled = true },
+        .{ .apic_id = 13, .enabled = true },
+    };
+
+    const known = configureFromMadt(&processors, 7);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(@as(u8, 2), known);
+    try std.testing.expectEqual(@as(u8, 0), bspCpuIndex());
+    try std.testing.expectEqual(CpuState.online, cpus[0].state);
+    try std.testing.expectEqual(CpuState.initializing, cpus[1].state);
+}
+
+test "an empty MADT leaves a single online BSP" {
+    const known = configureFromMadt(&[_]acpi.Processor{}, 3);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(@as(u8, 1), known);
+    try std.testing.expectEqual(@as(u8, 0), apCount());
+    try std.testing.expectEqual(@as(u32, 3), apicIdFor(0).?);
+    try std.testing.expectEqual(CpuState.online, cpus[0].state);
+}
+
+test "the table never grows beyond the maximum number of CPUs" {
+    var processors: [max_cpus + 4]acpi.Processor = @splat(.{ .apic_id = 0, .enabled = true });
+    for (&processors, 0..) |*processor, index| {
+        processor.apic_id = @intCast(index + 1);
+    }
+
+    const known = configureFromMadt(&processors, 1);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(max_cpus, known);
+    try std.testing.expectEqual(@as(u8, max_cpus - 1), apCount());
+}
