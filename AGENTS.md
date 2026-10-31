@@ -273,3 +273,19 @@ A plataforma deve manter três ambientes separados:
 - **Windows Compatibility:** executar binários Windows x86-64 originais, começando por PE32+ e evoluindo Win64 ABI, loader, NT/Win32 APIs, DLLs, TLS e unwind/exceptions.
 
 ELF e PE são formatos, não compatibilidade completa de sistema operacional. Nunca declare suporte amplo por apenas carregar um arquivo. Mantenha as ABIs de compatibilidade isoladas da ABI nativa do kernel; processos compatíveis continuam sob isolamento e enforcement de capabilities do Kynox. Toda expansão exige matriz de suporte, testes de conformidade, fuzzing e critérios objetivos.
+
+
+## 11. Progress tracking is mandatory
+
+Before planning work, read docs/PROJECT_STATUS.md and docs/PROJECT_STATUS.json.
+
+When a task changes implementation maturity:
+1. Update both status files in the same change as the code/documentation.
+2. Keep the subsystem ID stable in JSON; preserve valid JSON and the documented schema.
+3. Update the percentage only when the scoped behavior gains concrete implementation/integration/validation evidence. Adding files, declarations, TODOs or tests alone does not justify an increase.
+4. Record evidence paths, remaining gaps and validation state.
+5. Distinguish test code/build targets from tests actually executed. Never mark validation as passed without the exact command, environment and result.
+6. Keep README's summary consistent with the detailed status inventory.
+7. If a source comment or module overview contradicts the active call path, verify the callers and correct the stale documentation in the same task.
+
+Percentages are engineering maturity estimates, not percent of total OS completion. Do not invent one overall OS percentage by averaging unrelated subsystems. Linux and Windows compatibility must remain at 0% until actual executable loading and ABI behavior are implemented and tested.
