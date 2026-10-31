@@ -32,6 +32,7 @@
 
 const std = @import("std");
 const kynox = @import("kynox_shared");
+const kynox_version = @import("kynox_version");
 
 const handoff = kynox.handoff;
 const memmap = kynox.memmap;
@@ -209,9 +210,6 @@ fn recordArrowPerf(
     );
     perf_window = .{};
 }
-
-/// Version of the kernel, reported on the console.
-const kernel_version = "0.1.0-dev.1";
 
 /// The handler of a panic of the kernel.
 ///
@@ -658,7 +656,12 @@ var virtqueue_storage: [8192]u8 align(4096) = undefined;
 export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     serial.init();
 
-    serial.printLine("[KNK] Kynox Nucleus Kernel {s}", .{kernel_version});
+    serial.printLine("[KNK] {s}", .{kynox_version.banner("KNK")});
+    serial.printLine("[KNK] system version {s} tag {s} abi {s}", .{
+        kynox_version.string,
+        kynox_version.tag,
+        kynox.syscall_abi.string,
+    });
 
     handoff.validate(boot) catch |err| {
         serial.printLine("[KNK] FATAL: invalid handoff: {s}", .{@errorName(err)});

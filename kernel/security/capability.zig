@@ -44,6 +44,7 @@
 //! and the kernel finds the capability that the caller holds over it.
 
 const std = @import("std");
+const kynox = @import("kynox_shared");
 
 /// The kinds of capability that the table holds.
 pub const Kind = enum {
@@ -79,16 +80,7 @@ pub const Kind = enum {
 /// The values are part of the contract of the calls, and not of the kernel:
 /// a program that calls `grant` or `revoke` writes one of them in the
 /// register of the kind.
-pub const KindWire = struct {
-    /// The capability of a channel.
-    pub const channel: u64 = 0;
-    /// The capability of a process.
-    pub const process: u64 = 1;
-    /// The capability of the display.
-    pub const display: u64 = 2;
-    /// The capability of the input queue.
-    pub const input: u64 = 3;
-};
+pub const KindWire = kynox.syscall_abi.CapabilityKind;
 
 /// The kind that a value of the system call interface names.
 pub fn kindFromWire(value: u64) ?Kind {
@@ -125,24 +117,7 @@ pub fn kindName(kind: Kind) []const u8 {
 ///
 /// The rights are bits, and a holder can have a subset of the rights that
 /// the table entry carries.
-pub const Rights = struct {
-    /// The right to put a message in the subject.
-    pub const send: u64 = 1 << 0;
-    /// The right to take a message of the subject.
-    pub const receive: u64 = 1 << 1;
-    /// The right to give the capability to another process.
-    pub const delegate: u64 = 1 << 2;
-    /// The right to write in the address space of the process that the
-    /// capability names.
-    pub const write: u64 = 1 << 3;
-    /// The right to take one event from the input queue.
-    pub const read: u64 = 1 << 4;
-    /// Every right of a capability.
-    pub const all: u64 = send | receive | delegate | write | read;
-    /// The rights of a holder that can use the subject, but that cannot
-    /// give it away.
-    pub const use: u64 = send | receive;
-};
+pub const Rights = kynox.syscall_abi.Right;
 
 /// The rights that a capability of the kind can carry.
 ///

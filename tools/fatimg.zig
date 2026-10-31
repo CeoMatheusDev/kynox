@@ -38,6 +38,7 @@
 //! ```
 
 const std = @import("std");
+const kynox_version = @import("kynox_version");
 
 /// Size of a sector in bytes.
 const bytes_per_sector = 512;
@@ -310,9 +311,27 @@ fn parseOptions(init: std.process.Init) !Options {
     };
 }
 
+/// Reports whether the command line asks for the version only.
+///
+/// The flag is handled before the required options are parsed, so
+/// `kynox-fsimg --version` works without a boot image to build.
+fn versionRequested(init: std.process.Init) bool {
+    var arguments = init.minimal.args.iterate();
+    _ = arguments.skip();
+    while (arguments.next()) |argument| {
+        if (std.mem.eql(u8, argument, "--version")) return true;
+    }
+    return false;
+}
+
 /// Entry point of the image builder.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
+
+    if (versionRequested(init)) {
+        std.debug.print("{s}\n", .{kynox_version.banner("kynox-fsimg")});
+        return;
+    }
 
     const options = parseOptions(init) catch |err| {
         std.log.err(

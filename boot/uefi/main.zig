@@ -36,6 +36,7 @@
 const std = @import("std");
 const uefi = std.os.uefi;
 const kynox = @import("kynox_shared");
+const kynox_version = @import("kynox_version");
 
 const console = @import("knb/console.zig");
 const framebuffer = @import("knb/framebuffer.zig");
@@ -46,9 +47,6 @@ const memory = @import("knb/memory.zig");
 const handoff = kynox.handoff;
 const elf64 = kynox.elf64;
 const memmap = kynox.memmap;
-
-/// Version of the loader, reported on the console.
-const loader_version = "0.1.0-dev.1";
 
 /// Path of the kernel image inside the boot volume.
 const kernel_path = "\\boot\\kynoxk.elf";
@@ -131,7 +129,12 @@ fn chooseLoadBias(
 pub fn main() uefi.Error!void {
     var out = console.Console.init();
 
-    out.printLine("[KNB] Kynox {s} - Kynox Native Boot", .{loader_version});
+    out.printLine("[KNB] {s} - Kynox Native Boot", .{kynox_version.banner("KNB")});
+    out.printLine("[KNB] system version {s} tag {s} channel {s}", .{
+        kynox_version.string,
+        kynox_version.tag,
+        kynox_version.channelName(),
+    });
     out.printLine("[KNB] firmware revision: 0x{x}", .{uefi.system_table.hdr.revision});
 
     boot(&out) catch |err| {

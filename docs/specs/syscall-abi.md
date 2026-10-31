@@ -3,52 +3,59 @@
 > Normative description of the syscall interface between user mode and the
 > Kynox kernel.
 >
-> Written from [`kernel/arch/x86_64/syscall.zig`](../../kernel/arch/x86_64/syscall.zig),
-> [`kernel/arch/x86_64/syscall.s`](../../kernel/arch/x86_64/syscall.s) and
-> [`sdk/src/syscall.zig`](../../sdk/src/syscall.zig) on 2026-10-31. The code is
-> the source of truth; if this document disagrees with it, the document is a bug.
+> **Source of truth:** [`shared/syscall_abi.zig`](../../shared/syscall_abi.zig).
+> The kernel (`kernel/arch/x86_64/syscall.zig`) and the SDK
+> (`sdk/src/syscall.zig`) import that module; neither keeps a private copy.
+> This document is normative **for the meaning** of the calls and is kept in
+> agreement with the module by `abi_conformance.zig`, which fails
+> `zig build test` when the table, the dispatch, the SDK or this file diverge.
+>
+> Revision **1** — status: implemented, integrated in the boot path, validated
+> on the host only (no QEMU run yet; see `docs/audits/2026-10-31-audit.md`).
 
-## 0. Status
+## 0. Three different versions
 
-- **Implemented and integrated:** the kernel entry path, the dispatch table and
-  the SDK wrappers exist and are exercised by the native applications embedded
-  in the boot image (`user/hello.zig`, `user/client.zig`) and by `zig build test`
-  for the pure parts.
-- **Not verified end to end in this repository snapshot:** the runtime behavior
-  requires a QEMU boot, which has not been executed here
-  (`docs/audits/2026-10-31-audit.md`, A-02).
-- **ABI revision is currently ambiguous** — the SDK declares revision 13, the
-  error catalog claims 12, the previous SDK README claimed 9, and the kernel
-  declares no version at all (audit A-04). The value in §7 is the SDK's claim,
-  not an enforced contract. Until the kernel exposes and enforces it, treat the
-  ABI as **unstable** and expect numbers to be added; existing numbers must not
-  be renumbered.
+| Version | Where | Changes when |
+|---|---|---|
+| System version | `version.zig` | a product release happens (`0.1.0-alpha.1`) |
+| **ABI revision** | `shared/syscall_abi.zig` → `version` | the **meaning** of the contract changes |
+| Format versions | handoff v1, KEX v1, KPK, KNV headers | that specific format changes |
+
+Adding a new call number does **not** require a new ABI revision. Renumbering,
+removing, or changing the argument/result semantics of an existing call does.
+
+### History of the revision number
+
+The previous tree carried three informal labels — 9 (SDK README), 12 (error
+catalog comment), 13 (SDK constant) — that disagreed with each other and were
+never enforced by the kernel (audit finding A-04). Revision 1 is the first
+contract issued from a single source. It is **wire compatible** with that tree:
+no number was renumbered, removed or repurposed, 12 stays reserved, and every
+error code keeps its value.
 
 ## 1. Calling convention
 
 | Item | Contract |
 |---|---|
-| Instruction | `syscall` (`IA32_EFER.SCE` must be set; the kernel installs `IA32_STAR`, `IA32_LSTAR`, `IA32_SFMASK`) |
+| Instruction | `syscall` (`IA32_EFER.SCE` set; kernel programs `STAR`, `LSTAR`, `SFMASK`) |
 | Number | `RAX` |
-| Arguments | `RDI`, `RSI`, `RDX`, `R8` (a fourth argument travels in `R8` because the instruction overwrites `RCX`) |
+| Arguments | `RDI`, `RSI`, `RDX`, `R8` (the fourth travels in `R8` because `syscall` overwrites `RCX`) |
 | Primary result | `RAX` |
-| Secondary result | `RDX` (used by the receive family to return the message value) |
-| Clobbered by the instruction | `RCX` (return address) and `R11` (flags); both are restored before returning to user mode |
-| Errors | two's-complement negative value in `RAX` (`-1` … `-25`, see §6); a non-negative result is a success value |
-| Preserved | every other general-purpose register, as observed by the caller |
-| Stack | the entry point switches to the kernel stack of the running task; the user stack pointer is saved and restored. The handler never runs on a user stack. |
-| Interrupts | masked by `IA32_SFMASK` (`flag_mask = 0x7FD`) during entry; the caller's flags are restored by `iretq` |
+| Secondary result | `RDX` (the `receive*` family returns the message value there) |
+| Clobbered by the instruction | `RCX` (return address), `R11` (flags); both are restored before returning to user mode |
+| Errors | negative `RAX`, `RAX == -(error code)` |
+| Privilege identifiers | `Privilege.kernel = 0`, `Privilege.user = 3` (the value is the CPL the entry stub passes in `RSI`) |
+| Stack | the entry switches to the kernel stack of the task; the user stack pointer is saved and restored |
 
-The kernel does **not** use the `syscall` instruction for its own calls: the
-handler is invoked directly with `privilege = kernel`, and only the entry stub
-reaches user mode. Some calls therefore refuse kernel callers
-(`error.not_allowed`).
+The kernel does not use `syscall` for its own calls: it invokes
+`kynox_syscall_handler` directly with `privilege = Privilege.kernel`. Calls
+that need a user process refuse a kernel caller with `not_allowed` or
+`not_authorized`.
 
-### 1.1 Frame built by the entry point
+## 2. Frame layout
 
-The entry stub builds a frame with the same shape as the interrupt frames, so
-the scheduler can switch away from a task blocked in a syscall. Offsets are
-those of `SyscallFrame`/`interrupt.Frame`:
+The entry stub builds a frame with the same shape as the interrupt frames so
+the scheduler can switch away from a task that blocks inside a call:
 
 | Offset | Field |
 |---:|---|
@@ -59,139 +66,166 @@ those of `SyscallFrame`/`interrupt.Frame`:
 | 104 | `rcx` (user return address) |
 | 112 | `rax` (number in, result out) |
 
-The handler signature is
-`kynox_syscall_handler(frame: *SyscallFrame, privilege: u64)`; `privilege` is
-the discriminator that separates a user call from a direct kernel call.
+Sequence: save user `RSP` → load the per-task kernel stack → push the `iretq`
+frame (`SS = 0x23`, user `RSP`, user flags, `CS = 0x1b`, `RCX`) → push the
+two-shape marker (`error code = 0`, `vector = 0`) → save the general registers
+→ call the handler → restore → `iretq`. Blocking calls set
+`kynox_syscall_blocked` so the scheduler can run another task; the result is
+written directly into the saved frame when the wait completes.
 
-### 1.2 Path to user mode
+## 3. Syscall table
 
-`syscall` does not switch stacks. The stub saves `RSP` into
-`kynox_user_stack_pointer`, loads the per-task kernel stack from
-`kynox_kernel_stack_pointer`, pushes the `iretq` frame (`SS = 0x23`,
-saved `RSP`, saved flags, `CS = 0x1b`, `RCX`), the two-shape marker
-(`error code = 0`, `vector = 0`), and the general registers. The return is an
-interrupt return, which restores the user segments and stack.
+Numbers in use: **1–11, 13–23**. Number **12 is reserved** and must never gain
+a different meaning.
 
-Blocking calls (`receive`, `receive_blocking`, `receive_timeout`,
-`input_wait`) mark `kynox_syscall_blocked` so the scheduler can run another
-task and later resume this one; the message is delivered directly into the
-saved frame, so the task continues after the call as if it had returned
-immediately.
+| # | Name | Arguments (`RDI`, `RSI`, `RDX`, `R8`) | Result |
+|---:|---|---|---|
+| 1 | `ping` | — | `0x42` (`ping_result`) |
+| 2 | `write` | buffer, length, descriptor | bytes written |
+| 3 | `memcpy` | destination, source, length | bytes copied |
+| 4 | `exit` | code | — (task ends) |
+| 5 | `send` | channel, side, kind, value | 0 on success |
+| 6 | `receive` | channel, side | kind; value in `RDX` |
+| 7 | `copy_to` | process, destination, source, length | bytes copied |
+| 8 | `receive_blocking` | channel, side | kind; value in `RDX` |
+| 9 | `grant` | process, kind, subject, rights | 0 on success |
+| 10 | `revoke` | process, kind, subject | 0 on success |
+| 11 | `receive_timeout` | channel, side, ticks | kind; value in `RDX` |
+| 12 | — | — | **reserved** |
+| 13 | `fs_open` | path address, path length, flags | descriptor |
+| 14 | `fs_close` | descriptor | 0 |
+| 15 | `fs_read` | descriptor, buffer, length | bytes read |
+| 16 | `fs_write` | descriptor, buffer, length | bytes written |
+| 17 | `fs_create` | path address, path length | descriptor (mode 0644) |
+| 18 | `fs_mkdir` | path address, path length | 0 |
+| 19 | `display_info` | address, length | bytes written |
+| 20 | `present` | request address, length | 0 |
+| 21 | `input_poll` | event address, length | 1 event / 0 none |
+| 22 | `fs_truncate` | descriptor, new size | 0 |
+| 23 | `input_wait` | event address, length, timeout ticks | 1 event |
 
-## 2. Syscall table
+### Notes per family
 
-Numbers in use: **1–11, 13–23**; **12 is reserved** and must not be reused for
-a different purpose without a documented decision.
+- **Console** (`write`): `descriptor` must be `1` (`Descriptor.console`); the
+  buffer must be mapped readable; length ≤ 64 KiB.
+- **Memory** (`memcpy`, `copy_to`): both ranges are validated; overlap is
+  handled (`memmove` semantics); `copy_to` validates the destination inside the
+  target address space and the source in the caller's.
+- **IPC** (`send`/`receive*`): requires the channel capability with `send` or
+  `receive`. `receive_timeout` with `ticks = 0` means "no deadline" and behaves
+  like `receive_blocking`; on expiry the wait is removed and the message stays
+  queued.
+- **Capabilities** (`grant`/`revoke`): the caller must hold the capability with
+  `delegate`; granted rights must be a subset of the caller's rights.
+- **Filesystem** (`fs_*`): paths are UTF-8, **not** NUL terminated, at most 255
+  bytes; they are copied into a kernel buffer **after** the range check.
+- **Display** (`display_info`, `present`): the framebuffer address is never
+  exposed; `present` requires the display capability with `write`.
+- **Input** (`input_poll`, `input_wait`): requires the input capability with
+  `read`; `no_input` when the kernel has no queue.
 
-| # | Name | Arguments (`RDI`, `RSI`, `RDX`, `R8`) | Result | Notes |
-|---:|---|---|---|---|
-| 1 | `ping` | — | fixed non-zero value | proves user→kernel→user transition |
-| 2 | `write` | buffer, length, descriptor | bytes written | `descriptor` must be `1` (console); length ≤ 64 KiB; buffer must be mapped readable |
-| 3 | `memcpy` | destination, source, length | bytes copied | both ranges validated; overlap-safe (`memmove` semantics) |
-| 4 | `exit` | code | — (task ends) | terminates the calling task |
-| 5 | `send` | channel, side, kind, value | 0 on success | requires `send` right on the channel capability; `full_queue` when the queue is full |
-| 6 | `receive` | channel, side | `RAX` = message kind, `RDX` = value | requires `receive` right; `empty_queue` when nothing is queued |
-| 7 | `copy_to` | process, destination, source, length | bytes copied | cross-address-space copy; destination validated in the target space, source in the caller's |
-| 8 | `receive_blocking` | channel, side | kind / value (`RDX`) | blocks the caller until a message arrives |
-| 9 | `grant` | process, kind, subject, rights | 0 on success | caller must hold the capability **with** `delegate`; granted rights must be a subset |
-| 10 | `revoke` | process, kind, subject | 0 on success | caller must hold `delegate` |
-| 11 | `receive_timeout` | channel, side, ticks | kind / value (`RDX`) | `ticks = 0` means "no deadline" (same as blocking); expiry yields `timeout` and the message stays queued |
-| 12 | — | — | — | **reserved** |
-| 13 | `fs_open` | path address, path length, flags | descriptor | path ≤ 255 bytes, not NUL-terminated; requires the caller to be a known process |
-| 14 | `fs_close` | descriptor | 0 | |
-| 15 | `fs_read` | descriptor, buffer, length | bytes read | buffer must be writable in the caller's space |
-| 16 | `fs_write` | descriptor, buffer, length | bytes written | buffer must be readable |
-| 17 | `fs_create` | path address, path length | descriptor | created with mode `0644` |
-| 18 | `fs_mkdir` | path address, path length | 0 | |
-| 19 | `display_info` | address, length | bytes written | fills a `display.DisplayInfo`; length is both the capacity and the returned size |
-| 20 | `present` | request address, length | 0 | requires the `display` capability with `write`; request is a `display.PresentRequest` validated before use |
-| 21 | `input_poll` | event address, length | `1` event / `0` none | requires the `input` capability with `read`; `no_input` when no queue exists |
-| 22 | `fs_truncate` | descriptor, new size | 0 | shrinks a regular file |
-| 23 | `input_wait` | event address, length, timeout ticks | `1` event | requires `input`+`read`; `ticks = 0` waits without a deadline |
+## 3.1 Capability arguments
 
-Filesystem and IPC calls require a valid caller process context; a call that
-cannot resolve the caller fails with `not_authorized`.
+`grant` (`RSI` = kind, `R8` = rights) and `revoke` (`RSI` = kind) take values
+from the capability part of the contract (`shared/syscall_abi.zig`); the kernel
+maps them to its internal kind and the SDK exposes them as
+`sdk.CapabilityKind` / `sdk.Right`.
 
-## 3. Validation rules applied by the kernel
+| Kind | Value | Subject named by the call |
+|---|---:|---|
+| `channel` | 0 | channel identifier |
+| `process` | 1 | process identifier (`copy_to` destination) |
+| `display` | 2 | 0 (the display is unique) |
+| `input` | 3 | 0 (the input queue is unique) |
 
-Every call that takes a user address applies, in this order:
+| Right | Value | Allows |
+|---|---:|---|
+| `send` | 1 | put a message in the subject |
+| `receive` | 2 | take a message from the subject |
+| `delegate` | 4 | give the capability to another process |
+| `write` | 8 | write into the address space the capability names |
+| `read` | 16 | take an input event |
+| `all` | 31 | every right |
+| `use` | 3 | use the subject without giving it away |
 
-1. `length != 0` and `length <= max_block_length` (65,536) where a length is
-   meaningful → `invalid_length`.
-2. The whole range is mapped in the caller's address space with the required
-   permission (`paging.isUserRange(..., writable)`), page by page, with
-   overflow-safe bounds → `invalid_address`.
-3. Paths are copied through a 255-byte kernel buffer; the copy happens after
-   the range check, never before.
-4. Optional capability checks (`send`/`receive` rights, `display`/`input`
-   kinds) → `not_authorized`.
-5. Descriptor namespace is per process; an unknown descriptor → `bad_descriptor`.
+A granted set must be a subset of the caller's rights; `delegate` is not
+implied unless requested explicitly.
 
-The kernel never dereferences a user pointer directly: all access happens after
-range validation, and copies into kernel buffers are bounded.
+## 4. Validation applied by the kernel
 
-## 4. Address-space assumptions
+In this order, before any dereference:
 
-- User code, data and stack live in a per-process window described by
-  `shared/usermode.zig`: `code_offset = 0x0`, `data_offset = 0x1000`,
-  `stack_offset = 0x4000`, `stack_pages = 2`, `window_size = 0x6000`.
-- The window base is chosen by the kernel at process creation and is **not** a
-  fixed address; user code never assumes an address.
-- Kernel addresses are never valid for a syscall argument; a "user range" is a
-  set of present user pages.
+1. Length constraints (`length != 0`, `length <= max_block_length`, or at least
+   the wire size of the structure) → `invalid_length`.
+2. Whole range mapped in the caller's space with the required permission
+   (`paging.isUserRange` / `isUserRangeIn`, page by page, overflow safe) →
+   `invalid_address`.
+3. Capability/right checks → `not_authorized`.
+4. Descriptor namespace of the process → `bad_descriptor`.
 
-## 5. Error encoding
+User pointers are never dereferenced before step 2, and no kernel pointer is
+ever exposed to user mode.
 
-```c
-/* RAX >= 0 : success value
-   RAX <  0 : error, RAX == -(error code)          */
+## 5. Error codes
+
+```text
+RAX >= 0 : success value (for receive*: the message kind)
+RAX <  0 : error, RAX == -(code)
 ```
-
-Calls that return a message kind (`receive*`) use the same rule: a negative
-`RAX` is an error, a non-negative `RAX` is a message kind whose value is in
-`RDX`.
-
-## 6. Error codes
 
 | Code | Name | Meaning |
 |---:|---|---|
-| 1 | `unknown_call` | number not implemented |
-| 2 | `invalid_address` | address/length pair is not a valid user range |
+| 1 | `unknown_call` | number not dispatched |
+| 2 | `invalid_address` | address/length is not a valid user range |
 | 3 | `invalid_length` | zero, too large, or shorter than the required structure |
-| 4 | `not_allowed` | call not permitted for the caller's privilege level or descriptor |
+| 4 | `not_allowed` | not permitted for this privilege level or descriptor |
 | 5 | `empty_queue` | nothing to receive |
-| 6 | `unknown_channel` | channel id does not exist |
+| 6 | `unknown_channel` | channel does not exist |
 | 7 | `full_queue` | receiver queue is full |
-| 8 | `unknown_process` | process id does not exist |
-| 9 | `wait_impossible` | the wait would be a busy loop (no other runnable task) |
+| 8 | `unknown_process` | process does not exist |
+| 9 | `wait_impossible` | the wait would be a busy loop |
 | 10 | `not_authorized` | missing capability/right, or no process context |
 | 11 | `unknown_kind` | capability kind does not exist |
-| 12 | `invalid_rights` | empty or inapplicable rights set |
-| 13 | `timeout` | deadline expired before the message arrived |
+| 12 | `invalid_rights` | empty or inapplicable rights |
+| 13 | `timeout` | deadline expired first |
 | 14 | `no_such_file` | path does not resolve |
 | 15 | `no_space` | no free block or inode |
 | 16 | `bad_descriptor` | descriptor is not open |
-| 17 | `too_many_open_files` | per-process table is full |
+| 17 | `too_many_open_files` | per-process table full |
 | 18 | `name_exists` | path already exists |
-| 19 | `invalid_name` | malformed path or name |
-| 20 | `file_too_large` | exceeds filesystem limit |
-| 21 | `io_error` | filesystem refused for any other reason |
-| 22 | `no_display` | firmware provided no usable display |
-| 23 | `invalid_geometry` | presentation rectangle is empty or outside the display |
-| 24 | `invalid_format` | pixel format not supported |
-| 25 | `no_input` | no user input queue available |
+| 19 | `invalid_name` | malformed path/name |
+| 20 | `file_too_large` | exceeds the filesystem limit |
+| 21 | `io_error` | filesystem refused for another reason |
+| 22 | `no_display` | no usable display |
+| 23 | `invalid_geometry` | rectangle empty or outside the display |
+| 24 | `invalid_format` | pixel format unsupported |
+| 25 | `no_input` | no user input queue |
 
 New codes are appended; existing values are never renumbered.
 
-## 7. Versioning
+## 6. Conformance
 
-| Artifact | Claim today | Required state |
+| Check | Where | Runs |
 |---|---|---|
-| SDK constant | `abi_version = 13` (`sdk/src/syscall.zig`) | keep in sync with the kernel |
-| Error catalog comment | "v12" | correct or remove |
-| Kernel | no version constant | must expose the implemented ABI revision and reject/allow by policy |
-| This document | revision 13 (as claimed by the SDK) | update together with the kernel constant |
+| Every published number is dispatched by the kernel switch | `abi_conformance.zig` | `zig build test` |
+| No number is dispatched that the table does not publish | `abi_conformance.zig` | `zig build test` |
+| Every table row exists in this document, and the revision is stated | `abi_conformance.zig` | `zig build test` |
+| Reserved number 12 remains unassigned and documented | `abi_conformance.zig` | `zig build test` |
+| SDK numbers/limits are the contract's (no private copy) | `sdk/src/syscall.zig` tests | `zig build test` |
+| SDK error enum equals the contract constants, field by field | `sdk/src/syscall.zig` tests | `zig build test` |
+| Privilege identifiers match the entry stub | `shared/syscall_abi.zig` tests | `zig build test` |
+| A user-mode `ping` round trip | kernel self test + boot script | QEMU (`qemu-test`) — **not executed in this snapshot** |
 
-Until the kernel-side constant exists, **no external code may depend on the ABI
-revision**. Adding syscalls does not require a new revision; changing argument
-or result semantics does, and must be recorded in `CHANGELOG.md`.
+The last row is the only runtime check of the ABI and it requires QEMU; see
+`docs/BUILD.md` for the procedure and `docs/releases/0.1.0-alpha.1.md` for the
+gate.
+
+## 7. Changing the ABI
+
+1. Edit `shared/syscall_abi.zig` (number, limit, error code).
+2. Handle the number in `kernel/arch/x86_64/syscall.zig` and/or add the SDK
+   wrapper in `sdk/src/root.zig`.
+3. Update this document (table row, family note, §6 if needed).
+4. Run `zig build test` — the conformance test fails until 1–3 agree.
+5. Add an entry to `CHANGELOG.md`. Bump `version` in the contract only if the
+   meaning of an existing call changed.

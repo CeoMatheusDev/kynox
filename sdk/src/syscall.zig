@@ -13,77 +13,78 @@
 //  Toolchain:  Zig 0.17.0 · C23 (ISO/IEC 9899:2024) · x86-64 (AMD64)     //
 //************************************************************************//
 
-//! Interface de baixo nível da ABI VSC-0001, versão 13.
-//! x86_64: RAX=número/resultado, RDI/RSI/RDX/R8=argumentos.
-//! RCX e R11 são destruídos pela instrução syscall.
+//! Low level layer of the native syscall ABI (KX-ABI).
+//!
+//! The numbers, the limits and the error codes come from the normative
+//! contract `shared/syscall_abi.zig`, which the kernel imports as well; this
+//! file only adapts that contract to the user mode: the `syscall`
+//! instruction, the decoding of the results and a typed error enum for the
+//! applications.
+//!
+//! Calling convention (x86_64):
+//!   RAX = number / result, RDI, RSI, RDX, R8 = arguments, RDX = secondary
+//!   result of `receive*`. RCX and R11 are destroyed by the instruction.
+//!
+//! A negative status is an error: `status == -(error code)`.
 
-pub const abi_version: u32 = 13;
+const std = @import("std");
+const abi = @import("kynox_syscall_abi");
 
-pub const Number = struct {
-    pub const ping: u64 = 1;
-    pub const write: u64 = 2;
-    pub const memcpy: u64 = 3;
-    pub const exit: u64 = 4;
-    pub const send: u64 = 5;
-    pub const receive: u64 = 6;
-    pub const copy_to: u64 = 7;
-    pub const receive_blocking: u64 = 8;
-    pub const grant: u64 = 9;
-    pub const revoke: u64 = 10;
-    pub const receive_timeout: u64 = 11;
-    // 12 é reservado.
-    pub const fs_open: u64 = 13;
-    pub const fs_close: u64 = 14;
-    pub const fs_read: u64 = 15;
-    pub const fs_write: u64 = 16;
-    pub const fs_create: u64 = 17;
-    pub const fs_mkdir: u64 = 18;
-    pub const display_info: u64 = 19;
-    pub const present: u64 = 20;
-    pub const input_poll: u64 = 21;
-    /// Shrink an open file: RDI=fd, RSI=new size.
-    pub const fs_truncate: u64 = 22;
-    /// Block until an input event is available or the timeout expires:
-    /// RDI=event address, RSI=size, RDX=timeout in ticks (0 = forever).
-    pub const input_wait: u64 = 23;
-};
+/// Normative contract, re-exported for the callers of this module.
+pub const contract = abi;
 
-/// Códigos de erro estáveis definidos por VSC-0001 v12.
+/// Revision of the ABI contract implemented by this SDK.
+pub const abi_version: u32 = abi.version;
+
+/// The published call numbers.
+pub const Number = abi.Number;
+
+/// The published limits and non descriptor values.
+pub const max_block_length = abi.max_block_length;
+pub const max_path_length = abi.max_path_length;
+pub const Descriptor = abi.Descriptor;
+pub const Privilege = abi.Privilege;
+
+/// Error codes as a closed enum for the application code.
+///
+/// Every field takes its value from the contract, so the enum cannot drift
+/// from the kernel; `knownError` maps an arbitrary code and returns null for
+/// codes the contract does not define yet.
 pub const Error = enum(u64) {
-    unknown_call = 1,
-    invalid_address = 2,
-    invalid_length = 3,
-    not_allowed = 4,
-    empty_queue = 5,
-    unknown_channel = 6,
-    full_queue = 7,
-    unknown_process = 8,
-    wait_impossible = 9,
-    not_authorized = 10,
-    unknown_kind = 11,
-    invalid_rights = 12,
-    timeout = 13,
-    no_such_file = 14,
-    no_space = 15,
-    bad_descriptor = 16,
-    too_many_open_files = 17,
-    name_exists = 18,
-    invalid_name = 19,
-    file_too_large = 20,
-    io_error = 21,
-    no_display = 22,
-    invalid_geometry = 23,
-    invalid_format = 24,
-    no_input = 25,
+    unknown_call = abi.Error.unknown_call,
+    invalid_address = abi.Error.invalid_address,
+    invalid_length = abi.Error.invalid_length,
+    not_allowed = abi.Error.not_allowed,
+    empty_queue = abi.Error.empty_queue,
+    unknown_channel = abi.Error.unknown_channel,
+    full_queue = abi.Error.full_queue,
+    unknown_process = abi.Error.unknown_process,
+    wait_impossible = abi.Error.wait_impossible,
+    not_authorized = abi.Error.not_authorized,
+    unknown_kind = abi.Error.unknown_kind,
+    invalid_rights = abi.Error.invalid_rights,
+    timeout = abi.Error.timeout,
+    no_such_file = abi.Error.no_such_file,
+    no_space = abi.Error.no_space,
+    bad_descriptor = abi.Error.bad_descriptor,
+    too_many_open_files = abi.Error.too_many_open_files,
+    name_exists = abi.Error.name_exists,
+    invalid_name = abi.Error.invalid_name,
+    file_too_large = abi.Error.file_too_large,
+    io_error = abi.Error.io_error,
+    no_display = abi.Error.no_display,
+    invalid_geometry = abi.Error.invalid_geometry,
+    invalid_format = abi.Error.invalid_format,
+    no_input = abi.Error.no_input,
 };
 
-/// Preserva códigos futuros ou desconhecidos como null.
+/// Maps an error code to the enum; unknown or future codes stay null.
 pub fn knownError(status: u64) ?Error {
     const code = errorCode(status) orelse return null;
-    return switch (code) {
-        1...25 => @fromBackingInt(code), // ✅ Substituição para Zig 0.17.0
-        else => null,
-    };
+    inline for (comptime std.enums.values(Error)) |candidate| {
+        if (@intFromEnum(candidate) == code) return candidate;
+    }
+    return null;
 }
 
 pub const Result = struct {
@@ -91,35 +92,72 @@ pub const Result = struct {
     value: u64,
 };
 
-/// A saída secundária em RDX é relevante para receive*.
-/// O código não converte erros negativos em unsigned automaticamente:
-/// o chamador recebe os bits exatos da ABI.
+/// Executes one call. The secondary output (RDX) matters for `receive*`.
+///
+/// The function does not translate errors: the caller receives the exact
+/// bits of the ABI and decodes them with `knownError`/`errorCode`.
 pub inline fn call(number: u64, a: u64, b: u64, c: u64, d: u64) Result {
     var status: u64 = undefined;
     var value: u64 = undefined;
     asm volatile ("syscall"
     : [status] "={rax}" (status),
-                  [value] "={rdx}" (value),
-                  : [number] "{rax}" (number),
-                  [a] "{rdi}" (a),
-                  [b] "{rsi}" (b),
-                  [c] "{rdx}" (c),
-                  [d] "{r8}" (d),
-                  : .{ .rcx = true, .r11 = true, .memory = true });
+      [value] "={rdx}" (value),
+    : [number] "{rax}" (number),
+      [a] "{rdi}" (a),
+      [b] "{rsi}" (b),
+      [c] "{rdx}" (c),
+      [d] "{r8}" (d),
+    : .{ .rcx = true, .r11 = true, .memory = true });
     return .{ .status = status, .value = value };
 }
 
+/// True when the status carries an error.
 pub fn isError(status: u64) bool {
-    return @as(i64, @bitCast(status)) < 0;
+    return abi.isError(status);
 }
 
+/// Error code of a status, or null when the status is a success value.
 pub fn errorCode(status: u64) ?u64 {
-    if (!isError(status)) return null;
-    return 0 -% status;
+    return abi.errorCode(status);
+}
+
+test "the SDK re-exports the contract without a private copy" {
+    try std.testing.expectEqual(abi.version, abi_version);
+    try std.testing.expectEqual(abi.max_block_length, max_block_length);
+    try std.testing.expectEqual(abi.max_path_length, max_path_length);
+    inline for (comptime std.meta.declarations(Number)) |declaration| {
+        try std.testing.expectEqual(
+            @field(abi.Number, declaration),
+            @field(Number, declaration),
+        );
+    }
+}
+
+test "every error field equals the contract constant of the same name" {
+    const names = comptime std.meta.declarations(abi.Error);
+    inline for (comptime std.enums.values(Error)) |candidate| {
+        const contract_value = @field(abi.Error, @tagName(candidate));
+        try std.testing.expectEqual(contract_value, @intFromEnum(candidate));
+        try std.testing.expectEqual(@as(usize, 1), countOf(names, @tagName(candidate)));
+    }
+}
+
+test "the error enum covers the published codes and nothing else" {
+    try std.testing.expectEqual(
+        std.meta.declarations(abi.Error).len,
+        std.enums.values(Error).len,
+    );
+}
+
+fn countOf(names: []const []const u8, wanted: []const u8) usize {
+    var total: usize = 0;
+    for (names) |name| {
+        if (std.mem.eql(u8, name, wanted)) total += 1;
+    }
+    return total;
 }
 
 test "ABI call numbers are stable" {
-    const std = @import("std");
     try std.testing.expectEqual(@as(u64, 1), Number.ping);
     try std.testing.expectEqual(@as(u64, 11), Number.receive_timeout);
     try std.testing.expectEqual(@as(u64, 13), Number.fs_open);
@@ -129,18 +167,18 @@ test "ABI call numbers are stable" {
     try std.testing.expectEqual(@as(u64, 21), Number.input_poll);
     try std.testing.expectEqual(@as(u64, 22), Number.fs_truncate);
     try std.testing.expectEqual(@as(u64, 23), Number.input_wait);
-    try std.testing.expectEqual(@as(u32, 13), abi_version);
+    try std.testing.expectEqual(@as(u32, 1), abi_version);
+    // Number 12 stays reserved: it has no name and no wrapper.
+    try std.testing.expectEqual(@as(?[]const u8, null), abi.nameOf(12));
 }
 
 test "negative status decoding" {
-    const std = @import("std");
     try std.testing.expect(!isError(0));
     try std.testing.expect(!isError(0x42));
     try std.testing.expectEqual(@as(?u64, 13), errorCode(0 -% @as(u64, 13)));
 }
 
 test "error catalog and unknown codes" {
-    const std = @import("std");
     try std.testing.expectEqual(@as(?Error, .not_authorized), knownError(0 -% @as(u64, 10)));
     try std.testing.expectEqual(@as(?Error, .timeout), knownError(0 -% @as(u64, 13)));
     try std.testing.expectEqual(@as(?Error, .no_display), knownError(0 -% @as(u64, 22)));
