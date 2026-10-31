@@ -116,7 +116,7 @@ validation:
 2. **The active VirtIO Block path is KVDI** (`kernel/drivers/kvdi/block.zig`),
    used by `kernel/main.zig`. `kernel/arch/x86_64/virtio_blk.zig` is a legacy
    stub that unconditionally returns `NotImplemented` and is referenced only by
-   the test root; it is not the active driver.
+   the test root; it is not the active driver (removal decided in ADR-0003).
 3. **ACPI/MADT discovery runs, but the I/O APIC is not programmed.**
    `discoverAcpi` in `kernel/main.zig` reads the MADT through the RSDP before
    the kernel page tables replace the firmware identity map, validates the
@@ -164,9 +164,11 @@ Taken from the audit plan (see the audit for evidence and scope):
    `qemu-interactive-test` on a QEMU-capable machine; fix what they reveal.
 4. Wire ACPI/MADT discovery into LAPIC/IOAPIC initialization and remove the
    fixed base from the normal path.
-5. Decide the fate of the legacy `virtio_blk.zig` stub and of the parallel
-   `arch/x86_64/virtio.zig` queue code (ADR in `docs/decisions/`).
-6. Extract boot-time probes from `kernel/main.zig` into a diagnostics module.
+5. ~~Decide the fate of the legacy `virtio_blk.zig` stub and of the parallel
+   `arch/x86_64/virtio.zig` queue code~~ — decided in ADR-0002 and ADR-0003
+   (`docs/decisions/`); the code changes are pending.
+6. Extract boot-time probes from `kernel/main.zig` into a diagnostics module
+   (ADR-0001: accepted, deferred until a boot can be compared before/after).
 7. Complete SMP scheduler integration, then VMM regions/TLB shootdown.
 8. Strengthen native KEX/ELF ABI, linker and SDK before any compatibility
    personality.

@@ -43,6 +43,10 @@ contract, ACPI platform discovery). No tag exists.
   limits, privilege values, error codes, capability kinds and rights.
 - `abi_conformance.zig` — `abi-conformance-tests` artifact: fails when the
   contract, kernel dispatch, SDK and `docs/specs/syscall-abi.md` diverge.
+- `docs/decisions/` — ADR register and three records: probes out of
+  `kernel/main.zig` (0001), a single VirtIO transport owned by KVDI (0002), and
+  the fate of the legacy `virtio_blk.zig` stub (0003). All three record a
+  decision; none of them changes code.
 - `docs/validation/qemu.md` — QEMU procedure (prerequisites, exact VM
   configuration, what a run must record) and the dated table of attempts, all
   marked not executed for the missing firmware and emulator.

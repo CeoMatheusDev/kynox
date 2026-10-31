@@ -1,0 +1,87 @@
+# ADR-0002 · One VirtIO implementation: KVDI owns the transport
+
+- Status: **accepted**; `virtio.zig` reduced to a probe in a follow-up (not done)
+- Date: 2026-10-31
+- Related: audit findings A-06/A-07; `docs/specs/` has no VirtIO spec yet
+
+## Context
+
+The tree carries three VirtIO-related code paths:
+
+| Path | Lines | Used by | What it does |
+|---|---:|---|---|
+| `kernel/drivers/kvdi/*` | ~8,600 | `kernel/main.zig` (`bringUpVirtioDevices`, `verifyVirtioBlockPersistenceProbe`) | active block driver: PCI transport, MMIO BAR mapping, features, split virtqueue in DMA memory, synchronous I/O, persistence probe |
+| `kernel/arch/x86_64/virtio.zig` | 852 | `kernel/main.zig::probeVirtqueueLayout` (a self-test that programs no device) and `virtio_net.zig` | second split-virtqueue implementation: legacy `VRing` helpers, `DeviceQueue`, a hardcoded `pci_virtio_base = 0xFE000000`, `detectVirtioDevice` |
+| `kernel/arch/x86_64/virtio_blk.zig` | 124 | only `kernel/arch/x86_64/root.zig` (test root) | legacy stub whose functions always return `error.NotImplemented`; see ADR-0003 |
+
+`virtio.zig` and `kvdi/virtqueue.zig` implement the same device-visible
+structure twice. The legacy copy is the one the boot self-test exercises, so the
+serial line `virtio: split queue layout ok` proves the *legacy* layout, not the
+one KVDI actually uses with the device. That is misleading evidence, not just
+dead weight.
+
+`virtio_net.zig` is imported only by the arch test root and has no consumer in
+the boot path; it is a scaffold, not a driver.
+
+## Options
+
+**A. Keep both.** Cost: two implementations of a device-visible structure, one
+of which is validated by a boot marker the other does not earn.
+
+**B. Make KVDI the only implementation.**
+- Move the legacy layout arithmetic tests to `kvdi/virtqueue.zig` (they are
+  useful; the *implementation* is what should not exist twice).
+- Change `probeVirtqueueLayout` to exercise `kvdi.virtqueue` instead of
+  `virtio.DeviceQueue`, keeping the marker text.
+- Delete `virtio.zig`'s queue helpers (`VRing`, `DeviceQueue`, `QueueLayout`,
+  `splitQueueLayout`, `deviceAddresses`, `popUsed`, `initVRing`).
+- Move or delete `virtio_net.zig`; if the network scaffold is kept, it must
+  depend on KVDI's virtqueue, not on a second one.
+
+**C. Make the legacy module the shared one and rewrite KVDI on top of it.**
+Rejected: KVDI is the integrated, tested path with DMA, feature negotiation and
+containment; the legacy module programs no device.
+
+## Decision
+
+Option **B**, in three separate changes, each reversible:
+
+1. Add host tests in `kvdi/virtqueue.zig` for every layout property currently
+   tested in `virtio.zig` (descriptor table, available ring, used ring offsets,
+   alignment, wrap-around), so the coverage survives independent of the file.
+2. Repoint `probeVirtqueueLayout` to `kvdi.virtqueue` and keep the marker.
+3. Delete the duplicated queue code from `virtio.zig`; whatever remains
+   (`detectVirtioDevice`, `BlockFeatures`, `NetFeatures`) either moves to KVDI
+   or disappears with its last caller. `virtio_net.zig` follows.
+
+No deletion happens in this decision record; the changes above are separate
+commits with their own validation.
+
+## Consequences
+
+- Positive: one device-visible structure, one place to fix a virtqueue bug; the
+  boot marker starts proving the structure the driver really uses.
+- Negative: KVDI's module gains the layout tests (it grows); the legacy module
+  disappears, so any external user of it breaks — there is none in the tree.
+- Neutral: `virtio.zig`'s `0xFE000000` constant disappears with it; nothing in
+  the boot path used it.
+
+## Risks
+
+| Risk | Mitigation |
+|---|---|
+| KVDI virtqueue and legacy queue disagree on an offset and the marker was hiding it | Step 1 adds the offset tests against KVDI **before** the probe is repointed; a difference shows up as a failing host test |
+| The probe stops exercising a code path that was load-bearing | Call-graph check first; the probe only writes to a static buffer and reads back indices |
+| `virtio_net.zig` is someone's next task | It is imported by the test root only; the ADR is recorded and the deletion is a separate commit, easy to revert |
+
+### Reversal criteria
+
+If `kvdi/virtqueue.zig` cannot absorb the layout tests without importing the
+legacy module, stop: that would mean the two are not equivalent and the
+duplication is structural, not accidental. In that case the legacy module gets a
+stated owner and a documented purpose instead of deletion.
+
+### Does this contradict "never replace own implementations with external libraries"?
+
+No. Both implementations are Kynox's own code; the decision removes a
+duplicate, not a dependency.
