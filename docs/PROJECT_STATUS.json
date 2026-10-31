@@ -499,9 +499,7 @@
     }
   ],
   "known_documentation_mismatches": [
-    "kernel/drivers/kvdi/root.zig overview contains stale claims that no block driver or block I/O exists; kernel/main.zig actually initializes kvdi.block.Driver and registers a block.Device.",
     "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; do not confuse it with the active KVDI block driver.",
-    "SMP module comments include older statements that AP startup is future work; kernel/main.zig invokes smp.startAps(), while AP scheduler integration remains incomplete.",
     "README previously implied zig build check ran interactive checks; build.zig check does not depend on qemu-interactive-test."
   ]
 }
