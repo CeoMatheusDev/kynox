@@ -4,6 +4,10 @@
 > the build and the host test suite. Percentages are **engineering maturity
 > estimates**, not measured completion of the entire operating system.
 >
+> Identity: **Kynox One 0.1.0-alpha.1** — technical version `0.1.0-alpha.1`
+> (`VERSION`), generation `Kynox One` (major `0`). Policy in
+> [`VERSIONING.md`](VERSIONING.md), chart in [`roadmap/ERAS.md`](roadmap/ERAS.md).
+>
 > Audit report: [`docs/audits/2026-10-31-audit.md`](audits/2026-10-31-audit.md).
 > Machine-readable counterpart (schema v2): [`PROJECT_STATUS.json`](PROJECT_STATUS.json).
 
@@ -35,7 +39,7 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (QEMU/hardware) evidence exists for this snapshot.
 
 **Validation distinction.** On 2026-10-31 the following were executed:
-`zig build` (13/13 steps) and `zig build test` (43/43 steps, **661/661 tests
+`zig build` (13/13 steps) and `zig build test` (45/45 steps, **672/672 tests
 passed**). `zig build qemu-test`, `qemu-storage-test`, `qemu-interactive-test`
 and `check` were **not executed** — the environment has no QEMU, no OVMF and no
 reachable package mirror. Host test results therefore appear as
@@ -47,7 +51,7 @@ reachable package mirror. Host test results therefore appear as
 |---|---|---|
 | `zig version` | 2026-10-31 | `0.17.0` |
 | `zig build` | 2026-10-31 | success — `kynox-boot.efi` 181,760 B · `kynox-kernel` 65,770,762 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test` | 2026-10-31 | success — 661 tests (21 artifacts): kvdi 167 · fs-loader 154 · arch 112 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · version 5 · keyboard 4 · block-api 4 · ai 3 |
+| `zig build test` | 2026-10-31 | success — 672 tests (22 artifacts): kvdi 167 · fs-loader 154 · arch 112 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3 |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
 | `zig build qemu-interactive-test` | — | **not executed** |
@@ -84,9 +88,9 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation | Linux process ABI, syscall translation, signals/futex/TLS, dynamic linker |
 | Windows binary compatibility | **0%** | not_started | No implementation | PE32+ loader, Win64 ABI, NT/Win32, DLL/TLS/unwind |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 21 host artifacts (661 tests) in `zig build test`; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts | No CI, no recorded QEMU result, 8 unreachable files, no fuzzing, no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 22 host artifacts (672 tests) in `zig build test`; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts | No CI, no recorded QEMU result, 8 unreachable files, no fuzzing, no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
-| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 21 host-test artifacts, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`version.zig`) mirrored in the manifest and guarded by a test, zero external deps | No CI; toolchain installed by hand; no reproducible-artifact story |
+| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | No CI; toolchain installed by hand; no reproducible-artifact story |
 
 ## Implemented foundations
 
@@ -106,7 +110,7 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (661) and QEMU integration scripts.
+- Host unit tests (672) and QEMU integration scripts.
 
 ## Important limitations and corrections
 
@@ -137,9 +141,10 @@ validation:
    Kynox; Linux ABI compatibility is 0%.
 8. **Windows compatibility is 0%.** No PE32+/Win64/NT/Win32 environment exists.
 9. **The system version is centralized but the release gate is not met.**
-   `version.zig` is the only source (`0.1.0-alpha.1`), the manifest mirrors it
-   and a test fails on divergence; that closes audit A-01, it does not make the
-   tree releasable.
+   `VERSION` is the only source (`0.1.0-alpha.1`), `version.zig` embeds it, the
+   manifest mirrors it and tests fail on divergence; the public identity is
+   derived (`Kynox One 0.1.0-alpha.1`). That closes audit A-01, it does not make
+   the tree releasable.
 10. **The ABI has one revision now, and it is still unstable.** Revision 1 is
     declared in `shared/syscall_abi.zig`, aliased by the kernel and the SDK and
     checked by `abi-conformance-tests`, but the door has never run in a VM and

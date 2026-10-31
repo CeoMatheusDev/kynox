@@ -8,6 +8,8 @@ Kynox é um sistema operacional experimental nativo para **x86_64**, escrito pri
 
 Objetivo de longo prazo: construir um sistema operacional moderno, modular, seguro, previsível e de alto desempenho, com controle explícito do hardware, isolamento forte entre processos e uma experiência de desktop familiar a usuários de Windows (janelas, foco, barra de tarefas, gerenciamento de arquivos e configurações).
 
+Identidade oficial atual: **Kynox One 0.1.0-alpha.1** — geração `Kynox One` (major `0`), versão técnica `0.1.0-alpha.1` em `VERSION`. A política completa está em `docs/VERSIONING.md` e o mapa normativo de gerações em `docs/roadmap/ERAS.md`; a seção 12 deste arquivo resume as regras obrigatórias.
+
 A visão é uma direção de engenharia, não uma declaração de funcionalidades já implementadas. Sempre diferencie:
 - **Implementado:** código existente e integrado ao caminho executado.
 - **Parcial:** existe código, mas há limitações, caminhos não integrados ou dependências pendentes.
@@ -289,3 +291,40 @@ When a task changes implementation maturity:
 7. If a source comment or module overview contradicts the active call path, verify the callers and correct the stale documentation in the same task.
 
 Percentages are engineering maturity estimates, not percent of total OS completion. Do not invent one overall OS percentage by averaging unrelated subsystems. Linux and Windows compatibility must remain at 0% until actual executable loading and ABI behavior are implemented and tested.
+
+## 12. Identidade, geração e versionamento
+
+Regras obrigatórias para qualquer alteração que toque versão, nome do produto, tags ou releases.
+
+### 12.1 Fontes únicas
+
+| Informação | Fonte única | Consumidores |
+|---|---|---|
+| Versão técnica do sistema | arquivo `VERSION` (raiz), SemVer 2.0.0 | `version.zig`, que a embute em tempo de compilação |
+| Nome da geração/era | tabela `generations` em `version.zig` | kernel, bootloader, SDK, ferramentas |
+| Espelho da versão para o gerenciador de pacotes | `build.zig.zon` (`.version`) | build |
+| Revisão da ABI nativa | `shared/syscall_abi.zig` | kernel, SDK, `abi_conformance.zig` |
+| Versões de formato | cabeçalho de cada formato (handoff, KEX, KPK, KNV) | leitor e escritor de cada formato |
+
+1. Nunca escreva a versão, a tag (`v…`) ou o nome da geração como literal em kernel, bootloader, SDK ou ferramentas. Um teste inspeciona esses arquivos e falha se encontrar o literal.
+2. Altere `VERSION` e o espelho em `build.zig.zon` no mesmo commit; `version-tests` falha se divergirem.
+3. O nome público é **resolvido** a partir do major (`Kynox [Geração] [VERSÃO]`), nunca digitado.
+4. Um major sem nome oficial é erro (`error.UnnamedGeneration`), não um nome inventado. Adicionar geração exige decisão registrada (ADR), edição de `version.zig` **e** de `docs/roadmap/ERAS.md` no mesmo commit.
+
+### 12.2 Semantic Versioning
+
+- `MAJOR`: quebra de compatibilidade na linha estável; abre uma nova era.
+- `MINOR`: funcionalidade compatível. `PATCH`: correção compatível. `PRERELEASE`: ciclos `alpha.N`/`beta.N`/`rc.N`.
+- Versões `0.x` podem quebrar compatibilidade, conforme o SemVer pré-1.0.
+- Major **não** significa "objetivos técnicos concluídos", e concluir objetivos **não** sobe o major.
+
+### 12.3 Linhas de versão que não se confundem
+
+Versão do sistema, identidade da geração, revisão da ABI, versão de formato binário e versão de protocolo interno são independentes. Nunca grave a versão do sistema em estrutura de wire, formato persistente ou contrato de ABI.
+
+### 12.4 Tags e releases
+
+- Tag = `v` + `VERSION` (`v0.1.0-alpha.1`), anotada: `git tag -a v0.1.0-alpha.1 -m "Kynox v0.1.0-alpha.1"`.
+- O nome público da release é gerado pelo mapa oficial (`Kynox One 0.1.0-alpha.1`).
+- Criar, mover ou publicar tag exige autorização explícita do mantenedor. Nunca reescreva tag publicada.
+- Não avance a versão por calendário, contagem de commits ou conclusão de tarefas.

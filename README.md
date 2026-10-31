@@ -4,6 +4,21 @@
 
 The long-term goal is a native operating system with its own technology stack, plus independently implemented compatibility environments for **Linux and Windows binaries**. Those compatibility environments are planned; they are not available yet.
 
+### Identity
+
+| Field | Value |
+|---|---|
+| Current identity | **Kynox One 0.1.0-alpha.1** |
+| Technical version | `0.1.0-alpha.1` (SemVer 2.0.0, single source: [`VERSION`](VERSION)) |
+| Generation / era | **Kynox One** — every `0.x` release belongs to it |
+| Planned tag | `v0.1.0-alpha.1` (not created) |
+
+The public name is generated from the technical version: `Kynox [Generation] [VERSION]`.
+The major number selects the generation from a fixed chart (`0` = Kynox One,
+`1` = Kynox Quark … `14` = Kynox Cosmos); a major without an official name is
+rejected instead of invented. See [docs/VERSIONING.md](docs/VERSIONING.md) and
+[docs/roadmap/ERAS.md](docs/roadmap/ERAS.md).
+
 > **Development status:** early-stage OS engineering. Source code and test infrastructure exist across several subsystems; the host build and host unit tests execute and pass, while the boot/runtime paths have not been observed in the environment of the last audit. The system is not a general-purpose desktop OS and is not production-ready.
 
 ## Progress overview
@@ -32,7 +47,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (661 tests); QEMU targets exist but have never been recorded, and there is no CI |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (672 tests); QEMU targets exist but have never been recorded, and there is no CI |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -62,7 +77,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made.
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
 - ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The **IOAPIC is not programmed**, so interrupt routing is unchanged, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
-- The system version has a single source (`version.zig` → `0.1.0-alpha.1`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM.
+- The system version has a single source (`VERSION` → `version.zig`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM. The generation name is derived from the major, never typed by hand.
 - There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below). The three QEMU targets were attempted on 2026-10-31 and all stop at "no OVMF firmware found"; the procedure and the attempt table are in docs/validation/qemu.md.
 
 ## What's already in the tree
@@ -75,7 +90,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (661) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (672) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -123,7 +138,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — 13/13 steps; `kynox-boot.efi` 181,760 B, `kynox-kernel` 65,770,762 B, `kynox.img` 128 MiB |
-| `zig build test` | success — 43/43 steps, **661/661 tests passed** |
+| `zig build test` | success — 45/45 steps, **672/672 tests passed** |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
@@ -144,7 +159,8 @@ recorded attempt and the exact procedure are in
 - [docs/PROJECT_STATUS.json](docs/PROJECT_STATUS.json) — machine-readable progress inventory (schema v2).
 - [docs/specs/boot-handoff-spec.md](docs/specs/boot-handoff-spec.md) — normative KNB→KNK handoff contract.
 - [docs/specs/syscall-abi.md](docs/specs/syscall-abi.md) — normative native syscall ABI (revision 1).
-- [docs/specs/versioning.md](docs/specs/versioning.md) — system version, ABI revision and binary-format versions.
+- [docs/VERSIONING.md](docs/VERSIONING.md) — identity, SemVer policy and the four independent version lines.
+- [docs/roadmap/ERAS.md](docs/roadmap/ERAS.md) — normative chart of generations and eras.
 - [docs/specs/acpi-platform.md](docs/specs/acpi-platform.md) — MADT discovery, validation and fallback.
 - [docs/validation/qemu.md](docs/validation/qemu.md) — how to run the QEMU suites and what has actually been attempted.
 - [docs/decisions/](docs/decisions/README.md) — architecture decision records (ADR-0001…0003).

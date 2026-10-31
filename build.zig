@@ -360,6 +360,20 @@ pub fn build(b: *std.Build) void {
     });
     unit_test_step.dependOn(&b.addRunArtifact(abi_conformance_tests).step);
 
+    // Conformance between the serial console and the boot test: every literal
+    // marker asserted by tests/integration/boot-qemu.sh must still be printed
+    // by the loader or the kernel.
+    const markers_conformance_module = b.createModule(.{
+        .root_source_file = b.path("boot_markers_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const markers_conformance_tests = b.addTest(.{
+        .name = "boot-markers-conformance-tests",
+        .root_module = markers_conformance_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(markers_conformance_tests).step);
+
     // The version module carries the system version. Its tests fail if the
     // components and the string drift, or if build.zig.zon disagrees.
     const version_test_module = b.createModule(.{

@@ -17,7 +17,7 @@
 
 | Version | Where | Changes when |
 |---|---|---|
-| System version | `version.zig` | a product release happens (`0.1.0-alpha.1`) |
+| System version | `VERSION` → `version.zig` | a product release happens (`0.1.0-alpha.1`) |
 | **ABI revision** | `shared/syscall_abi.zig` → `version` | the **meaning** of the contract changes |
 | Format versions | handoff v1, KEX v1, KPK, KNV headers | that specific format changes |
 

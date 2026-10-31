@@ -9,6 +9,8 @@
 | Requirement | Value | Source of truth |
 |---|---|---|
 | Zig | **0.17.0** | `build.zig.zon` → `minimum_zig_version = "0.17.0"` |
+| System version | **0.1.0-alpha.1** (Kynox One) | root `VERSION`, embedded by `version.zig` |
+| Generation chart | `0 Kynox One` … `14 Kynox Cosmos` | `version.zig`, `docs/roadmap/ERAS.md` |
 | Target (produced artifacts) | `x86_64-uefi-none` (loader), `x86_64-freestanding-none` (kernel and apps) | `build.zig` |
 | Build system | Zig's own build graph (`build.zig`), no external build tool | `build.zig` |
 | External dependencies | **none** | `build.zig.zon` → `.dependencies = .{}` |

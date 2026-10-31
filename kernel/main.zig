@@ -657,9 +657,13 @@ var virtqueue_storage: [8192]u8 align(4096) = undefined;
 export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     serial.init();
 
-    serial.printLine("[KNK] {s}", .{kynox_version.banner("KNK")});
-    serial.printLine("[KNK] system version {s} tag {s} abi {s}", .{
+    // The component name stays in the line because it is part of the boot
+    // contract asserted by tests/integration/boot-qemu.sh; the product
+    // identity follows it. The ABI revision is a separate version line.
+    serial.printLine("[KNK] Kynox Nucleus Kernel - {s}", .{kynox_version.display});
+    serial.printLine("[KNK] version {s} generation {s} tag {s} abi {s}", .{
         kynox_version.string,
+        kynox_version.generation_name,
         kynox_version.tag,
         kynox.syscall_abi.string,
     });

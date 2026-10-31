@@ -1,6 +1,19 @@
 {
   "schema_version": 2,
   "project": "Kynox",
+  "identity": {
+    "public_name": "Kynox One 0.1.0-alpha.1",
+    "technical_version": "0.1.0-alpha.1",
+    "generation": "Kynox One",
+    "generation_major": 0,
+    "tag_planned": "v0.1.0-alpha.1",
+    "channel": "alpha",
+    "version_source": "VERSION",
+    "version_module": "version.zig",
+    "generation_chart": "docs/roadmap/ERAS.md",
+    "policy": "docs/VERSIONING.md",
+    "tag_created": false
+  },
   "snapshot_date": "2026-10-31",
   "audit_type": "source_tree_review_plus_executed_build_and_host_tests",
   "toolchain": {
@@ -48,7 +61,7 @@
     },
     {
       "command": "zig build test",
-      "result": "success: 43/43 steps, 661/661 tests passed",
+      "result": "success: 45/45 steps, 672/672 tests passed",
       "date": "2026-10-31"
     },
     {

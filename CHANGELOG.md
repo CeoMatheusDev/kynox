@@ -18,10 +18,23 @@ Rules used for this file:
 
 Repository audit, governance and documentation for the first alpha, followed by
 the P1 blockers of the alpha readiness phase (single version source, native ABI
-contract, ACPI platform discovery). No tag exists.
+contract, ACPI platform discovery) and the official identity scheme. Current
+identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
 ### Added
 
+- `VERSION` — root file with the technical version (`0.1.0-alpha.1`), the only
+  writable source of it.
+- `docs/VERSIONING.md` — normative identity and versioning policy: public and
+  technical forms, single source, generation resolution, SemVer rules, the five
+  independent version lines, tags and the guards.
+- `docs/roadmap/ERAS.md` — normative chart of generations (`0 Kynox One` …
+  `14 Kynox Cosmos`), rules for opening an era and how to add one.
+- `boot_markers_conformance.zig` — `boot-markers-conformance-tests`: every
+  literal serial marker asserted by `tests/integration/boot-qemu.sh` must still
+  be printed by a source. Verified by mutation (renaming `[KNK] handoff ok`
+  fails the test). This guard caught a real regression: the kernel banner had
+  stopped printing `[KNK] Kynox Nucleus Kernel`.
 - `docs/audits/2026-10-31-audit.md` — full audit: executed build/test evidence,
   findings P1–P4 with file/line evidence, `v0.1.0-alpha.1` criteria assessment
   and a prioritized incremental plan.
@@ -35,10 +48,10 @@ contract, ACPI platform discovery). No tag exists.
 - `CHANGELOG.md` (this file).
 - `docs/releases/0.1.0-alpha.1.md` — release-notes **draft** with the gate
   checklist; the tag does not exist.
-- `version.zig` — single source of the system version (`0.1.0-alpha.1`),
-  `build.zig.zon` mirror, `version-tests` artifact.
-- `docs/specs/versioning.md` — system version vs ABI revision vs binary-format
-  versions, channels and release procedure.
+- `version.zig` — single source of the system version (from `VERSION`),
+  `build.zig.zon` mirror and `version-tests` artifact.
+- `docs/VERSIONING.md` — identity, system version vs generation vs ABI revision
+  vs binary-format vs protocol versions, channels and release procedure.
 - `shared/syscall_abi.zig` — normative native ABI: revision 1, call numbers,
   limits, privilege values, error codes, capability kinds and rights.
 - `abi_conformance.zig` — `abi-conformance-tests` artifact: fails when the
@@ -60,6 +73,15 @@ contract, ACPI platform discovery). No tag exists.
 
 ### Changed
 
+- `version.zig` now embeds `VERSION` instead of holding components, and resolves
+  the official generation from the major: `display` is `Kynox One 0.1.0-alpha.1`,
+  `generationFor`/`generationNameFor`/`generationOf`/`publicNameInto` reject
+  majors without a name (`error.UnnamedGeneration`). Tests cover the chart,
+  name uniqueness, arbitrary versions, the documents and the absence of
+  literals in components.
+- Boot and kernel banners print the public identity and the separate
+  version/generation/tag/channel/ABI lines; the component marker is preserved
+  (`[KNB] Kynox Native Boot - …`, `[KNK] Kynox Nucleus Kernel - …`).
 - `docs/PROJECT_STATUS.md` / `docs/PROJECT_STATUS.json` — schema v2: per-subsystem
   `implemented`, `limitations`, `pending_work`, `tests` and `validation` fields;
   status vocabulary migrated to the mandated set
@@ -110,7 +132,7 @@ contract, ACPI platform discovery). No tag exists.
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success (13/13 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 661/661 tests, 43/43 steps (21 test artifacts, fresh cache) |
+| `zig build test` | success — 672/672 tests, 45/45 steps (22 test artifacts, fresh cache) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |
 | `zig build qemu-storage-test` | not executed — fails through the same dependency |
 | `zig build qemu-interactive-test` | not executed — same missing firmware |

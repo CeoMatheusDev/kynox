@@ -5,7 +5,7 @@ validated under QEMU or on real hardware**. This document describes what the
 kernel actually does today; anything not listed here is not implemented.
 
 Related: [`boot-handoff-spec.md`](boot-handoff-spec.md) (`flag_acpi_rsdp`,
-`acpi_rsdp_address`), [`versioning.md`](versioning.md).
+`acpi_rsdp_address`), [`VERSIONING.md`](../VERSIONING.md).
 
 ## 1. What the kernel consumes
 
