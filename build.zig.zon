@@ -16,5 +16,7 @@
         "tests",
         "README.md",
         "AGENTS.md",
+        "strategy.md",
+        "KYNOX_NATIVE.md",
     },
 }
