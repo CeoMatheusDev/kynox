@@ -10,7 +10,7 @@
     "note": "GitHub releases of ziglang publish 0.15.x; 0.17.0 must be obtained from a channel that publishes it"
   },
   "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
-  "percentage_note": "no percentage was changed by the 2026-10-31 audit; executed host tests are validation evidence, not new functionality",
+  "percentage_note": "no percentage was changed by the 2026-10-31 audit or by the P1 readiness work; the version/ABI/ACPI changes add contract enforcement and host tests, not runtime validation",
   "status_values": [
     "not_started",
     "scaffolding",
@@ -43,27 +43,27 @@
     },
     {
       "command": "zig build",
-      "result": "success: 13/13 steps; kynox-boot.efi 181760 B, kynox-kernel 65770762 B, kynox.img 134217728 B",
+      "result": "success: 13/13 steps; kynox-boot.efi 181760 B, kynox-kernel (debug) about 65.8 MB, kynox.img 128 MiB / 32731 clusters",
       "date": "2026-10-31"
     },
     {
       "command": "zig build test",
-      "result": "success: 39/39 steps, 615/615 tests passed",
+      "result": "success: 43/43 steps, 661/661 tests passed",
       "date": "2026-10-31"
     },
     {
       "command": "zig build qemu-test",
-      "result": "not executed: qemu-system-x86_64 and OVMF absent; package mirrors unreachable",
+      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
       "date": "2026-10-31"
     },
     {
       "command": "zig build qemu-storage-test",
-      "result": "not executed: same environment limitation",
+      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
       "date": "2026-10-31"
     },
     {
       "command": "zig build qemu-interactive-test",
-      "result": "not executed: same environment limitation",
+      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
       "date": "2026-10-31"
     }
   ],
@@ -400,44 +400,53 @@
       "maturity_percent": 55,
       "status": "in_progress",
       "evidence": [
+        "shared/syscall_abi.zig",
         "kernel/arch/x86_64/syscall.zig",
         "kernel/arch/x86_64/syscall.s",
-        "sdk/src/syscall.zig"
+        "sdk/src/syscall.zig",
+        "sdk/src/root.zig",
+        "abi_conformance.zig",
+        "docs/specs/syscall-abi.md"
       ],
       "implemented": [
         "SYSCALL/SYSRET door with MSR programming and verification",
-        "22 syscalls (1-11, 13-23; 12 reserved) with frame contract",
+        "normative contract in shared/syscall_abi.zig: revision 1, 22 published calls (1-11, 13-23), 12 reserved, limits, privilege values, 25 error codes",
+        "kernel and SDK alias the contract instead of keeping private copies; the kernel exposes abi_version",
         "user-pointer validation on every buffer argument",
-        "SDK wrappers and typed error catalog"
+        "SDK wrappers and typed error catalog generated from the contract constants",
+        "abi-conformance-tests: contract vs kernel dispatch vs SDK vs docs/specs/syscall-abi.md, verified by a deliberate mutation"
       ],
       "limitations": [
-        "kernel declares no ABI version",
-        "SDK claims revision 13, catalog says 12",
-        "no ABI conformance suite",
-        "no fuzzing of malformed arguments"
+        "no QEMU or hardware execution of the syscall path in this environment",
+        "no fuzzing of malformed arguments",
+        "ABI revision is asserted at build/test time only, not negotiated at runtime",
+        "only 22 of the planned system calls exist"
       ],
       "pending_work": [
-        "add kernel-side ABI revision constant and assert it in the SDK (audit A-04)",
-        "conformance tests for the published table"
+        "runtime validation of the door and of each call under QEMU (audit A-02)",
+        "fuzz the pointer/length validation",
+        "define the compatibility rule for future number removals"
       ],
       "tests": [
-        "sdk-tests (4)",
+        "abi-conformance-tests (7)",
+        "sdk-tests (8)",
         "arch-tests (frame/syscall pure parts)",
         "ipc-tests (send/receive semantics)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "sdk-tests (4)",
+          "abi-conformance-tests (7)",
+          "sdk-tests (8)",
           "arch-tests (frame/syscall pure parts)",
           "ipc-tests (send/receive semantics)"
         ],
         "commands": [
-          "zig build test"
+          "zig build test --summary all"
         ],
         "last_run": "2026-10-31",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "docs/specs/syscall-abi.md written in this audit"
+        "notes": "ABI revision 1 declared once in shared/syscall_abi.zig and enforced by abi-conformance-tests (audit A-04 closed)"
       }
     },
     {
@@ -1170,9 +1179,11 @@
         "kernel/"
       ],
       "implemented": [
-        "19 host test artifacts wired into zig build test (615 tests)",
-        "QEMU boot/storage/interactive scripts with serial-marker assertions",
-        "framebuffer/presentation comparison scripts"
+        "21 host test artifacts, 661 tests, in zig build test",
+        "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
+        "framebuffer and presentation comparison scripts",
+        "conformance artifacts: syscall ABI vs spec, system version vs manifest",
+        "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)"
       ],
       "limitations": [
         "no CI",
@@ -1188,7 +1199,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "all 19 host artifacts"
+        "zig build test: 43/43 steps, 661/661 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
@@ -1252,28 +1263,29 @@
         "scripts/"
       ],
       "implemented": [
-        "Zig 0.17.0 build graph: bootloader, kernel, native apps, image, host tests, QEMU steps",
-        "image generator (tools/fatimg.zig)",
+        "Zig 0.17.0 build graph (boot, kernel, 2 apps, image, host test artifacts, QEMU steps)",
+        "FAT16 image writer (tools/fatimg.zig) with --version from the shared version module",
         "ELF-to-Zig byte embedder (tools/bin2zig.zig)",
+        "single system-version source (version.zig), mirrored in build.zig.zon and guarded by version-tests",
         "zero external dependencies"
       ],
       "limitations": [
         "no CI",
-        "no reproducible-toolchain documentation",
-        "no symbol/debug workflow",
-        "version strings not centralized"
+        "toolchain acquisition documented but not automated",
+        "no symbol/debug workflow"
       ],
       "pending_work": [
-        "docs/BUILD.md with exact requirements",
-        "single version source",
-        "CI"
+        "CI",
+        "reproducible build artifacts"
       ],
       "tests": [
+        "version-tests (5)",
         "build executed 2026-10-31: 13/13 steps"
       ],
       "validation": {
         "status": "build_passed",
         "host_tests": [
+          "version-tests (5)",
           "build executed 2026-10-31: 13/13 steps"
         ],
         "commands": [
@@ -1281,7 +1293,7 @@
         ],
         "last_run": "2026-10-31",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "zig build and zig build test executed in this audit"
+        "notes": "zig build (13/13 steps) and zig build test (43/43 steps, 661 tests) executed; version divergence guard demonstrated by mutation (audit A-01 closed)"
       }
     }
   ],
@@ -1289,58 +1301,69 @@
     {
       "id": "A-01",
       "severity": "P1",
-      "summary": "project version strings disagree (0.1.0-dev.3 vs 0.1.0-dev.1); no single source of truth"
+      "summary": "project version strings disagreed; closed by version.zig + build.zig.zon mirror + version-tests",
+      "status": "closed"
     },
     {
       "id": "A-02",
       "severity": "P1",
-      "summary": "QEMU/OVMF unavailable in the audit environment; boot and storage persistence unverified"
+      "summary": "QEMU/OVMF absent; the three targets were executed and stop at \"no OVMF firmware found\"; procedure recorded in docs/validation/qemu.md",
+      "status": "open"
     },
     {
       "id": "A-03",
       "severity": "P1",
-      "summary": "ACPI/MADT parsed but not consumed; LAPIC base is the constant 0xFEE00000"
+      "summary": "ACPI/MADT now discovered and consumed for the LAPIC base; IOAPIC discovered but not programmed",
+      "status": "partially_closed"
     },
     {
       "id": "A-04",
       "severity": "P1",
-      "summary": "ABI revision claimed only by the SDK (13); catalog says 12; kernel exposes none"
+      "summary": "single ABI contract in shared/syscall_abi.zig (revision 1), kernel and SDK aliased, conformance suite added",
+      "status": "closed"
     },
     {
       "id": "A-07",
       "severity": "P2",
-      "summary": "two VirtIO/virtqueue implementations plus a test-only legacy stub"
+      "summary": "two VirtIO/virtqueue implementations plus a test-only legacy stub",
+      "status": "open"
     },
     {
       "id": "A-09",
       "severity": "P2",
-      "summary": "kernel/main.zig (4738 lines) mixes init, probes, reports and benchmarks"
+      "summary": "kernel/main.zig (4738 lines) mixes init, probes, reports and benchmarks",
+      "status": "open"
     },
     {
       "id": "A-11",
       "severity": "P3",
-      "summary": "no CI configuration"
+      "summary": "no CI configuration",
+      "status": "open"
     },
     {
       "id": "A-12",
       "severity": "P3",
-      "summary": "bootloader has zero host tests"
+      "summary": "bootloader has zero host tests",
+      "status": "open"
     },
     {
       "id": "A-13",
       "severity": "P3",
-      "summary": "eight files unreachable from the build graph and scripts"
+      "summary": "eight files unreachable from the build graph and scripts",
+      "status": "open"
     },
     {
       "id": "A-14",
       "severity": "P3",
-      "summary": "no recorded QEMU result anywhere in the repository"
+      "summary": "no recorded QEMU result anywhere in the repository",
+      "status": "open"
     }
   ],
   "known_documentation_mismatches": [
-    "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; the active driver is kernel/drivers/kvdi/block.zig (documented in README, PROJECT_STATUS and the stub itself).",
-    "The SDK previously documented ABI level 9 and \"no new syscall numbers\"; the code exposes 22 calls and declares 13. sdk/README.md was rewritten on 2026-10-31; docs/specs/syscall-abi.md is now the reference.",
-    "kernel/arch/x86_64/virtio_blk.zig used to reference a non-existent docs/adr/ADR-F04-block-driver-proposta.md; corrected. ADRs belong in docs/decisions/ per strategy.md.",
-    "No CI result or QEMU transcript has ever been recorded in the repository; README and release notes state only executed results."
+    "kernel/arch/x86_64/virtio_blk.zig is a legacy stub returning NotImplemented; the active driver is kernel/drivers/kvdi/block.zig. Removal decided in ADR-0003, not executed.",
+    "The SDK previously documented ABI level 9 and \"no new syscall numbers\". Both the SDK and the kernel now alias shared/syscall_abi.zig (revision 1); docs/specs/syscall-abi.md is the reference.",
+    "kernel/arch/x86_64/virtio.zig duplicates the split virtqueue that KVDI actually programs, and the boot marker virtio: split queue layout ok currently proves the duplicate (ADR-0002).",
+    "kernel/arch/x86_64/virtio_blk.zig used to reference a non-existent docs/adr/ADR-F04-block-driver-proposta.md; corrected. ADRs live in docs/decisions/ per strategy.md.",
+    "No CI result or QEMU transcript has ever been recorded in the repository; README and release notes state only executed results. The 2026-10-31 attempts are recorded as failures in docs/validation/qemu.md."
   ]
 }

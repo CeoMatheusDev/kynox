@@ -5,16 +5,21 @@ boundary between a user program and the kernel: applications must not import
 kernel modules.
 
 - Target: `x86_64-freestanding`, Zig **0.17.0**.
-- ABI reference: [`docs/specs/syscall-abi.md`](../docs/specs/syscall-abi.md).
-- Status: **in progress**. The syscall numbers in use are stable within this
-  tree; the ABI revision is not yet enforced by the kernel
-  (`docs/audits/2026-10-31-audit.md`, A-04). Expect additive changes.
+- ABI reference: [`docs/specs/syscall-abi.md`](../docs/specs/syscall-abi.md),
+  revision **1**.
+- Contract source: [`shared/syscall_abi.zig`](../shared/syscall_abi.zig). The
+  kernel and this SDK alias it instead of keeping private copies, and
+  `abi-conformance-tests` (in `zig build test`) fails when the contract, the
+  kernel dispatch, the SDK or the specification diverge.
+- Status: **in progress**. The revision is enforced at build/test time, not
+  negotiated at runtime, and the door has never executed in a VM. Expect
+  additive changes; numbers are never reused or renumbered.
 
 ## Layout
 
 | File | Responsibility |
 |---|---|
-| `src/syscall.zig` | raw ABI: numbers, error catalog, result decoding. No policy. |
+| `src/syscall.zig` | raw ABI: re-exports the shared contract (`contract`/`abi`), error catalog, result decoding. No policy. |
 | `src/root.zig` | typed wrappers: console, process, IPC, capabilities, filesystem, display, input |
 | `src/../shared/display.zig`, `input.zig`, `compositor.zig` | wire structures shared with the kernel |
 

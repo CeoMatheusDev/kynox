@@ -65,7 +65,7 @@ reachable package mirror. Host test results therefore appear as
 | SMP / AP startup | **30%** | in_progress | AP stacks, trampoline, INIT/SIPI path invoked at boot | APs do not run the scheduler; per-CPU timer/IPI; SMP stress |
 | Scheduler / task switching | **55%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics | Effectively BSP-centric; per-CPU queues, migration, fairness, SMP safety |
 | User processes / Ring 3 | **60%** | in_progress | User-mode tasks, separate address spaces, two embedded native apps, lifecycle probe | General process API, resource limits, isolation stress |
-| Native syscall ABI | **55%** | in_progress | `syscall`/`iretq` door with MSR programming, 22 calls (12 reserved), pointer validation, SDK wrappers | Kernel-side ABI revision missing; SDK claims 13 while the catalog says 12; no conformance/fuzz suite |
+| Native syscall ABI | **55%** | in_progress | `syscall`/`iretq` door with MSR programming, 22 calls (12 reserved), pointer validation, SDK wrappers; one normative contract (`shared/syscall_abi.zig`, revision 1) aliased by kernel and SDK; conformance suite against the spec | Door never executed in a VM here; no argument fuzzing; revision checked at build/test time only |
 | IPC | **60%** | in_progress | Bounded channels, blocking receive, receive with timeout, scheduler integration | Shared memory, service discovery, cancellation |
 | Capabilities / security model | **60%** | in_progress | Typed kinds, per-holder rights, delegation/revocation, enforcement in syscalls | Complete object coverage, lifecycle audit, adversarial tests |
 | ELF64 loader | **60%** | in_progress | Parsing, load planning, segment checks, relative relocations, materialization | Dynamic linking, TLS, richer relocations, malformed-input corpus |
@@ -84,9 +84,9 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation | Linux process ABI, syscall translation, signals/futex/TLS, dynamic linker |
 | Windows binary compatibility | **0%** | not_started | No implementation | PE32+ loader, Win64 ABI, NT/Win32, DLL/TLS/unwind |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 21 host artifacts (661 tests) in `zig build test`; QEMU boot/storage/interactive scripts with ~45 serial-marker assertions; framebuffer/presentation comparison scripts | No CI, no recorded QEMU result, 8 unreachable files, no fuzzing, no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 21 host artifacts (661 tests) in `zig build test`; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts | No CI, no recorded QEMU result, 8 unreachable files, no fuzzing, no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
-| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, host tests, QEMU steps), `fatimg`, `bin2zig`, zero external deps | No CI, toolchain documentation missing, version strings not centralized |
+| Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 21 host-test artifacts, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`version.zig`) mirrored in the manifest and guarded by a test, zero external deps | No CI; toolchain installed by hand; no reproducible-artifact story |
 
 ## Implemented foundations
 
@@ -136,11 +136,15 @@ validation:
 7. **ELF/KEX is not Linux compatibility.** KEX wraps an ELF64 payload for
    Kynox; Linux ABI compatibility is 0%.
 8. **Windows compatibility is 0%.** No PE32+/Win64/NT/Win32 environment exists.
-9. **The project version is not centralized**: `build.zig.zon` says
-   `0.1.0-dev.3` while loader and kernel print `0.1.0-dev.1` (audit A-01).
-10. **The ABI revision is ambiguous**: the SDK declares 13, the error catalog
-    comment says 12, the kernel exposes none (audit A-04). Treat the ABI as
-    unstable.
+9. **The system version is centralized but the release gate is not met.**
+   `version.zig` is the only source (`0.1.0-alpha.1`), the manifest mirrors it
+   and a test fails on divergence; that closes audit A-01, it does not make the
+   tree releasable.
+10. **The ABI has one revision now, and it is still unstable.** Revision 1 is
+    declared in `shared/syscall_abi.zig`, aliased by the kernel and the SDK and
+    checked by `abi-conformance-tests`, but the door has never run in a VM and
+    a future revision may still change semantics. Audit A-04 is closed only for
+    the *inconsistency*, not for stability.
 11. **No CI and no recorded QEMU result.** Every runtime statement about the
     built image is unverified.
 12. **The `check` target excludes the interactive QEMU test.** It runs unit,
@@ -156,14 +160,18 @@ validation:
 
 Taken from the audit plan (see the audit for evidence and scope):
 
-1. Record the exact toolchain and QEMU/OVMF prerequisites in `docs/BUILD.md`;
-   make the build claim machine-verifiable (CI).
-2. Unify the project version and expose the ABI revision from the kernel;
-   assert both in tests.
+1. Record the exact toolchain and QEMU/OVMF prerequisites in `docs/BUILD.md`
+   (done) and make the build claim machine-verifiable (**CI still missing**).
+2. ~~Unify the project version and expose the ABI revision from the kernel~~ —
+   done: `version.zig`, `shared/syscall_abi.zig`, `version-tests` and
+   `abi-conformance-tests`.
 3. Execute and record `qemu-test`, `qemu-storage-test` and
    `qemu-interactive-test` on a QEMU-capable machine; fix what they reveal.
-4. Wire ACPI/MADT discovery into LAPIC/IOAPIC initialization and remove the
-   fixed base from the normal path.
+   The procedure and the failed attempt are in `docs/validation/qemu.md`;
+   **no run has succeeded**.
+4. ~~Wire ACPI/MADT discovery into LAPIC/IOAPIC initialization~~ — done for the
+   LAPIC base, the IOAPIC list and the overrides; **IOAPIC programming and
+   routing remain**.
 5. ~~Decide the fate of the legacy `virtio_blk.zig` stub and of the parallel
    `arch/x86_64/virtio.zig` queue code~~ — decided in ADR-0002 and ADR-0003
    (`docs/decisions/`); the code changes are pending.

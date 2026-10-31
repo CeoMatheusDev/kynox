@@ -170,10 +170,11 @@ or above `identity_mapped_limit`.
 - `processor_count` is hard-coded to 1 and `boot_processor_id` to 0, even
   though KNB could read them from the firmware. SMP bring-up therefore relies
   on kernel-side discovery, which today is limited to LAPIC enumeration.
-- `acpi_rsdp_address` is transported but **not consumed** by the kernel yet —
-  LAPIC initialization still uses the constant `0xFEE00000`
-  (see `docs/audits/2026-10-31-audit.md`, finding A-03). Firmware that places
-  the LAPIC elsewhere is not supported.
+- `acpi_rsdp_address` is consumed by `discoverAcpi` in `kernel/main.zig`, which
+  walks RSDP → XSDT/RSDT → MADT and installs the validated local APIC base
+  (see `docs/specs/acpi-platform.md`). When the table is missing, corrupt or
+  unusable, the kernel logs the reason and keeps `0xFEE00000` (finding A-03,
+  resolved in part: the I/O APIC is recorded, not programmed).
 - There is no integrity check (checksum/signature) over the handoff; trust is
   implicit because both sides ship in the same image.
 

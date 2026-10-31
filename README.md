@@ -16,10 +16,10 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Kernel CPU, exceptions and interrupts | **60%** | Core paths exist; hardening and hardware coverage remain |
 | Physical memory, heap and DMA | **60%** | Core allocators and DMA path exist; scalability/reclaim remain |
 | Virtual memory and address spaces | **45%** | User mappings and isolation foundations; advanced VM remains |
-| ACPI, PCI and APIC | **50%** | Parsers and access paths exist; MADT is parsed but not consumed, LAPIC base is still a constant |
+| ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPICs and overrides are recorded, not programmed; PCI/APIC access paths exist |
 | SMP | **30%** | AP startup exists; normal per-CPU scheduling is incomplete |
 | Scheduler and task switching | **55%** | Preemptive task switching exists; SMP scheduling remains |
-| User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI is still small |
+| User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI revision 1 is contract-checked; the ABI is still small and never ran in a VM here |
 | IPC and capabilities | **60%** | Core mechanisms exist; broader service model remains |
 | ELF64 and KEX native executables | **55–60%** | Native ELF loading and KEX container exist; dynamic linking remains |
 | Native SDK and runtime | **40%** | Initial SDK and sample apps exist; public runtime is incomplete |
@@ -34,7 +34,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
 | Tests and validation infrastructure | **65%** | Host suite executes and passes (661 tests); QEMU targets exist but have never been recorded, and there is no CI |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
-| Build and developer tooling | **60%** | Zig build graph, image generator and zero external dependencies; toolchain docs, versioning and CI remain |
+| Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
 The full evidence-based inventory, including gaps and next steps, is maintained in **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** and the machine-readable **[PROJECT_STATUS.json](docs/PROJECT_STATUS.json)**.
 
@@ -54,22 +54,22 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 ### Important limitations
 
 - Kynox has early SMP/AP startup code, but APs do not yet participate in the normal scheduler workload.
-- The active VirtIO Block path is **KVDI** (kernel/drivers/kvdi/block.zig), which implements synchronous requests. kernel/arch/x86_64/virtio_blk.zig is a separate legacy stub and is not the active driver.
+- The active VirtIO Block path is **KVDI** (kernel/drivers/kvdi/block.zig), which implements synchronous requests. kernel/arch/x86_64/virtio_blk.zig is a separate legacy stub and is not the active driver; its removal is decided in ADR-0003 but not yet executed. The parallel queue code in kernel/arch/x86_64/virtio.zig is a duplicate of KVDI's virtqueue (ADR-0002).
 - VirtIO Block completion currently uses polling; interrupt/MSI-X-driven asynchronous I/O and multi-queue support are not established.
 - KNV commit/recovery and a QEMU two-boot block persistence probe exist. This does not yet provide journaled, power-loss-safe filesystem guarantees.
 - KFSX currently provides a mount namespace and RamFS routing, not a mature multi-filesystem VFS.
 - KEX is the Kynox executable container around an ELF64 payload. It is **not** Linux binary compatibility.
 - Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made.
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
-- ACPI/MADT is parsed and tested, but the boot path never consumes it: the LAPIC base is still the constant `0xFEE00000` (audit A-03).
-- The project version is not centralized (`build.zig.zon` says `0.1.0-dev.3`, the loader and kernel print `0.1.0-dev.1`) and the ABI revision is declared only by the SDK (13, with the error catalog saying 12). Both are open audit findings A-01/A-04.
-- There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below).
+- ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The **IOAPIC is not programmed**, so interrupt routing is unchanged, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
+- The system version has a single source (`version.zig` → `0.1.0-alpha.1`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM.
+- There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below). The three QEMU targets were attempted on 2026-10-31 and all stop at "no OVMF firmware found"; the procedure and the attempt table are in docs/validation/qemu.md.
 
 ## What's already in the tree
 
 - Native UEFI bootloader and KNB→KNK handoff.
 - Freestanding x86-64 kernel and Assembly entry, interrupt, syscall and context-switch paths.
-- CPU, paging, PMM, heap, DMA, ACPI, PCI, APIC and early SMP components.
+- CPU, paging, PMM, heap, DMA, ACPI discovery (RSDP → XSDT/RSDT → MADT), PCI, APIC and early SMP components.
 - User-mode tasks, native syscall dispatch, IPC channels and capability delegation/revocation.
 - ELF64 parser/loader, KEX executable container, KPK package codec and initial Zig SDK.
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
@@ -128,10 +128,12 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
 
-The QEMU suites assert roughly 45 serial markers (handoff, GDT/IDT, NX, PCI, DMA,
+The QEMU suites assert 117 markers and patterns (handoff, GDT/IDT, NX, PCI, DMA,
 virtqueue, timer, PS/2, incremental redraw, filesystem, KNV commit/recover, KPK,
 task creation, native ELF execution, page permissions). Their results must be
-recorded in the release notes once a machine with QEMU + OVMF runs them.
+recorded in the release notes once a machine with QEMU + OVMF runs them; the
+recorded attempt and the exact procedure are in
+[docs/validation/qemu.md](docs/validation/qemu.md).
 
 ## Architecture and development documents
 
@@ -141,7 +143,11 @@ recorded in the release notes once a machine with QEMU + OVMF runs them.
 - [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — detailed progress, evidence, gaps and priorities.
 - [docs/PROJECT_STATUS.json](docs/PROJECT_STATUS.json) — machine-readable progress inventory (schema v2).
 - [docs/specs/boot-handoff-spec.md](docs/specs/boot-handoff-spec.md) — normative KNB→KNK handoff contract.
-- [docs/specs/syscall-abi.md](docs/specs/syscall-abi.md) — normative native syscall ABI.
+- [docs/specs/syscall-abi.md](docs/specs/syscall-abi.md) — normative native syscall ABI (revision 1).
+- [docs/specs/versioning.md](docs/specs/versioning.md) — system version, ABI revision and binary-format versions.
+- [docs/specs/acpi-platform.md](docs/specs/acpi-platform.md) — MADT discovery, validation and fallback.
+- [docs/validation/qemu.md](docs/validation/qemu.md) — how to run the QEMU suites and what has actually been attempted.
+- [docs/decisions/](docs/decisions/README.md) — architecture decision records (ADR-0001…0003).
 - [docs/audits/2026-10-31-audit.md](docs/audits/2026-10-31-audit.md) — audit, findings and prioritized plan.
 - [CHANGELOG.md](CHANGELOG.md) — release history and unreleased changes.
 - [docs/releases/0.1.0-alpha.1.md](docs/releases/0.1.0-alpha.1.md) — release notes (draft; the tag does not exist).
