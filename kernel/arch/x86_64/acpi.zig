@@ -58,6 +58,21 @@ pub const madt_header_size = 44;
 /// uma regiao arbitraria da memoria: as tabelas reais tem alguns kibibytes.
 pub const max_table_size = 1024 * 1024;
 
+/// Tamanho de uma pagina, usado para validar os enderecos das APICs.
+pub const page_size: u64 = 4096;
+
+/// Limite do mapeamento identidade do firmware, em bytes.
+///
+/// Um endereco de APIC acima deste limite nao pode ser usado com o mapa de
+/// paginas atual; o descobridor devolve `null` e o kernel cai no fallback.
+pub const identity_mapped_limit: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Numero maximo de IOAPICs registrados pela descoberta.
+pub const max_io_apics = 4;
+
+/// Numero maximo de overrides de origem de interrupcao registrados.
+pub const max_isa_overrides = 8;
+
 /// Erros da validacao e da leitura das tabelas.
 pub const Error = error{
     /// A assinatura da tabela nao e a esperada.
@@ -70,6 +85,12 @@ pub const Error = error{
     InvalidLength,
     /// A versao do RSDP nao e suportada.
     UnsupportedRevision,
+    /// A fonte de tabelas nao entregou a fatia pedida.
+    UnreadableTable,
+    /// O RSDP nao descreve nenhuma tabela MADT.
+    NoMadt,
+    /// A tabela de primeiro nivel nao e a XSDT esperada.
+    UnexpectedContainer,
 };
 
 /// Conteudo do RSDP que a descoberta usa.
@@ -92,6 +113,40 @@ pub const Processor = struct {
     x2apic: bool = false,
 };
 
+/// Um IOAPIC descrito pela MADT.
+pub const IoApic = struct {
+    /// Identificador do IOAPIC na tabela.
+    id: u8 = 0,
+    /// Endereco fisico do bloco de registradores.
+    address: u32 = 0,
+    /// Primeira linha de interrupcao global (GSI) atendida.
+    gsi_base: u32 = 0,
+
+    /// Um endereco utilizavel: nao nulo, alinhado a pagina e abaixo do
+    /// limite do mapeamento identidade.
+    pub fn isValid(self: IoApic) bool {
+        if (self.address == 0) return false;
+        if (self.address % page_size != 0) return false;
+        return self.address < identity_mapped_limit;
+    }
+};
+
+/// Override de origem de interrupcao descrito pela MADT.
+///
+/// Mapeia uma linha do barramento ISA (IRQ) para uma GSI e carrega as flags
+/// de polaridade/trigger; o kernel ainda nao programa o IOAPIC, mas a
+/// informacao fica registrada para o incremento que o fizer.
+pub const IsaOverride = struct {
+    /// Barramento da origem (0 = ISA).
+    bus: u8 = 0,
+    /// Linha de interrupcao de origem.
+    source: u8 = 0,
+    /// Linha de interrupcao global de destino.
+    gsi: u32 = 0,
+    /// Flags de polaridade e de disparo (MPS INTI).
+    flags: u16 = 0,
+};
+
 /// Resultado da leitura da MADT.
 pub const Madt = struct {
     /// Endereco fisico do APIC local, lido da tabela.
@@ -100,11 +155,40 @@ pub const Madt = struct {
     count: usize = 0,
     /// A tabela descreve mais processadores do que a capacidade da fatia.
     truncated: bool = false,
+    /// IOAPICs gravados pela leitura.
+    io_apics: [max_io_apics]IoApic = @splat(.{}),
+    /// Numero de IOAPICs gravados.
+    io_apic_count: u8 = 0,
+    /// A tabela descreve mais IOAPICs do que a capacidade da fatia.
+    io_apic_overflow: bool = false,
+    /// Overrides de origem gravados pela leitura.
+    overrides: [max_isa_overrides]IsaOverride = @splat(.{}),
+    /// Numero de overrides gravados.
+    override_count: u8 = 0,
+    /// A tabela descreve mais overrides do que a capacidade da fatia.
+    override_overflow: bool = false,
+
+    /// Endereco do APIC local, validado para uso direto.
+    ///
+    /// Devolve `null` quando a tabela nao traz um endereco utilizavel: zero,
+    /// desalinhado ou fora do mapeamento identidade. O chamador cai no
+    /// endereco padrao documentado por `apic.zig`.
+    pub fn lapicBase(self: Madt) ?u64 {
+        if (self.local_apic_base == 0) return null;
+        if (self.local_apic_base % page_size != 0) return null;
+        if (self.local_apic_base >= identity_mapped_limit) return null;
+        return self.local_apic_base;
+    }
 };
 
 /// Le um inteiro de 32 bits little-endian de uma fatia.
 fn readU32(bytes: []const u8, offset: usize) u32 {
     return std.mem.readInt(u32, bytes[offset..][0..4], .little);
+}
+
+/// Le um inteiro de 16 bits little-endian de uma fatia.
+fn readU16(bytes: []const u8, offset: usize) u16 {
+    return std.mem.readInt(u16, bytes[offset..][0..2], .little);
 }
 
 /// Le um inteiro de 64 bits little-endian de uma fatia.
@@ -239,6 +323,35 @@ pub fn parseMadt(bytes: []const u8, processors: []Processor) Error!Madt {
                     }
                 }
             },
+            // I/O APIC.
+            1 => {
+                if (entry_length < 12) return error.InvalidLength;
+                if (result.io_apic_count < max_io_apics) {
+                    result.io_apics[result.io_apic_count] = .{
+                        .id = bytes[offset + 2],
+                        .address = readU32(bytes, offset + 4),
+                        .gsi_base = readU32(bytes, offset + 8),
+                    };
+                    result.io_apic_count += 1;
+                } else {
+                    result.io_apic_overflow = true;
+                }
+            },
+            // Interrupt Source Override.
+            2 => {
+                if (entry_length < 10) return error.InvalidLength;
+                if (result.override_count < max_isa_overrides) {
+                    result.overrides[result.override_count] = .{
+                        .bus = bytes[offset + 2],
+                        .source = bytes[offset + 3],
+                        .gsi = readU32(bytes, offset + 4),
+                        .flags = readU16(bytes, offset + 8),
+                    };
+                    result.override_count += 1;
+                } else {
+                    result.override_overflow = true;
+                }
+            },
             // Local APIC Address Override.
             5 => {
                 if (entry_length < 12) return error.InvalidLength;
@@ -251,6 +364,114 @@ pub fn parseMadt(bytes: []const u8, processors: []Processor) Error!Madt {
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Descoberta a partir do RSDP
+// ---------------------------------------------------------------------------
+
+/// Fonte de tabelas ACPI no espaco de enderecos do chamador.
+///
+/// A leitura e injetada para que a descoberta seja testavel no host: o
+/// kernel entrega uma funcao que le a memoria fisica atraves do mapeamento
+/// identidade do firmware, e os testes entregam um buffer.
+pub const TableSource = struct {
+    context: *anyopaque,
+    /// Devolve exatamente `length` bytes em `address`, ou null quando a
+    /// fonte nao consegue (endereco invalido, fora do limite, truncado).
+    read: *const fn (context: *anyopaque, address: u64, length: usize) ?[]const u8,
+};
+
+/// Resultado da descoberta: a MADT e o endereco de onde ela veio.
+pub const Discovered = struct {
+    /// Endereco fisico da MADT encontrada.
+    madt_address: u64,
+    /// Conteudo interpretado da MADT.
+    madt: Madt,
+};
+
+/// Le uma tabela inteira a partir do endereco, validando assinatura,
+/// comprimento e soma de verificacao.
+///
+/// A leitura acontece em duas etapas porque o comprimento esta no cabecalho:
+/// primeiro os 36 bytes do cabecalho, depois a tabela inteira.
+fn readTable(source: TableSource, address: u64) Error![]const u8 {
+    if (address == 0) return error.UnreadableTable;
+    const header = source.read(source.context, address, 36) orelse return error.UnreadableTable;
+    const length = try declaredLength(header);
+    const table = source.read(source.context, address, length) orelse return error.UnreadableTable;
+    if (table.len != length) return error.UnreadableTable;
+    if (checksum(table) != 0) return error.InvalidChecksum;
+    return table;
+}
+
+/// Procura a tabela `signature` nas entradas de uma tabela de primeiro nivel
+/// (XSDT ou RSDT) ja validada.
+fn findEntry(
+    source: TableSource,
+    container: []const u8,
+    signature: []const u8,
+    entry_size: usize,
+) Error!?u64 {
+    var offset: usize = 36;
+    while (offset + entry_size <= container.len) : (offset += entry_size) {
+        const address: u64 = if (entry_size == 8)
+            readU64(container, offset)
+        else
+            @as(u64, readU32(container, offset));
+        if (address == 0) continue;
+
+        // Uma entrada que nao pode ser lida nao invalida a busca: o firmware
+        // pode publicar entradas reservadas. Ela e apenas ignorada.
+        const table = readTable(source, address) catch continue;
+        if (hasSignature(table, signature)) return address;
+    }
+    return null;
+}
+
+/// Localiza a MADT a partir do RSDP e a interpreta.
+///
+/// Aceita ACPI 2.0 em diante (XSDT) e ACPI 1.0 (RSDT). Erros de leitura,
+/// assinatura, comprimento ou soma de verificacao sao propagados para que o
+/// kernel registre o motivo e caia no fallback; ausencia de MADT e
+/// `error.NoMadt`.
+pub fn discoverMadt(
+    source: TableSource,
+    rsdp_address: u64,
+    processors: []Processor,
+) Error!Discovered {
+    const rsdp_bytes = source.read(source.context, rsdp_address, rsdp_extended_size) orelse
+        source.read(source.context, rsdp_address, rsdp_base_size) orelse
+        return error.UnreadableTable;
+
+    const rsdp = try validateRsdpBase(rsdp_bytes);
+
+    var container_address: u64 = 0;
+    var entry_size: usize = 4;
+    var container_signature: []const u8 = rsdt_signature;
+
+    if (rsdp.revision >= 2 and rsdp_bytes.len >= rsdp_extended_size) {
+        const xsdt_address = try validateRsdpExtended(rsdp_bytes);
+        if (xsdt_address != 0) {
+            container_address = xsdt_address;
+            entry_size = 8;
+            container_signature = xsdt_signature;
+        }
+    }
+    if (container_address == 0) {
+        if (rsdp.rsdt_address == 0) return error.UnexpectedContainer;
+        container_address = @as(u64, rsdp.rsdt_address);
+    }
+
+    const container = try readTable(source, container_address);
+    if (!hasSignature(container, container_signature)) return error.UnexpectedContainer;
+
+    const madt_address = (try findEntry(source, container, madt_signature, entry_size)) orelse
+        return error.NoMadt;
+
+    const madt_bytes = try readTable(source, madt_address);
+    const madt = try parseMadt(madt_bytes, processors);
+    return .{ .madt_address = madt_address, .madt = madt };
 }
 
 // ---------------------------------------------------------------------------
@@ -396,4 +617,235 @@ test "parseMadt reports truncation when the slice is too small" {
     const result = try parseMadt(&table, &processors);
     try std.testing.expectEqual(@as(usize, 0), result.count);
     try std.testing.expect(result.truncated);
+}
+
+test "parseMadt records the IOAPICs and the source overrides" {
+    var table: [86]u8 = @splat(0);
+    makeHeader(&table, madt_signature, table.len);
+    std.mem.writeInt(u32, table[36..40], 0xFEE0_0000, .little);
+
+    // Processor Local APIC (tipo 0, comprimento 8).
+    table[44] = 0;
+    table[45] = 8;
+    table[46] = 0;
+    table[47] = 0;
+    std.mem.writeInt(u32, table[48..52], 1, .little);
+
+    // I/O APIC (tipo 1, comprimento 12): id 2, endereco 0xFEC00000, GSI 0.
+    table[52] = 1;
+    table[53] = 12;
+    table[54] = 2;
+    std.mem.writeInt(u32, table[56..60], 0xFEC0_0000, .little);
+    std.mem.writeInt(u32, table[60..64], 0, .little);
+
+    // Interrupt Source Override (tipo 2, comprimento 10): ISA IRQ 0 -> GSI 2.
+    table[64] = 2;
+    table[65] = 10;
+    table[66] = 0; // barramento ISA
+    table[67] = 0; // IRQ 0
+    std.mem.writeInt(u32, table[68..72], 2, .little);
+    std.mem.writeInt(u16, table[72..74], 0, .little);
+
+    // Um segundo IOAPIC, fora de qualquer expectativa de hardware: o parser
+    // registra o que a tabela diz, a validacao de uso fica em `isValid`.
+    table[74] = 1;
+    table[75] = 12;
+    table[76] = 3;
+    std.mem.writeInt(u32, table[78..82], 0xFEC0_1000, .little);
+    std.mem.writeInt(u32, table[82..86], 24, .little);
+
+    seal(&table);
+
+    var processors: [4]Processor = @splat(.{});
+    const result = try parseMadt(&table, &processors);
+    try std.testing.expectEqual(@as(usize, 1), result.count);
+    try std.testing.expectEqual(@as(u8, 2), result.io_apic_count);
+    try std.testing.expectEqual(@as(u8, 2), result.io_apics[0].id);
+    try std.testing.expectEqual(@as(u32, 0xFEC0_0000), result.io_apics[0].address);
+    try std.testing.expectEqual(@as(u32, 24), result.io_apics[1].gsi_base);
+    try std.testing.expect(result.io_apics[0].isValid());
+    try std.testing.expect(result.io_apics[1].isValid());
+    try std.testing.expectEqual(@as(u8, 1), result.override_count);
+    try std.testing.expectEqual(@as(u8, 0), result.overrides[0].source);
+    try std.testing.expectEqual(@as(u32, 2), result.overrides[0].gsi);
+    try std.testing.expect(!result.io_apic_overflow);
+    try std.testing.expect(!result.override_overflow);
+}
+
+test "parseMadt rejects an IOAPIC entry that is too short" {
+    var table: [56]u8 = @splat(0);
+    makeHeader(&table, madt_signature, table.len);
+    std.mem.writeInt(u32, table[36..40], 0xFEE0_0000, .little);
+    table[44] = 1; // I/O APIC
+    table[45] = 8; // comprimento invalido (o minimo e 12)
+    seal(&table);
+
+    var processors: [1]Processor = @splat(.{});
+    try std.testing.expectError(error.InvalidLength, parseMadt(&table, &processors));
+}
+
+test "the IOAPIC address validation rejects unusable values" {
+    const good: IoApic = .{ .id = 1, .address = 0xFEC0_0000, .gsi_base = 0 };
+    try std.testing.expect(good.isValid());
+
+    const null_address: IoApic = .{ .id = 1, .address = 0, .gsi_base = 0 };
+    try std.testing.expect(!null_address.isValid());
+
+    const misaligned: IoApic = .{ .id = 1, .address = 0xFEC0_0004, .gsi_base = 0 };
+    try std.testing.expect(!misaligned.isValid());
+}
+
+test "the discovered LAPIC base is validated before use" {
+    const good: Madt = .{ .local_apic_base = 0xFEE0_0000 };
+    try std.testing.expectEqual(@as(?u64, 0xFEE0_0000), good.lapicBase());
+
+    const absent: Madt = .{ .local_apic_base = 0 };
+    try std.testing.expectEqual(@as(?u64, null), absent.lapicBase());
+
+    const misaligned: Madt = .{ .local_apic_base = 0xFEE0_0800 };
+    try std.testing.expectEqual(@as(?u64, null), misaligned.lapicBase());
+
+    const beyond: Madt = .{ .local_apic_base = identity_mapped_limit };
+    try std.testing.expectEqual(@as(?u64, null), beyond.lapicBase());
+}
+
+// ---------------------------------------------------------------------------
+// Descoberta com fonte de tabelas sintetica
+// ---------------------------------------------------------------------------
+
+/// Imagem de memoria dos testes: RSDP em 0x1000, XSDT em 0x2000, MADT em 0x3000.
+const FakeMemory = struct {
+    bytes: [0x4000]u8 = @splat(0),
+
+    fn read(context: *anyopaque, address: u64, length: usize) ?[]const u8 {
+        const self: *FakeMemory = @ptrCast(@alignCast(context));
+        if (address % 16 != 0) return null;
+        const start: usize = @intCast(address);
+        const end = start + length;
+        if (end > self.bytes.len) return null;
+        return self.bytes[start..end];
+    }
+
+    fn source(self: *FakeMemory) TableSource {
+        return .{ .context = self, .read = read };
+    }
+
+    /// Preenche RSDP (versao 2), XSDT com uma entrada e uma MADT completa.
+    fn build(self: *FakeMemory, lapic_base: u64) void {
+        // RSDP estendido em 0x1000. O formato tem duas somas: a de 20 bytes
+        // (ACPI 1.0) e a de 36 bytes (ACPI 2.0); ambas tem de fechar em zero.
+        const rsdp = self.bytes[0x1000..0x1024];
+        @memcpy(rsdp[0..8], rsdp_signature);
+        rsdp[15] = 2;
+        std.mem.writeInt(u32, rsdp[16..20], 0x2000, .little);
+        std.mem.writeInt(u64, rsdp[24..32], 0x2000, .little);
+        rsdp[8] = 0 -% checksum(rsdp[0..rsdp_base_size]);
+        rsdp[32] = 0 -% checksum(rsdp);
+
+        // XSDT em 0x2000, com uma entrada apontando para a MADT.
+        const xsdt = self.bytes[0x2000..0x2040];
+        makeHeader(xsdt, xsdt_signature, xsdt.len);
+        std.mem.writeInt(u64, xsdt[36..44], 0x3000, .little);
+        seal(xsdt);
+
+        // MADT em 0x3000, com 72 bytes: cabecalho, dois LAPICs e um IOAPIC.
+        const madt = self.bytes[0x3000..0x3048];
+        makeHeader(madt, madt_signature, madt.len);
+        std.mem.writeInt(u32, madt[36..40], @intCast(lapic_base & 0xFFFF_FFFF), .little);
+
+        // Dois processadores habilitados.
+        madt[44] = 0;
+        madt[45] = 8;
+        madt[46] = 0;
+        std.mem.writeInt(u32, madt[48..52], 1, .little);
+        madt[52] = 0;
+        madt[53] = 8;
+        madt[54] = 1;
+        std.mem.writeInt(u32, madt[56..60], 1, .little);
+
+        // Um IOAPIC.
+        madt[60] = 1;
+        madt[61] = 12;
+        madt[62] = 2;
+        std.mem.writeInt(u32, madt[64..68], 0xFEC0_0000, .little);
+        std.mem.writeInt(u32, madt[68..72], 0, .little);
+
+        seal(madt);
+    }
+};
+
+test "the discovery finds the MADT through the XSDT" {
+    var memory: FakeMemory = .{};
+    memory.build(0xFEE0_0000);
+
+    var processors: [4]Processor = @splat(.{});
+    const found = try discoverMadt(memory.source(), 0x1000, &processors);
+
+    try std.testing.expectEqual(@as(u64, 0x3000), found.madt_address);
+    try std.testing.expectEqual(@as(?u64, 0xFEE0_0000), found.madt.lapicBase());
+    try std.testing.expectEqual(@as(usize, 2), found.madt.count);
+    try std.testing.expectEqual(@as(u8, 1), found.madt.io_apic_count);
+    try std.testing.expectEqual(@as(u32, 0xFEC0_0000), found.madt.io_apics[0].address);
+}
+
+test "the discovery falls back to the RSDT on ACPI 1.0" {
+    var memory: FakeMemory = .{};
+    memory.build(0xFEE0_0000);
+
+    // RSDP de versao 0, apontando para a RSDT em 0x2000.
+    const rsdp = memory.bytes[0x1000..0x1014];
+    @memset(rsdp, 0);
+    @memcpy(rsdp[0..8], rsdp_signature);
+    rsdp[15] = 0;
+    std.mem.writeInt(u32, rsdp[16..20], 0x2000, .little);
+    rsdp[8] = 0 -% checksum(rsdp);
+
+    // A RSDT usa entradas de 4 bytes.
+    const table = memory.bytes[0x2000..0x2040];
+    makeHeader(table, rsdt_signature, table.len);
+    std.mem.writeInt(u32, table[36..40], 0x3000, .little);
+    seal(table);
+
+    var processors: [4]Processor = @splat(.{});
+    const found = try discoverMadt(memory.source(), 0x1000, &processors);
+    try std.testing.expectEqual(@as(u64, 0x3000), found.madt_address);
+    try std.testing.expectEqual(@as(usize, 2), found.madt.count);
+}
+
+test "the discovery rejects a corrupted XSDT checksum" {
+    var memory: FakeMemory = .{};
+    memory.build(0xFEE0_0000);
+    memory.bytes[0x2009] +%= 1; // estraga a soma da XSDT
+
+    var processors: [4]Processor = @splat(.{});
+    try std.testing.expectError(
+        error.InvalidChecksum,
+        discoverMadt(memory.source(), 0x1000, &processors),
+    );
+}
+
+test "the discovery reports a missing MADT instead of guessing" {
+    var memory: FakeMemory = .{};
+    memory.build(0xFEE0_0000);
+    // Muda a assinatura da MADT: a entrada da XSDT deixa de casar.
+    @memcpy(memory.bytes[0x3000..0x3004], "XXXX");
+    seal(memory.bytes[0x3000..0x3048]);
+
+    var processors: [4]Processor = @splat(.{});
+    try std.testing.expectError(
+        error.NoMadt,
+        discoverMadt(memory.source(), 0x1000, &processors),
+    );
+}
+
+test "the discovery rejects an unreadable RSDP" {
+    var memory: FakeMemory = .{};
+    memory.build(0xFEE0_0000);
+
+    var processors: [4]Processor = @splat(.{});
+    // O limite da fonte e 0x4000: um RSDP proximo ao fim nao cabe.
+    try std.testing.expectError(
+        error.UnreadableTable,
+        discoverMadt(memory.source(), 0x3FF0, &processors),
+    );
 }

@@ -48,6 +48,7 @@ const segment = @import("arch/x86_64/segment.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
 const timer = @import("arch/x86_64/timer.zig");
 const smp = @import("arch/x86_64/smp.zig");
+const acpi = @import("arch/x86_64/acpi.zig");
 const apic = @import("arch/x86_64/apic.zig");
 const pci = @import("arch/x86_64/pci.zig");
 const virtio = @import("arch/x86_64/virtio.zig");
@@ -718,6 +719,9 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     installTaskState();
 
     installMemoryManager();
+    // A leitura da ACPI tem de acontecer antes da troca de CR3: as tabelas
+    // do firmware sao a unica visao da memoria fisica que contem a RSDP.
+    discoverAcpi(boot);
     buildPageTables(boot);
     activatePageTables();
     installHeap();
@@ -2198,6 +2202,125 @@ fn buildPageTables(boot: *const handoff.BootHandoff) void {
     installMmioWindow();
 }
 
+/// Informacao de plataforma lida da ACPI durante o boot.
+///
+/// A leitura acontece com as tabelas de pagina do firmware ainda ativas,
+/// porque o mapeamento identidade que descreve as tabelas da ACPI deixa de
+/// existir depois da troca de CR3. O que o kernel precisa depois — o
+/// endereco do APIC local e os IOAPICs — e copiado para esta estrutura; os
+/// demais dados da ACPI nao sao guardados.
+const PlatformInfo = struct {
+    /// A MADT foi encontrada e interpretada.
+    madt_found: bool = false,
+    /// Endereco fisico da MADT, para diagnostico.
+    madt_address: u64 = 0,
+    /// Endereco base do APIC local em uso.
+    lapic_base: u64 = apic.default_base,
+    /// Processadores habilitados descritos pela MADT.
+    processor_count: usize = 0,
+    /// IOAPICs validos descritos pela MADT.
+    io_apic_count: u8 = 0,
+    /// Copia dos IOAPICs para o uso do incremento seguinte.
+    io_apics: [acpi.max_io_apics]acpi.IoApic = @splat(.{}),
+    /// Overrides de origem registrados pela MADT.
+    override_count: u8 = 0,
+};
+
+/// Estado de plataforma preenchido uma vez, antes das tabelas do kernel.
+var platform: PlatformInfo = .{};
+
+/// Fonte de tabelas ACPI sobre o mapeamento identidade do firmware.
+///
+/// A leitura e limitada ao mapeamento identidade e recusa enderecos que
+/// cruzariam o limite, de modo que uma tabela corrompida nao leva a leitura
+/// para fora da faixa enderecavel.
+const AcpiMemory = struct {
+    limit: u64,
+
+    fn read(context: *anyopaque, address: u64, length: usize) ?[]const u8 {
+        const self: *const AcpiMemory = @ptrCast(@alignCast(context));
+        if (address == 0) return null;
+        if (address >= self.limit) return null;
+        if (length == 0 or length > self.limit - address) return null;
+        const pointer: [*]const u8 = @ptrFromInt(address);
+        return pointer[0..length];
+    }
+};
+
+/// Le a MADT a partir do RSDP entregue pelo carregador.
+///
+/// Nunca interrompe o boot: quando o RSDP nao existe, a tabela esta
+/// corrompida ou o endereco do APIC e invalido, o motivo vai para o serial e
+/// o kernel continua com o endereco padrao do APIC local. A ausencia de
+/// evidencia e registrada, nao escondida.
+fn discoverAcpi(boot: *const handoff.BootHandoff) void {
+    if (boot.flags & handoff.flag_acpi_rsdp == 0 or boot.acpi_rsdp_address == 0) {
+        serial.printLine("[KNK] acpi: no RSDP from the loader; APIC base stays at 0x{x}", .{apic.default_base});
+        return;
+    }
+
+    var source: AcpiMemory = .{ .limit = handoff.identity_mapped_limit };
+    var processors: [smp.max_cpus]acpi.Processor = @splat(.{});
+    const found = acpi.discoverMadt(
+        .{ .context = &source, .read = AcpiMemory.read },
+        boot.acpi_rsdp_address,
+        &processors,
+    ) catch |err| {
+        serial.printLine("[KNK] acpi: MADT unavailable ({s}); APIC base stays at 0x{x}", .{
+            @errorName(err), apic.default_base,
+        });
+        return;
+    };
+
+    platform.madt_found = true;
+    platform.madt_address = found.madt_address;
+    platform.processor_count = found.madt.count;
+    platform.override_count = found.madt.override_count;
+
+    serial.printLine("[KNK] acpi: MADT at 0x{x}, {d} enabled processors", .{
+        found.madt_address, found.madt.count,
+    });
+    if (found.madt.truncated) {
+        serial.printLine("[KNK] acpi: more processors than the kernel records ({d})", .{smp.max_cpus});
+    }
+
+    if (found.madt.lapicBase()) |address| {
+        apic.setBase(address) catch |err| {
+            serial.printLine("[KNK] acpi: APIC base 0x{x} refused ({s})", .{ address, @errorName(err) });
+        };
+    } else {
+        serial.printLine("[KNK] acpi: no usable local APIC address, base stays at 0x{x}", .{
+            apic.default_base,
+        });
+    }
+    platform.lapic_base = apic.baseAddress();
+
+    // Os IOAPICs sao registrados, nao programados: o kernel ainda entrega as
+    // interrupcoes pelo PIC/APIC local. Uma entrada com endereco inutil e
+    // descartada com o motivo no serial.
+    var index: usize = 0;
+    while (index < found.madt.io_apic_count) : (index += 1) {
+        const candidate = found.madt.io_apics[index];
+        if (!candidate.isValid()) {
+            serial.printLine("[KNK] acpi: IOAPIC id={d} at 0x{x} ignored (unusable address)", .{
+                candidate.id, candidate.address,
+            });
+            continue;
+        }
+        platform.io_apics[platform.io_apic_count] = candidate;
+        platform.io_apic_count += 1;
+        serial.printLine("[KNK] acpi: IOAPIC id={d} at 0x{x}, gsi base={d}", .{
+            candidate.id, candidate.address, candidate.gsi_base,
+        });
+    }
+    if (found.madt.io_apic_overflow) {
+        serial.printLine("[KNK] acpi: more IOAPICs than the kernel records ({d})", .{acpi.max_io_apics});
+    }
+    if (platform.io_apic_count == 0) {
+        serial.printLine("[KNK] acpi: no usable IOAPIC; interrupts stay on the 8259/APIC local", .{});
+    }
+}
+
 /// Makes the page tables of the kernel the active ones.
 fn activatePageTables() void {
     const previous = cpu.readCr3();
@@ -2496,11 +2619,12 @@ fn installSmp() void {
     // O APIC e MMIO e precisa estar presente nas tabelas novas antes do
     // primeiro acesso; as tabelas do firmware deixam de ser utilizaveis apos
     // a troca de CR3.
-    paging.mapDevicePage(apic.apic_base, apic.apic_base) catch {
-        serial.printLine("[KNK] FATAL: unable to map local APIC", .{});
+    const lapic_base = apic.baseAddress();
+    paging.mapDevicePage(lapic_base, lapic_base) catch {
+        serial.printLine("[KNK] FATAL: unable to map local APIC at 0x{x}", .{lapic_base});
         port.haltForever();
     };
-    apic.map(apic.apic_base);
+    apic.map(lapic_base);
     apic.enable();
 
     // Configura o timer local da APIC para o BSP (100 Hz, mesmo do PIT).
@@ -2511,7 +2635,7 @@ fn installSmp() void {
 
     const apic_id = apic.readApicId();
     serial.printLine("[KNK] smp: APIC local id={d}, base=0x{x}", .{
-        apic_id, apic.apic_base,
+        apic_id, lapic_base,
     });
     serial.printLine("[KNK] smp: AP stacks initialized (max_cpus={d})", .{smp.max_cpus});
 }

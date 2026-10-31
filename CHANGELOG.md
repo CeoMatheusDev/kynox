@@ -16,9 +16,9 @@ Rules used for this file:
 
 ## [Unreleased]
 
-Repository audit, governance and documentation for the first alpha. No
-functional or behavioral change: no kernel, boot, driver, ABI or build-graph
-logic was modified.
+Repository audit, governance and documentation for the first alpha, followed by
+the P1 blockers of the alpha readiness phase (single version source, native ABI
+contract, ACPI platform discovery). No tag exists.
 
 ### Added
 
@@ -35,6 +35,24 @@ logic was modified.
 - `CHANGELOG.md` (this file).
 - `docs/releases/0.1.0-alpha.1.md` — release-notes **draft** with the gate
   checklist; the tag does not exist.
+- `version.zig` — single source of the system version (`0.1.0-alpha.1`),
+  `build.zig.zon` mirror, `version-tests` artifact.
+- `docs/specs/versioning.md` — system version vs ABI revision vs binary-format
+  versions, channels and release procedure.
+- `shared/syscall_abi.zig` — normative native ABI: revision 1, call numbers,
+  limits, privilege values, error codes, capability kinds and rights.
+- `abi_conformance.zig` — `abi-conformance-tests` artifact: fails when the
+  contract, kernel dispatch, SDK and `docs/specs/syscall-abi.md` diverge.
+- `docs/validation/qemu.md` — QEMU procedure (prerequisites, exact VM
+  configuration, what a run must record) and the dated table of attempts, all
+  marked not executed for the missing firmware and emulator.
+- `docs/specs/acpi-platform.md` — RSDP/XSDT/RSDT/MADT discovery, validation,
+  fallback lines and the explicit list of what is not implemented.
+- ACPI discovery in the boot path: `acpi.discoverMadt` with an injected table
+  source, `Madt.lapicBase()`/`IoApic.isValid()` validation, `apic.setBase`/
+  `resetBase`, and `discoverAcpi` in `kernel/main.zig` (before CR3 is replaced).
+- `acpi.zig` is now reachable from the `arch-tests` root: its tests had never
+  executed before this change.
 
 ### Changed
 
@@ -52,6 +70,19 @@ logic was modified.
   (unvalidated status, `feat/native-sdk` branch instructions, "Fedora" as the
   only validation host, ABI revision 9, "no new syscall numbers", F6 raster
   "not connected to the boot framebuffer").
+
+- `kernel/arch/x86_64/syscall.zig`, `kernel/security/capability.zig`, `sdk/src/syscall.zig`,
+  `sdk/src/root.zig`, `boot/uefi/main.zig`, `kernel/main.zig`, `tools/fatimg.zig`
+  now derive their version constants, syscall numbers, error codes and
+  capability values from the shared contract instead of private copies.
+- `apic.apic_base` (fixed const) became `apic.default_base` plus a validated,
+  runtime-selected base; `installSmp` maps the base actually in use.
+- `build.zig.zon` version `0.1.0-dev.3` → `0.1.0-alpha.1`; loader and kernel
+  banners print the system version, tag and ABI revision.
+- `tests/integration/boot-qemu.sh` — an empty `OVMF_CODE`/`OVMF_VARS` pair is no
+  longer printed as `:` in the diagnostic (setting only one of them is now an
+  explicit error), and a missing `qemu-system-x86_64` is reported as such with
+  exit code 3 instead of failing inside the VM launch.
 
 ### Fixed
 
@@ -74,18 +105,19 @@ logic was modified.
 | Command | Result |
 |---|---|
 | `zig version` | `0.17.0` |
-| `zig build` | success (13/13 steps) |
-| `zig build test` | success — 615/615 tests, 39/39 steps |
-| `zig build qemu-test` | not executed — QEMU/OVMF unavailable in the audit environment |
-| `zig build qemu-storage-test` | not executed — same reason |
-| `zig build qemu-interactive-test` | not executed — same reason |
+| `zig build` | success (13/13 steps); `kynox.img` 128 MiB, 32 731 clusters |
+| `zig build test` | success — 661/661 tests, 43/43 steps (21 test artifacts, fresh cache) |
+| `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |
+| `zig build qemu-storage-test` | not executed — fails through the same dependency |
+| `zig build qemu-interactive-test` | not executed — same missing firmware |
+| `command -v qemu-system-x86_64` | absent; installing is impossible in this sandbox |
 
 ### Known limitations
 
 See `docs/PROJECT_STATUS.md` §"Important limitations and corrections" and the
 audit findings A-01 … A-18. The most important open items:
-single version source, ABI revision enforcement, ACPI/MADT → LAPIC wiring, and
-any runtime evidence at all (QEMU).
+IOAPIC programming and routing, runtime evidence at all (QEMU/OVMF), CI, and
+the architecture decisions listed in stage 5 of the readiness phase.
 
 ## [0.1.0-alpha.1] — UNRELEASED (draft)
 
@@ -113,7 +145,7 @@ first time documented):
 - Rasterizer, compositor, window manager, damage tracking, PS/2 keyboard input
   and a boot-time desktop scene.
 - Zig SDK, two native applications embedded in the image, host test suite
-  (615 tests) and QEMU integration scripts.
+  (661 tests) and QEMU integration scripts.
 - **Not included:** Linux compatibility (0%), Windows compatibility (0%),
   networking stack, GPU acceleration, ring-3 services/compositor, dynamic
   linking, journaled filesystem.

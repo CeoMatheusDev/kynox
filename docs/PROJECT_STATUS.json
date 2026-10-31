@@ -235,33 +235,40 @@
       ],
       "implemented": [
         "ACPI RSDP/XSDT/MADT parsing with checksum and table validation",
+        "MADT discovery from the RSDP at boot, before the kernel page tables replace the firmware identity map",
+        "LAPIC base taken from the MADT, validated (non-zero, page-aligned, below 4 GiB) and refused with a logged reason when invalid",
+        "IOAPIC entries and ISA interrupt source overrides parsed, validated and recorded",
         "PCI config-space access with BAR helpers and capability walking",
         "LAPIC xAPIC register access, EOI, TPR and IPI primitives"
       ],
       "limitations": [
-        "MADT is parsed but NOT consumed by the boot path",
-        "LAPIC base is the constant 0xFEE00000",
-        "no IOAPIC routing",
-        "no hardware discovery matrix"
+        "IOAPIC addresses are recorded but the redirection table is not programmed",
+        "interrupt source overrides are parsed and counted, not applied to routing",
+        "interrupts still arrive through the 8259 PIC and the LAPIC timer",
+        "MADT processor count is reported, not used to start APs",
+        "no QEMU or hardware validation of the discovery path (audit A-02)"
       ],
       "pending_work": [
-        "wire ACPI/MADT into LAPIC base selection (audit A-03)",
-        "IOAPIC discovery and interrupt routing"
+        "IOAPIC redirection-table programming and routing from the overrides",
+        "use the MADT processor list as the source of truth for SMP bring-up",
+        "runtime validation under QEMU/OVMF (audit A-02)"
       ],
       "tests": [
-        "arch-tests (acpi, pci, apic subsets)"
+        "arch-tests acpi suite: synthetic RSDP/XSDT/RSDT/MADT images, corruption, truncation, RSDT fallback, injected table source",
+        "arch-tests apic suite: base validation and refusal errors"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (acpi, pci, apic subsets)"
+          "arch-tests (112 tests, acpi + apic + pci + smp included)"
         ],
         "commands": [
-          "zig build test"
+          "zig build test --summary all",
+          "zig build"
         ],
         "last_run": "2026-10-31",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "MADT output has no consumer in kernel/main.zig (audit A-03)"
+        "notes": "ACPI discovery is consumed by kernel/main.zig (discoverAcpi) and compiled into the image; no boot has been observed"
       }
     },
     {
