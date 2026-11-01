@@ -97,6 +97,45 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
   asserts structure only, never that a planned feature exists.
 - `docs/PROJECT_STATUS.json` — new `planning_documents` inventory; no
   percentage was changed.
+- `docs/audits/2026-10-31-kernel-core-audit.md` — kernel and core systems
+  audit of the tree at `343e9fb`: per-item classification (`NOT_STARTED` …
+  `VALIDATED`) for areas A–G with files, existing and missing features,
+  dependencies, bugs, risks, test coverage and evidence; the test-coverage
+  truth (no test covers the scheduler, interrupts, syscall dispatch, PS/2 or
+  address-space teardown); fifteen ranked architecture defects; and a
+  documentation-versus-code review that changes no percentage. This is an
+  audit record, not a plan.
+- `docs/roadmap/KERNEL_COMPLETION_ROADMAP.md` — fourteen stages K0–K13
+  ordered by the dependency graph (boot/arch, memory, interrupts and SMP,
+  synchronisation and scheduler, processes, security, syscalls and IPC,
+  drivers, DMA, storage, VFS, console, time and power, diagnostics); each has
+  objective, initial state, files, dependencies, required work, completion
+  criteria, unit/integration/stress tests, QEMU and hardware validation,
+  risks and P/F/E/H promotion; plus the genuine parallelism pairs, the
+  validation-layer ladder and the environment blockers. No stage started.
+- `docs/architecture/kernel-internals.md` — target layering, module contract
+  table, global-state policy, error model, initialisation phases, proposed
+  directory changes, the refactors that are justified by the audit and the
+  ones explicitly rejected, and the kernel coding standards.
+- `docs/architecture/memory-management.md` — frames, address spaces as
+  objects, regions, page-fault policy, heap locking, the DMA interface and
+  eight memory invariants with the test tier that checks each.
+- `docs/architecture/execution-model.md` — process and thread objects,
+  lifecycle, the policy/mechanism split, wait queues, mutex and rwlock, time
+  and the user/kernel transition contract.
+- `docs/architecture/device-driver-model.md` — device, driver and resource
+  objects, the interrupt registration API, MSI programming, DMA ownership,
+  class interfaces defined by their consumers, containment and the test tier
+  each driver must reach.
+- `docs_conformance.zig` — seven tests (15 → 22) that keep the kernel
+  roadmap's fourteen stages and evidence ladder, the audit's classification
+  vocabulary, the memory invariants, the process/thread split, the driver
+  model's interrupt registry, and the planning status of the new documents
+  from drifting. `docs-conformance-tests` now also asserts that the six new
+  paths are in `docs/PROJECT_STATUS.json` (`planning_documents` 11 → 17).
+- `docs/PROJECT_STATUS.md` / `.json` — the six documents registered in the
+  inventory; the validation record updated to 716 host tests; **no maturity
+  percentage was changed**.
 
 ### Added (earlier)
 
@@ -261,7 +300,7 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success (14/14 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 709/709 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
+| `zig build test` | success — 716/716 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
 | `zig build docs-check` | success — every relative link resolves |
 | `zig build -Dioapic-delivery=true` | success (compiles; **never booted**, so no delivery is claimed) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |
@@ -276,7 +315,11 @@ audit findings A-01 … A-18. The most important open items: runtime evidence at
 all (QEMU/OVMF) — every I/O APIC and SMP claim above is host-tested only —,
 delivery through the I/O APIC, AP bring-up (the trampoline is not published),
 PCI GSI routing, and the remaining ADR steps (0001 reports/remaining probes,
-0002 step 3, 0003).
+0002 step 3, 0003). The kernel audit records the architectural causes behind
+several of them: one global TSS (ring 3 on an AP is impossible), no TLB
+shootdown, unmapping that never frees a frame, a scheduler with no lock and no
+tests, no interrupt registration API, and a `virtio-net` transmit that returns
+success while transmitting nothing.
 
 ## [0.1.0-alpha.1] — UNRELEASED (draft)
 

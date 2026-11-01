@@ -222,6 +222,14 @@ Consulte `build.zig` para confirmar os targets e dependências atuais. Não inve
 
 Não declare build ou teste aprovado sem ter executado o comando no ambiente desta tarefa. Diferencie "não executado", "compilou", "passou em host" e "validado em QEMU".
 
+### Ordem de trabalho do kernel
+
+- `docs/roadmap/KERNEL_COMPLETION_ROADMAP.md` define a ordem canônica das etapas K0–K13. Não inicie uma etapa antes das dependências declaradas nela, e registre no relatório qual etapa foi tocada.
+- Uma etapa só é promovida de P → F → E → H com a evidência do nível correspondente (build; execução gravada; QEMU/OVMF com o suite verde; hardware nomeado). Compilação nunca é validação de runtime.
+- Os quinze defeitos ranqueados em `docs/audits/2026-10-31-kernel-core-audit.md` são a justificativa preferencial para refatorações de kernel; refatorar fora deles exige justificativa técnica escrita antes da mudança.
+- `docs/architecture/kernel-internals.md`, `memory-management.md`, `execution-model.md` e `device-driver-model.md` definem contratos-alvo. Se a implementação precisar divergir deles, atualize o documento no mesmo commit — não deixe o contrato descrever o que o código não faz.
+- Não mover `kernel/graphics/` nem implementar KGA/KGX/KGL/KVK/KGR/KWM sob a justificativa de "completar o kernel"; essas áreas estão fora do roadmap do kernel.
+
 ## 7. Fluxo obrigatório para cada tarefa
 
 1. **Entender:** descreva o comportamento atual, o contrato e os chamadores.

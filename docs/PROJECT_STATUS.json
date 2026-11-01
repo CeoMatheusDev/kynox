@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test",
-      "result": "success: 49/49 steps, 709/709 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
+      "result": "success: 49/49 steps, 716/716 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests, which grew from 15 to 22 tests with the kernel planning documents)",
       "date": "2026-10-31"
     },
     {
@@ -187,6 +187,54 @@
         "0009-spirv-ingestion.md",
         "0010-compatibility-execution-model.md"
       ]
+    },
+    {
+      "path": "docs/architecture/kernel-internals.md",
+      "title": "Kernel internals: target layering, module contracts, global-state policy, error model, init phases, observability and coding standards",
+      "status": "planned structure; the current structure is the audit's; nothing implemented by this document",
+      "date": "2026-10-31",
+      "adrs": []
+    },
+    {
+      "path": "docs/architecture/memory-management.md",
+      "title": "Memory model: frames, address spaces, regions, page-fault policy, heap locking, DMA interface, eight invariants",
+      "status": "planned model; PMM, paging, heap and DMA exist with the limitations the audit records",
+      "date": "2026-10-31",
+      "adrs": []
+    },
+    {
+      "path": "docs/architecture/execution-model.md",
+      "title": "Execution model: process and thread objects, lifecycle, scheduling policy, synchronisation primitives, time and user/kernel transitions",
+      "status": "planned model; the scheduler has no tests and no process object exists",
+      "date": "2026-10-31",
+      "adrs": []
+    },
+    {
+      "path": "docs/architecture/device-driver-model.md",
+      "title": "Device and driver model: device, driver and resource objects, interrupt registration, DMA ownership, class interfaces, containment and per-class test tiers",
+      "status": "planned model; there is no driver model today, drivers are called from the boot path",
+      "date": "2026-10-31",
+      "adrs": [
+        "0002-single-virtio-transport.md",
+        "0003-legacy-virtio-blk-stub.md"
+      ]
+    },
+    {
+      "path": "docs/roadmap/KERNEL_COMPLETION_ROADMAP.md",
+      "title": "Kernel and core systems roadmap: fourteen stages K0–K13 ordered by the dependency graph, with completion criteria, tests, QEMU and hardware validation, risks and P/F/E/H promotion",
+      "status": "planned work only; no stage started, no stage above P",
+      "date": "2026-10-31",
+      "adrs": [
+        "0002-single-virtio-transport.md",
+        "0003-legacy-virtio-blk-stub.md"
+      ]
+    },
+    {
+      "path": "docs/audits/2026-10-31-kernel-core-audit.md",
+      "title": "Kernel and core systems audit: A–G classification with evidence levels, test-coverage truth, fifteen ranked architecture defects, documentation-versus-code review",
+      "status": "audit record; describes the tree at 343e9fb, claims no capability and plans nothing",
+      "date": "2026-10-31",
+      "adrs": []
     }
   ],
   "runtime_evidence_note": "No QEMU or hardware run was performed. Any runtime statement about the produced image is unverified for this snapshot.",

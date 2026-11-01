@@ -36,6 +36,12 @@ const linux_compat = @embedFile("docs/architecture/linux-compatibility.md");
 const windows_compat = @embedFile("docs/architecture/windows-compatibility.md");
 const compat_roadmap = @embedFile("docs/roadmap/COMPATIBILITY_ROADMAP.md");
 const roadmap = @embedFile("docs/roadmap/PRODUCT_ROADMAP.md");
+const kernel_audit = @embedFile("docs/audits/2026-10-31-kernel-core-audit.md");
+const kernel_internals = @embedFile("docs/architecture/kernel-internals.md");
+const memory_model = @embedFile("docs/architecture/memory-management.md");
+const execution_model = @embedFile("docs/architecture/execution-model.md");
+const driver_model = @embedFile("docs/architecture/device-driver-model.md");
+const kernel_roadmap = @embedFile("docs/roadmap/KERNEL_COMPLETION_ROADMAP.md");
 const status_json = @embedFile("docs/PROJECT_STATUS.json");
 const adr_index = @embedFile("docs/decisions/README.md");
 
@@ -51,6 +57,12 @@ const planning_documents = [_]struct { path: []const u8, text: []const u8 }{
     .{ .path = "docs/architecture/windows-compatibility.md", .text = windows_compat },
     .{ .path = "docs/roadmap/COMPATIBILITY_ROADMAP.md", .text = compat_roadmap },
     .{ .path = "docs/roadmap/PRODUCT_ROADMAP.md", .text = roadmap },
+    .{ .path = "docs/architecture/kernel-internals.md", .text = kernel_internals },
+    .{ .path = "docs/architecture/memory-management.md", .text = memory_model },
+    .{ .path = "docs/architecture/execution-model.md", .text = execution_model },
+    .{ .path = "docs/architecture/device-driver-model.md", .text = driver_model },
+    .{ .path = "docs/roadmap/KERNEL_COMPLETION_ROADMAP.md", .text = kernel_roadmap },
+    .{ .path = "docs/audits/2026-10-31-kernel-core-audit.md", .text = kernel_audit },
 };
 
 fn expectContains(haystack: []const u8, needle: []const u8) !void {
@@ -195,4 +207,81 @@ test "no compatibility document claims that a layer runs today" {
 test "the security document refuses to claim unimplemented guarantees" {
     try expectContains(security, "## 1. What is claimed today (and what is not)");
     try expectContains(security, "## 13. Explicit non-guarantees");
+}
+
+test "the kernel roadmap keeps the fourteen stages and the evidence ladder" {
+    const stages = [_][]const u8{
+        "### K0 — Boot and architecture foundation",
+        "### K1 — Memory management",
+        "### K2 — Interrupts, time base and SMP",
+        "### K3 — Synchronisation and scheduler",
+        "### K4 — Processes and threads",
+        "### K5 — Security and capabilities",
+        "### K6 — Syscalls and IPC",
+        "### K7 — Drivers and the device model",
+        "### K8 — DMA and IOMMU readiness",
+        "### K9 — Block layer and storage",
+        "### K10 — VFS and filesystems",
+        "### K11 — Input, console and terminal",
+        "### K12 — Timekeeping and power",
+        "### K13 — Diagnostics and hardening",
+    };
+    for (stages) |stage| try expectContains(kernel_roadmap, stage);
+    // The ladder and the validation layers are the contract that keeps a plan
+    // from being read as an implementation.
+    try expectContains(kernel_roadmap, "| **P** Prototype | Code exists");
+    try expectContains(kernel_roadmap, "| **H** Hardware-validated |");
+    try expectContains(kernel_roadmap, "## 5. Validation layers");
+    try expectContains(kernel_roadmap, "## 4. Genuine parallelism");
+}
+
+test "the kernel roadmap does not claim a started or completed stage" {
+    try expectContains(kernel_roadmap, "No stage below is started.");
+    try expectContains(kernel_roadmap, "no stage in this document is above");
+    try expectContains(kernel_roadmap, "absence of an OVMF firmware image in the build environment");
+}
+
+test "the kernel audit keeps the classification vocabulary and the ranked defects" {
+    const classes = [_][]const u8{
+        "NOT_STARTED", "STUB", "PARTIAL", "IMPLEMENTED", "INTEGRATED", "VALIDATED",
+    };
+    for (classes) |class| try expectContains(kernel_audit, class);
+    try expectContains(kernel_audit, "VALIDATED (host)");
+    try expectContains(kernel_audit, "## 2. A. Boot and architecture");
+    try expectContains(kernel_audit, "## 7. F. Storage and filesystems");
+    try expectContains(kernel_audit, "## 10. Architecture defects (ranked)");
+}
+
+test "the memory model keeps the invariants and the reclaim rule" {
+    try expectContains(memory_model, "## 3. Invariants (the tests are written against these)");
+    try expectContains(memory_model, "| M1 |");
+    try expectContains(memory_model, "| M8 |");
+    try expectContains(memory_model, "## 4. Concurrency and TLB");
+    try expectContains(memory_model, "never unmaps a frame");
+}
+
+test "the execution model separates threads from processes and lists the locks" {
+    try expectContains(execution_model, "## 2. Objects");
+    try expectContains(execution_model, "## 4. Scheduling policy");
+    try expectContains(execution_model, "| **Wait queue** |");
+    try expectContains(execution_model, "## 5. Synchronisation primitives (ordered by need)");
+    try expectContains(execution_model, "FPU state is part of the context");
+}
+
+test "the driver model requires an interrupt registry and refuses a plugin system" {
+    try expectContains(driver_model, "## 3. Interrupt registration");
+    try expectContains(driver_model, "pub fn register(line: Line");
+    try expectContains(driver_model, "Not a plugin system");
+    try expectContains(driver_model, "## 9. Tests per driver");
+}
+
+test "the kernel documents state that the structure is planned, not built" {
+    const internals_claims = [_][]const u8{
+        "## 2. Target layering",
+        "## 5. Global state policy",
+        "## 11. Coding standards (binding for kernel work)",
+    };
+    for (internals_claims) |claim| try expectContains(kernel_internals, claim);
+    try expectContains(kernel_internals, "What \"done\" means for the kernel");
+    try expectContains(kernel_internals, "Not justified now");
 }

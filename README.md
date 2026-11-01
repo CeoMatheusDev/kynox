@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (709 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (716 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -91,7 +91,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (709) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (716) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -139,7 +139,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — 14/14 steps; `kynox-boot.efi` 185,344 B, `kynox-kernel` 66,777,813 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 49/49 steps, **709/709 tests passed** (fresh cache) |
+| `zig build test` | success — 49/49 steps, **716/716 tests passed** (fresh cache) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
@@ -167,6 +167,10 @@ recorded attempt and the exact procedure are in
 - [docs/decisions/](docs/decisions/README.md) — architecture decision records (ADR-0001…0007).
 - [docs/strategy/market-landscape.md](docs/strategy/market-landscape.md) — market and technology landscape, with dated sources (planning document).
 - [docs/architecture/platform-architecture.md](docs/architecture/platform-architecture.md) — target platform architecture and kernel/user-mode split (planning document).
+- [docs/architecture/kernel-internals.md](docs/architecture/kernel-internals.md) — target kernel layering, module contracts, init phases and coding standards (planning document).
+- [docs/architecture/memory-management.md](docs/architecture/memory-management.md) — frames, address spaces, regions, fault policy and memory invariants (planning document).
+- [docs/architecture/execution-model.md](docs/architecture/execution-model.md) — processes, threads, scheduling policy and synchronisation primitives (planning document).
+- [docs/architecture/device-driver-model.md](docs/architecture/device-driver-model.md) — device, driver and resource model, interrupt registration and containment (planning document).
 - [docs/architecture/graphics-platform.md](docs/architecture/graphics-platform.md) — display system, driver model, graphics core, native API, renderer, compositor and tools (planning document).
 - [docs/architecture/application-ecosystem.md](docs/architecture/application-ecosystem.md) — executable format, SDK, packaging, sandbox and compatibility (planning document).
 - [docs/architecture/security-architecture.md](docs/architecture/security-architecture.md) — threat model, capability proofs and explicit non-guarantees (planning document).
@@ -176,7 +180,9 @@ recorded attempt and the exact procedure are in
 - [docs/architecture/windows-compatibility.md](docs/architecture/windows-compatibility.md) — KWC: PE32+, ntdll, handles, SEH, user32/GDI, D3D future (planning document).
 - [docs/roadmap/COMPATIBILITY_ROADMAP.md](docs/roadmap/COMPATIBILITY_ROADMAP.md) — compatibility phases C0–C11 with criteria, tests and evidence (planning document).
 - [docs/roadmap/PRODUCT_ROADMAP.md](docs/roadmap/PRODUCT_ROADMAP.md) — stages S0–S15 with an evidence ladder (planning document).
+- [docs/roadmap/KERNEL_COMPLETION_ROADMAP.md](docs/roadmap/KERNEL_COMPLETION_ROADMAP.md) — kernel stages K0–K13 in dependency order, with criteria, tests and promotion rules (planning document).
 - [docs/audits/2026-10-31-audit.md](docs/audits/2026-10-31-audit.md) — audit, findings and prioritized plan.
+- [docs/audits/2026-10-31-kernel-core-audit.md](docs/audits/2026-10-31-kernel-core-audit.md) — kernel and core systems audit: A–G classification, test-coverage truth and ranked defects.
 - [CHANGELOG.md](CHANGELOG.md) — release history and unreleased changes.
 - [docs/releases/0.1.0-alpha.1.md](docs/releases/0.1.0-alpha.1.md) — release notes (draft; the tag does not exist).
 

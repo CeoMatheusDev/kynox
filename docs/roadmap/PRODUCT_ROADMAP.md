@@ -10,6 +10,7 @@
   [`application-ecosystem.md`](../architecture/application-ecosystem.md),
   [`security-architecture.md`](../architecture/security-architecture.md),
   [`market-landscape.md`](../strategy/market-landscape.md),
+  [`KERNEL_COMPLETION_ROADMAP.md`](KERNEL_COMPLETION_ROADMAP.md),
   [`PROJECT_STATUS.md`](../PROJECT_STATUS.md).
 
 ## 1. Status ladder used in this document
@@ -30,7 +31,14 @@ above P** — most are not even P. The kernel items that exist are at F/E-blocke
 
 ## 2. Ordering rationale (from the audit)
 
-1. **Runtime evidence is the critical path.** The tree compiles and passes 709
+This roadmap orders the *product*: display, graphics, services, compatibility.
+Kernel and core-systems work is ordered separately and at finer grain by
+[`KERNEL_COMPLETION_ROADMAP.md`](KERNEL_COMPLETION_ROADMAP.md) (stages K0–K13).
+Where the two overlap — S0 runtime evidence, S1 interrupts/SMP, S2 memory/IOMMU,
+S3 processes/ABI — the kernel roadmap is the authority on ordering and this one
+remains the authority on what the product needs from the kernel.
+
+1. **Runtime evidence is the critical path.** The tree compiles and passes 716
    host tests, but no QEMU/OVMF run has ever been recorded. Every subsystem's
    maturity is capped by that, and no graphics work can be validated without a
    running system. This is stage 0 — an infrastructure prerequisite, not a

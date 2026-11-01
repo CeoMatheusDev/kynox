@@ -8,7 +8,10 @@
 > (`VERSION`), generation `Kynox One` (major `0`). Policy in
 > [`VERSIONING.md`](VERSIONING.md), chart in [`roadmap/ERAS.md`](roadmap/ERAS.md).
 >
-> Audit report: [`docs/audits/2026-10-31-audit.md`](audits/2026-10-31-audit.md).
+> Audit reports: [`docs/audits/2026-10-31-audit.md`](audits/2026-10-31-audit.md)
+> (tree, findings, alpha gate) and
+> [`docs/audits/2026-10-31-kernel-core-audit.md`](audits/2026-10-31-kernel-core-audit.md)
+> (kernel and core systems A–G, classification and ranked defects).
 > Machine-readable counterpart (schema v2): [`PROJECT_STATUS.json`](PROJECT_STATUS.json).
 
 ## How to read the percentages
@@ -39,7 +42,7 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (QEMU/hardware) evidence exists for this snapshot.
 
 **Validation distinction.** On 2026-10-31 the following were executed:
-`zig build` (14/14 steps) and `zig build test` (49/49 steps, **709/709 tests
+`zig build` (14/14 steps) and `zig build test` (49/49 steps, **716/716 tests
 passed**). `zig build qemu-test`, `qemu-storage-test`, `qemu-interactive-test`
 and `check` were **not executed** — the environment has no QEMU, no OVMF and no
 reachable package mirror. Host test results therefore appear as
@@ -51,7 +54,7 @@ reachable package mirror. Host test results therefore appear as
 |---|---|---|
 | `zig version` | 2026-10-31 | `0.17.0` |
 | `zig build` | 2026-10-31 | success — 14/14 steps; `kynox-boot.efi` 185,344 B · `kynox-kernel` 66,777,813 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test` | 2026-10-31 | success — 709 tests (23 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 15 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
+| `zig build test` | 2026-10-31 | success — 716 tests (23 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 22 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
 | `zig build qemu-interactive-test` | — | **not executed** |
@@ -89,7 +92,7 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/linux-compatibility.md`, phases C-L0…C5 | Personality gate, syscall translation, signals/futex/TLS, KLD/KLIBC, window bridge |
 | Windows binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/windows-compatibility.md`, phases C-W0…W6 | PE32+ loader, TEB/PEB, KOB handles, SEH/unwind, user32/GDI, COM |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (709 tests) in `zig build test`, including a documentation link check and a planning-document structure guard; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (716 tests) in `zig build test`, including a documentation link check and a planning-document structure guard; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
 | Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, `docs-check`, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | CI defined but never run; toolchain installed by hand; no reproducible-artifact story |
 
@@ -111,12 +114,13 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (709) and QEMU integration scripts.
+- Host unit tests (716) and QEMU integration scripts.
 
 ## Planning documents (not implementation)
 
 The following documents were created on 2026-10-31 to fix contracts before any
-graphics, desktop, packaging or compatibility code is written. They are listed
+graphics, desktop, packaging or compatibility code is written, and — for the
+kernel — before any further kernel work is ordered. They are listed
 here so that a reader cannot mistake a plan for a capability. **No percentage in
 this file moved because of them.**
 
@@ -133,6 +137,15 @@ this file moved because of them.**
 | [architecture/windows-compatibility.md](architecture/windows-compatibility.md) | KWC: PE32+ loader, TEB/PEB, KOB handles, ntdll/kernel32/CRT, SEH/unwind, registry, user32/GDI, COM, D3D evaluation, phases C-W0…C-W6 | Nothing implemented; 0% |
 | [roadmap/COMPATIBILITY_ROADMAP.md](roadmap/COMPATIBILITY_ROADMAP.md) | Phases C0–C11 with criteria, conformance and performance tests, evidence and promotion rules; critical review of the proposed order | No phase complete |
 | [roadmap/PRODUCT_ROADMAP.md](roadmap/PRODUCT_ROADMAP.md) | Stages S0–S15 ordered by dependency, with the P/F/E/H evidence ladder | No stage complete |
+| [architecture/kernel-internals.md](architecture/kernel-internals.md) | Target kernel layering, module contracts, global-state policy, error model, initialisation phases, observability and the coding standards binding on kernel work | The tree still has the structure the audit describes; `main.zig` is the boot order |
+| [architecture/memory-management.md](architecture/memory-management.md) | Frames, address spaces, regions, page-fault policy, heap locking, DMA interface and eight memory invariants | PMM, paging, heap and DMA exist with the audit's limitations: unmap does not free, no regions, no destroy |
+| [architecture/execution-model.md](architecture/execution-model.md) | Process and thread objects, lifecycle, scheduling policy, synchronisation primitives, time and the user/kernel transition contract | No process object; the scheduler has no tests; no wait queue, mutex or rwlock |
+| [architecture/device-driver-model.md](architecture/device-driver-model.md) | Device, driver and resource objects, interrupt registration, DMA ownership, class interfaces, containment and the per-class test tiers | No driver model; drivers are functions called from the boot path; vectors are hard-coded |
+| [roadmap/KERNEL_COMPLETION_ROADMAP.md](roadmap/KERNEL_COMPLETION_ROADMAP.md) | Fourteen stages K0–K13 in dependency order, each with objective, initial state, files, dependencies, work, completion criteria, tests, QEMU/hardware validation, risks and P/F/E/H promotion; genuine parallelism; blockers | No stage started; nothing above P |
+| [audits/2026-10-31-kernel-core-audit.md](audits/2026-10-31-kernel-core-audit.md) | Audit record, not a plan: A–G classification with evidence levels, test-coverage truth, fifteen ranked defects, documentation-versus-code review | Describes the tree at `343e9fb`; claims no capability |
+
+The last row is an audit record, not a plan: it is listed here so that the
+inventory is complete, and it plans nothing.
 
 Decisions with analysed alternatives are recorded in
 [ADR-0004…0010](decisions/README.md) and marked "accepted for planning". A
@@ -200,6 +213,11 @@ required sections, their dated sources and their presence in this inventory.
     are not part of the build.
 
 ## Next priorities
+
+Kernel work is now ordered by
+[roadmap/KERNEL_COMPLETION_ROADMAP.md](roadmap/KERNEL_COMPLETION_ROADMAP.md)
+(stages K0–K13, dependency order). Where the list below and the roadmap disagree
+on *ordering*, the roadmap wins; the list remains a statement of what matters.
 
 Taken from the audit plan (see the audit for evidence and scope):
 
