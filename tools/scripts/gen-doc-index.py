@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-halt-ipi-and-fatal.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The halt IPI (vector 67) and the fatal path: the machine stops as one, the report promises what it can (IPIs delivered, not CPUs stopped), and every fatal halt goes through one module that allocates nothing.",
+    },
     "docs/audits/2026-11-01-per-cpu-clock.md": {
         "kind": "implementation-record",
         "authority": "record",

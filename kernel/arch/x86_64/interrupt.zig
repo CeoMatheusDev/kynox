@@ -30,6 +30,7 @@ const kynox = @import("kynox_shared");
 
 const serial = kynox.serial;
 const port = kynox.port;
+const fatal = @import("../../fatal.zig");
 
 const cpu = @import("cpu.zig");
 const smp = @import("smp.zig");
@@ -189,6 +190,11 @@ pub fn install() void {
     // receives it invalidates the translation and acknowledges, which is what
     // lets the sender know the translation is gone everywhere.
     setGate(apic.shootdown_vector, @intFromPtr(&kynox_interrupt_66));
+
+    // The halt IPI: the last thing a processor that is stopping does for the
+    // machine — it tells the others to stop too, so the report of the failure
+    // is the only thing still being written on the serial port.
+    setGate(apic.halt_vector, @intFromPtr(&kynox_interrupt_67));
 
     // The vectors that are not handled point at a stub that reports them.
     const unexpected = stubFor(255);
@@ -358,7 +364,7 @@ export fn kynox_exception_handler(vector: u64, frame: *const Registers) callconv
         // stops.
         const task = scheduler.scheduler.current[smp.cpuId()] orelse {
             serial.printLine("[KNK] FATAL: an exception of the user mode without a current task", .{});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
 
         scheduler.scheduler.killCurrent();
@@ -375,7 +381,7 @@ export fn kynox_exception_handler(vector: u64, frame: *const Registers) callconv
         return;
     }
 
-    port.haltForever();
+    fatal.stopAfterReport();
 }
 
 /// Rewrites the frame of the processor to the loop of the killed task.
@@ -497,6 +503,14 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
         return 0;
     }
 
+    // The halt IPI. The interrupt is finished at the controller first, because
+    // after this line the processor never services another one.
+    if (vector == @as(u64, apic.halt_vector)) {
+        apic.eoi();
+        _ = smp.handleStop();
+        port.haltForever();
+    }
+
     return 0;
 }
 
@@ -561,3 +575,4 @@ extern var kynox_interrupt_47: u8;
 extern var kynox_interrupt_64: u8;
 extern var kynox_interrupt_65: u8;
 extern var kynox_interrupt_66: u8;
+extern var kynox_interrupt_67: u8;

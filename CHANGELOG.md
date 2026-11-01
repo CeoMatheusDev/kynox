@@ -21,6 +21,35 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — a máquina falha inteira: a IPI de parada e um caminho de falha só
+
+- **O buraco**: todas as falhas fatais terminavam em `port.haltForever()`, que
+  para **aquele** processador. Numa máquina com mais de um, as outras CPUs
+  continuam escrevendo no mesmo serial — o relatório da falha sai intercalado
+  com o trabalho normal, e um defeito que aconteceu uma vez vira um defeito
+  impossível de reproduzir.
+- **O vetor 67**: `apic.halt_vector`, `apic.sendHalt`, stub em `interrupt.s`,
+  porta no IDT e um handler que encerra a interrupção, conta a parada e para a
+  CPU.
+- **`smp.stopOtherCpus()`** devolve um `StopReport` com os dois fatos que são
+  diferentes — quantos processadores online existem (`targets`) e quantas IPIs
+  foram realmente entregues ao controlador (`delivered`) — mais o caso
+  `no_apic`, em que havia alvo e ninguém pôde ser avisado. A CPU que recebe não
+  responde (ela para), então o relatório promete só o que pode.
+- **`smp.describeStop`** formata a linha em um buffer do chamador, porque roda no
+  caminho da falha, onde o alocador pode ser justamente o que quebrou.
+- **`kernel/fatal.zig`**: um lugar só para morrer. `stopTheMachine(reason)` e
+  `stopAfterReport()` substituem as 176 chamadas a `port.haltForever()` que
+  estavam espalhadas (174 em `main.zig`, 2 em `interrupt.zig`), e acrescentam o
+  aviso às outras CPUs antes da última linha.
+- **Quatro testes de host** (845 no total, `arch-tests` 176): a máquina com um
+  processador (ninguém a quem pedir, e a linha diz isso), a parada sem
+  controlador (diz "none told to stop" em vez de fingir), o relatório com três
+  alvos e duas entregas, e o processador que recebe a parada contando uma vez.
+- Documentação: `docs/audits/2026-11-01-halt-ipi-and-fatal.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 73% → 76%, `kernel_cpu_interrupts`
+  73% → 75%), `README.md`, `docs/ai/context-pack.md` e o item 6 do K2 no roadmap.
+
 ### Added (2026-11-01) — um relógio por processador, e um contador que sabe de quem é
 
 - **O defeito**: o handler do vetor 64 perguntava `timer.drivesScheduler(.apic)`,

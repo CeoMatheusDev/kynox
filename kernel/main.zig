@@ -37,6 +37,7 @@ const kynox_version = @import("kynox_version");
 const handoff = kynox.handoff;
 const memmap = kynox.memmap;
 const port = kynox.port;
+const fatal = @import("fatal.zig");
 const serial = kynox.serial;
 const usermode = kynox.usermode;
 const compositor_abi = kynox.compositor;
@@ -227,7 +228,7 @@ fn kernelPanic(message: []const u8, return_address: ?usize) noreturn {
     if (return_address) |address| {
         serial.printLine("[KNK] PANIC: at 0x{x}", .{address});
     }
-    port.haltForever();
+    fatal.stopAfterReport();
 }
 
 /// Number of memory descriptors that the kernel keeps a copy of.
@@ -672,7 +673,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
 
     handoff.validate(boot) catch |err| {
         serial.printLine("[KNK] FATAL: invalid handoff: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     serial.printLine("[KNK] handoff ok: version={d} flags=0x{x}", .{
@@ -687,7 +688,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
             kynox_kernel_entry_address,
             boot.kernel_entry,
         });
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] kernel: base=0x{x} end=0x{x} entry=0x{x}", .{
@@ -708,7 +709,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // promise of the planner that the hardware would not enforce.
     if (!cpu.enableNoExecute()) {
         serial.printLine("[KNK] FATAL: the processor does not support the no-execute bit", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     serial.printLine("[KNK] paging: no-execute enabled", .{});
 
@@ -840,7 +841,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // an exception stops the kernel.
     selfTest();
 
-    port.haltForever();
+    fatal.stopAfterReport();
 }
 
 /// Copies the handoff and the memory map into the memory of the kernel.
@@ -915,7 +916,7 @@ fn reportMemory() void {
     // The kernel image itself has to be covered by ordinary RAM.
     if (!memmap.isKernelBackedRange(map, boot_info.kernel_base, boot_info.kernel_end - boot_info.kernel_base)) {
         serial.printLine("[KNK] FATAL: kernel image is not backed by RAM", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 }
 
@@ -946,7 +947,7 @@ fn installSegments() void {
 
     if (!segment.verify()) {
         serial.printLine("[KNK] FATAL: the segment table was not installed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] segments: gdt installed and verified", .{});
@@ -998,7 +999,7 @@ fn installInterrupts() void {
 
     if (!interrupt.verify()) {
         serial.printLine("[KNK] FATAL: the interrupt table was not installed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     const timer_line: u64 = interrupt.first_hardware_vector;
@@ -1006,11 +1007,11 @@ fn installInterrupts() void {
 
     interrupt.register(timer_line, "8254", pitTick) catch |err| {
         serial.printLine("[KNK] FATAL: the timer line could not be registered ({s})", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     interrupt.register(keyboard_line, "ps2", ps2Interrupt) catch |err| {
         serial.printLine("[KNK] FATAL: the keyboard line could not be registered ({s})", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     serial.printLine("[KNK] interrupts: idt installed and verified, lines {d} ({s}) and {d} ({s}) registered", .{
@@ -1107,7 +1108,7 @@ fn installDma() void {
         .unmap = unmapDmaPage,
     })) {
         serial.printLine("[KNK] FATAL: the DMA virtual window is invalid", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] dma: virtual window 0x{x}..0x{x}", .{
@@ -1138,13 +1139,13 @@ fn unmapDmaPage(virtual: u64) void {
 fn probeDmaWindow() void {
     var buffer = dma.allocate(&physical.manager, dma.page_size, dma.dma32_limit) orelse {
         serial.printLine("[KNK] FATAL: the DMA probe could not reserve a page", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     defer buffer.release(&physical.manager);
 
     var mapped = dma.mapVirtual(buffer) orelse {
         serial.printLine("[KNK] FATAL: the DMA probe could not map the page", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     defer dma.unmapVirtual(&mapped, &physical.manager);
 
@@ -1154,13 +1155,13 @@ fn probeDmaWindow() void {
     bytes[last] = 0x5A;
     if (bytes[0] != 0xA5 or bytes[last] != 0x5A) {
         serial.printLine("[KNK] FATAL: the DMA window write probe failed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     const translated = paging.translate(@intFromPtr(mapped.virtual)) orelse 0;
     if (translated != buffer.physical_address) {
         serial.printLine("[KNK] FATAL: the DMA window translation is wrong", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] dma: window map probe ok phys=0x{x} virt=0x{x}", .{
@@ -1185,7 +1186,7 @@ fn probeVirtqueueLayout() void {
         @intFromPtr(&virtqueue_storage),
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the virtqueue probe failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     var buffer: [kvdi.virtqueue_probe.Result.format_length]u8 = undefined;
@@ -1266,7 +1267,7 @@ fn installMmioWindow() void {
         serial.printLine("[KNK] FATAL: the MMIO window could not be reserved: {s}", .{
             @errorName(err),
         });
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     mmio_window = kvdi.mmio.Window.init(
@@ -1277,7 +1278,7 @@ fn installMmioWindow() void {
         serial.printLine("[KNK] FATAL: the MMIO window is not page aligned: {s}", .{
             @errorName(err),
         });
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 }
 
@@ -1394,14 +1395,14 @@ fn verifyVirtioBlockPersistenceProbe() void {
     const data_offset = storage_test_lba * device.sector_size;
     device.readBytes(data_offset, &storage_test_actual) catch |err| {
         serial.printLine("[KNK] FATAL: storage-test initial read failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     if (std.mem.allEqual(u8, &storage_test_actual, 0)) {
         serial.printLine("[KNK] kvdi: storage-test phase=boot1", .{});
         device.writeBytes(data_offset, &storage_test_expected) catch |err| {
             serial.printLine("[KNK] FATAL: storage-test write failed: {s}", .{@errorName(err)});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
         serial.printLine("[KNK] kvdi: storage write completed lba={d} bytes={d}", .{
             storage_test_lba,
@@ -1410,17 +1411,17 @@ fn verifyVirtioBlockPersistenceProbe() void {
 
         if (device.flush == null) {
             serial.printLine("[KNK] FATAL: storage-test requires negotiated VirtIO FLUSH", .{});
-            port.haltForever();
+            fatal.stopAfterReport();
         }
         device.flushWrites() catch |err| {
             serial.printLine("[KNK] FATAL: storage-test FLUSH failed: {s}", .{@errorName(err)});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
         serial.printLine("[KNK] kvdi: storage FLUSH completed lba={d}", .{storage_test_lba});
 
         device.readBytes(data_offset, &storage_test_actual) catch |err| {
             serial.printLine("[KNK] FATAL: storage-test readback failed: {s}", .{@errorName(err)});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
         serial.printLine("[KNK] kvdi: storage read completed lba={d} bytes={d}", .{
             storage_test_lba,
@@ -1428,7 +1429,7 @@ fn verifyVirtioBlockPersistenceProbe() void {
         });
         if (!std.mem.eql(u8, &storage_test_expected, &storage_test_actual)) {
             serial.printLine("[KNK] FATAL: storage-test readback differs from written bytes", .{});
-            port.haltForever();
+            fatal.stopAfterReport();
         }
         serial.printLine("[KNK] kvdi: storage data compare verified bytes={d}", .{storage_test_actual.len});
         serial.printLine("[KNK] kvdi: storage-test complete boot=1", .{});
@@ -1446,7 +1447,7 @@ fn verifyVirtioBlockPersistenceProbe() void {
         serial.printLine("[KNK] kvdi: storage-test complete boot=2", .{});
     } else {
         serial.printLine("[KNK] FATAL: storage-test sector has unexpected nonzero data", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 }
 
@@ -2258,7 +2259,7 @@ fn buildPageTables(boot: *const handoff.BootHandoff) void {
         boot.framebuffer.size,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the page tables could not be built: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     // The DMA window is reserved before the address spaces of the
@@ -2270,7 +2271,7 @@ fn buildPageTables(boot: *const handoff.BootHandoff) void {
         dma.virtual_window_size,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the DMA window could not be reserved: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     // The MMIO window follows the same rule: it is reserved with the page
@@ -2682,7 +2683,7 @@ fn installHeap() void {
     for (&blocks) |*block| {
         const memory = heap.heap.alloc(block_size) orelse {
             serial.printLine("[KNK] FATAL: the heap is exhausted", .{});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
         @memset(memory[0..block_size], 0xA5);
         block.* = memory;
@@ -2708,7 +2709,7 @@ fn installSmp() void {
     const lapic_base = apic.baseAddress();
     paging.mapDevicePage(lapic_base, lapic_base) catch {
         serial.printLine("[KNK] FATAL: unable to map local APIC at 0x{x}", .{lapic_base});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     apic.map(lapic_base);
     apic.enable();
@@ -2990,7 +2991,7 @@ fn installTimer() void {
     // forever with the timer firing happily in the background.
     if (!timer.armCpuClock(smp.bspCpuIndex(), .system)) {
         serial.printLine("[KNK] FATAL: the clock of the system has no owner", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     timer.enableInterrupts();
@@ -3133,38 +3134,38 @@ fn installFs() void {
 
     _ = fs.mkdir("/apps") catch |err| {
         serial.printLine("[KNK] FATAL: the directory /apps could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const descriptor = fs.create(0, "/apps/hello.txt", 0o644) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const payload = "Kynox";
 
     const written = fs.write(0, descriptor, payload) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (written != payload.len) {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt accepted {d} bytes", .{written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     fs.close(0, descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     var buffer: [8]u8 = undefined;
     const count = fs.readFile("/apps/hello.txt", &buffer) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt could not be read: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (count != payload.len or !std.mem.eql(u8, buffer[0..count], payload)) {
         serial.printLine("[KNK] FATAL: the file /apps/hello.txt did not survive the round trip", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The native image. The bytes are built here, written into the RamFS
@@ -3172,25 +3173,25 @@ fn installFs() void {
     // path, and not a decoration around an array of the kernel.
     const image = native_image.build(&native_image_buffer) catch |err| {
         serial.printLine("[KNK] FATAL: the native image could not be built: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     native_image_length = image.len;
 
     const elf_descriptor = fs.create(0, "/apps/hello.elf", 0o755) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.elf could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const elf_written = fs.write(0, elf_descriptor, image) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.elf could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (elf_written != image.len) {
         serial.printLine("[KNK] FATAL: the file /apps/hello.elf accepted {d} bytes", .{elf_written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     fs.close(0, elf_descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/hello.elf could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     serial.printLine("[KNK] fs: ramfs ready, {d} blocks free", .{fs.freeBlockCount()});
@@ -3214,23 +3215,23 @@ fn installFs() void {
         &toolchain_kex_buffer,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the toolchain KEX could not be wrapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const toolchain_descriptor = fs.create(0, "/apps/toolchain.kex", 0o755) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/toolchain.kex could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const toolchain_written = fs.write(0, toolchain_descriptor, toolchain_kex_buffer[0..toolchain_wrapped]) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/toolchain.kex could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (toolchain_written != toolchain_wrapped) {
         serial.printLine("[KNK] FATAL: the file /apps/toolchain.kex accepted {d} bytes", .{toolchain_written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     fs.close(0, toolchain_descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/toolchain.kex could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     toolchain_kex_length = toolchain_wrapped;
     serial.printLine("[KNK] fs: /apps/toolchain.kex installed ({d} bytes)", .{toolchain_wrapped});
@@ -3241,19 +3242,19 @@ fn installFs() void {
 
     const client_descriptor = fs.create(0, "/apps/client.elf", 0o755) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/client.elf could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const client_written = fs.write(0, client_descriptor, client_app.bytes[0..]) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/client.elf could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (client_written != client_app.bytes.len) {
         serial.printLine("[KNK] FATAL: the file /apps/client.elf accepted {d} bytes", .{client_written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     fs.close(0, client_descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/client.elf could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: /apps/client.elf installed ({d} bytes)", .{client_app.bytes.len});
 
@@ -3267,27 +3268,27 @@ fn installFs() void {
     };
     kpk_packed_length = kpk.pack(&kpk_sources, &kpk_pack_buffer) catch |err| {
         serial.printLine("[KNK] FATAL: the KPK package could not be packed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (kpk_packed_length > kpk_pack_buffer.len) {
         serial.printLine("[KNK] FATAL: the KPK package does not fit the pack buffer", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     const kpk_descriptor = fs.create(0, "/apps/sample.kpk", 0o644) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/sample.kpk could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const kpk_written = fs.write(0, kpk_descriptor, kpk_pack_buffer[0..kpk_packed_length]) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/sample.kpk could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (kpk_written != kpk_packed_length) {
         serial.printLine("[KNK] FATAL: the file /apps/sample.kpk accepted {d} bytes", .{kpk_written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     fs.close(0, kpk_descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/sample.kpk could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] kpk: packed {d} entries, {d} bytes", .{ kpk_sources.len, kpk_packed_length });
     serial.printLine("[KNK] fs: /apps/sample.kpk installed ({d} bytes)", .{kpk_packed_length});
@@ -3298,19 +3299,19 @@ fn installFs() void {
     for (&large_file_buffer, 0..) |*byte, index| byte.* = largeFileByte(index);
     const large_descriptor = fs.create(0, "/apps/large.bin", 0o644) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/large.bin could not be created: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const large_written = fs.write(0, large_descriptor, &large_file_buffer) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/large.bin could not be written: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (large_written != large_file_size) {
         serial.printLine("[KNK] FATAL: the file /apps/large.bin accepted {d} bytes", .{large_written});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     fs.close(0, large_descriptor) catch |err| {
         serial.printLine("[KNK] FATAL: the file /apps/large.bin could not be closed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: /apps/large.bin installed ({d} bytes, indirect blocks)", .{large_file_size});
 }
@@ -3334,22 +3335,22 @@ fn installCapabilities() void {
 
     const owner = user_space orelse {
         serial.printLine("[KNK] FATAL: the process that owns the channel does not exist", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const answerer = second_space orelse {
         serial.printLine("[KNK] FATAL: the process that answers does not exist", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const channel_rights = capability.Rights.use | capability.Rights.delegate;
     const handle = capability.create(.channel, 0, channel_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     if (!capability.give(owner.id, handle, channel_rights)) {
         serial.printLine("[KNK] FATAL: the capability of the channel could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The kernel is the root authority, and it gives the use of the channel
@@ -3358,7 +3359,7 @@ fn installCapabilities() void {
     // it.
     if (!capability.give(answerer.id, handle, capability.Rights.use)) {
         serial.printLine("[KNK] FATAL: the capability of the channel could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The channel of the wait with a timeout. The process that answers
@@ -3367,12 +3368,12 @@ fn installCapabilities() void {
     // delegation.
     const timeout_handle = capability.create(.channel, 1, capability.Rights.use) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     if (!capability.give(answerer.id, timeout_handle, capability.Rights.use)) {
         serial.printLine("[KNK] FATAL: the capability of the channel of the timeout could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The capability of the address space of the process that answers.
@@ -3384,12 +3385,12 @@ fn installCapabilities() void {
     const process_rights = capability.Rights.write | capability.Rights.delegate;
     const process_handle = capability.create(.process, answerer.id, process_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     if (!capability.give(owner.id, process_handle, process_rights)) {
         serial.printLine("[KNK] FATAL: the capability of the address space could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The display capability. The toolchain process is the first
@@ -3399,15 +3400,15 @@ fn installCapabilities() void {
     const display_rights = capability.Rights.write | capability.Rights.delegate;
     const display_handle = capability.create(.display, 0, display_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const presenter = toolchain_space orelse {
         serial.printLine("[KNK] FATAL: the process that presents does not exist", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!capability.give(presenter.id, display_handle, display_rights)) {
         serial.printLine("[KNK] FATAL: the capability of the display could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // The input capability. The same process that presents is the first
@@ -3417,11 +3418,11 @@ fn installCapabilities() void {
     const input_rights = capability.Rights.read | capability.Rights.delegate;
     const input_handle = capability.create(.input, 0, input_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!capability.give(presenter.id, input_handle, input_rights)) {
         serial.printLine("[KNK] FATAL: the capability of the input could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // O canal 2 liga o cliente ao compositor. O cliente só envia, e o
@@ -3430,20 +3431,20 @@ fn installCapabilities() void {
     // contrato do F6.29 é de uma via.
     const client = client_space orelse {
         serial.printLine("[KNK] FATAL: the client process does not exist", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const frame_channel_rights = capability.Rights.send | capability.Rights.receive;
     const frame_channel = capability.create(.channel, compositor_abi.channel_id, frame_channel_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!capability.give(client.id, frame_channel, capability.Rights.send | capability.Rights.receive)) {
         serial.printLine("[KNK] FATAL: the capability of the frame channel could not be given to the client", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     if (!capability.give(presenter.id, frame_channel, capability.Rights.send | capability.Rights.receive)) {
         serial.printLine("[KNK] FATAL: the capability of the frame channel could not be given to the compositor", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // O cliente escreve na superfície do compositor por copy_to. A
@@ -3452,11 +3453,11 @@ fn installCapabilities() void {
     const surface_process_rights = capability.Rights.write;
     const surface_process = capability.create(.process, presenter.id, surface_process_rights) orelse {
         serial.printLine("[KNK] FATAL: the table of capabilities is full", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!capability.give(client.id, surface_process, capability.Rights.write)) {
         serial.printLine("[KNK] FATAL: the capability of the compositor surface could not be given", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] capabilities: the channel 0 belongs to the process {d}", .{owner.id});
@@ -3492,7 +3493,7 @@ fn installUserTask() void {
     for (0..process_count) |role| {
         const space = installProcess(role) orelse {
             serial.printLine("[KNK] FATAL: the process {d} could not be created", .{role});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
 
         if (role == 0) {
@@ -3524,12 +3525,12 @@ fn installNativeProcess() void {
         usermode.window_size,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the native image could not be planned: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const space = paging.createAddressSpace(window) orelse {
         serial.printLine("[KNK] FATAL: the native address space could not be created", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const stack_base = window + usermode.stack_offset;
@@ -3543,7 +3544,7 @@ fn installNativeProcess() void {
         usermode.stack_pages,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the native image could not be materialized: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     native_space = space;
@@ -3580,7 +3581,7 @@ fn installToolchainProcess() void {
         usermode.window_size,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the toolchain image could not be planned: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     // F5: o manifest declarado no KEX é imposto contra a concessão do
@@ -3594,13 +3595,13 @@ fn installToolchainProcess() void {
         &declared,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the toolchain manifest could not be read: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     verifyKexManifest(declared[0..declared_count]);
 
     const space = paging.createAddressSpace(window) orelse {
         serial.printLine("[KNK] FATAL: the toolchain address space could not be created", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const stack_base = window + usermode.stack_offset;
@@ -3614,7 +3615,7 @@ fn installToolchainProcess() void {
         usermode.stack_pages,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the toolchain image could not be materialized: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     verifyToolchainPermissions(space, &plan, stack_base);
@@ -3653,12 +3654,12 @@ fn installClientProcess() void {
         usermode.window_size,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the client image could not be planned: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const space = paging.createAddressSpace(window) orelse {
         serial.printLine("[KNK] FATAL: the client address space could not be created", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const stack_base = window + usermode.stack_offset;
@@ -3672,7 +3673,7 @@ fn installClientProcess() void {
         usermode.stack_pages,
     ) catch |err| {
         serial.printLine("[KNK] FATAL: the client image could not be materialized: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     verifyClientPermissions(space, &plan, stack_base);
@@ -3700,7 +3701,7 @@ fn installClientProcess() void {
 fn mapCompositorSurface(space: *paging.AddressSpace) u64 {
     if (user_window_base <= usermode.surface_below) {
         serial.printLine("[KNK] FATAL: there is no room for the compositor surface", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     const address = user_window_base - usermode.surface_below;
@@ -3710,7 +3711,7 @@ fn mapCompositorSurface(space: *paging.AddressSpace) u64 {
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the compositor surface could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const saved_cr3 = cpu.readCr3();
@@ -3723,11 +3724,11 @@ fn mapCompositorSurface(space: *paging.AddressSpace) u64 {
 
     const permissions = paging.permissionsIn(space, address) orelse {
         serial.printLine("[KNK] FATAL: the compositor surface is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!permissions.writable or permissions.executable) {
         serial.printLine("[KNK] FATAL: the compositor surface is not R+W+NX", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     return address;
@@ -3737,12 +3738,12 @@ fn mapCompositorSurface(space: *paging.AddressSpace) u64 {
 fn mapClientContract(space: *paging.AddressSpace) u64 {
     if (user_window_base <= usermode.contract_below) {
         serial.printLine("[KNK] FATAL: there is no room for the client contract", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     const presenter = toolchain_space orelse {
         serial.printLine("[KNK] FATAL: the compositor process does not exist", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const address = user_window_base - usermode.contract_below;
@@ -3752,7 +3753,7 @@ fn mapClientContract(space: *paging.AddressSpace) u64 {
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the client contract could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     const contract = compositor_abi.Contract{
@@ -3778,18 +3779,18 @@ fn mapClientContract(space: *paging.AddressSpace) u64 {
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the client contract could not be protected: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     cpu.writeCr3(saved_cr3);
     paging.setActiveSpace(saved_space);
 
     const permissions = paging.permissionsIn(space, address) orelse {
         serial.printLine("[KNK] FATAL: the client contract is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (permissions.writable or permissions.executable) {
         serial.printLine("[KNK] FATAL: the client contract is not R+NX", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     return address;
@@ -3807,13 +3808,13 @@ fn verifyImagePermissions(
         while (page < planned_segment.page_end) : (page += handoff.page_size) {
             const permissions = paging.permissionsIn(space, page) orelse {
                 serial.printLine("[KNK] FATAL: a page of the {s} image is not mapped", .{label});
-                port.haltForever();
+                fatal.stopAfterReport();
             };
             if (permissions.writable != planned_segment.isWritable() or
                 permissions.executable != planned_segment.isExecutable())
             {
                 serial.printLine("[KNK] FATAL: a page of the {s} image has the wrong permissions", .{label});
-                port.haltForever();
+                fatal.stopAfterReport();
             }
         }
     }
@@ -3823,11 +3824,11 @@ fn verifyImagePermissions(
     while (page < stack_end) : (page += handoff.page_size) {
         const permissions = paging.permissionsIn(space, page) orelse {
             serial.printLine("[KNK] FATAL: a page of the {s} stack is not mapped", .{label});
-            port.haltForever();
+            fatal.stopAfterReport();
         };
         if (!permissions.writable or permissions.executable) {
             serial.printLine("[KNK] FATAL: the {s} stack is not R+W+NX", .{label});
-            port.haltForever();
+            fatal.stopAfterReport();
         }
     }
 
@@ -3843,7 +3844,7 @@ fn verifyImagePermissions(
 fn verifyKexManifest(declared: []const kex.Capability) void {
     if (declared.len == 0) {
         serial.printLine("[KNK] FATAL: the KEX declares no capabilities", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     for (declared) |entry| {
         const granted: u64 = switch (entry.kind) {
@@ -3853,7 +3854,7 @@ fn verifyKexManifest(declared: []const kex.Capability) void {
                 serial.printLine("[KNK] FATAL: the KEX declares kind {d}, which the kernel does not grant to this process", .{
                     @backingInt(entry.kind),
                 });
-                port.haltForever();
+                fatal.stopAfterReport();
             },
         };
         if (@as(u64, entry.rights) & ~granted != 0) {
@@ -3861,7 +3862,7 @@ fn verifyKexManifest(declared: []const kex.Capability) void {
                 entry.rights,
                 granted,
             });
-            port.haltForever();
+            fatal.stopAfterReport();
         }
         serial.printLine("[KNK] kex: manifest entry kind={d} rights=0x{x} within the grant 0x{x}", .{
             @backingInt(entry.kind),
@@ -3899,34 +3900,34 @@ fn verifyClientPermissions(
 fn verifyNativePermissions(space: *paging.AddressSpace) void {
     const code = paging.permissionsIn(space, user_window_base + native_image.code_virtual_address) orelse {
         serial.printLine("[KNK] FATAL: the code page of the native process is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const data = paging.permissionsIn(space, nativeDataAddress()) orelse {
         serial.printLine("[KNK] FATAL: the data page of the native process is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const stack_low = paging.permissionsIn(space, userStackAddress()) orelse {
         serial.printLine("[KNK] FATAL: the stack of the native process is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const stack_high = paging.permissionsIn(space, userStackAddress() + handoff.page_size) orelse {
         serial.printLine("[KNK] FATAL: the stack of the native process is not mapped", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     if (code.writable or !code.executable) {
         serial.printLine("[KNK] FATAL: the code page is not R+X", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     if (!data.writable or data.executable) {
         serial.printLine("[KNK] FATAL: the data page is not R+W+NX", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     if (!stack_low.writable or stack_low.executable or
         !stack_high.writable or stack_high.executable)
     {
         serial.printLine("[KNK] FATAL: the stack is not R+W+NX", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] native: page permissions verified, code R+X, data and stack R+W+NX", .{});
@@ -3964,7 +3965,7 @@ fn installProcess(role: u64) ?*paging.AddressSpace {
     const window = kernel_block - usermode.window_size;
     if (window < handoff.page_size) {
         serial.printLine("[KNK] FATAL: there is no room for the window of the user mode", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     user_window_base = window;
 
@@ -3983,28 +3984,28 @@ fn installProcess(role: u64) ?*paging.AddressSpace {
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the page of the program could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     paging.mapUserPageInFlags(space, userDataAddress(), data_page, .{
         .writable = true,
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the page of data could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     paging.mapUserPageInFlags(space, userStackAddress(), user_stack_low, .{
         .writable = true,
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the stack could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     paging.mapUserPageInFlags(space, userStackAddress() + handoff.page_size, user_stack_high, .{
         .writable = true,
         .executable = false,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the stack could not be mapped: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     // The program is copied into the page that the user mode sees, and the
@@ -4029,7 +4030,7 @@ fn installProcess(role: u64) ?*paging.AddressSpace {
         .executable = true,
     }) catch |err| {
         serial.printLine("[KNK] FATAL: the page of the program could not be protected: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     cpu.writeCr3(saved_cr3);
@@ -4048,7 +4049,7 @@ fn installProcess(role: u64) ?*paging.AddressSpace {
 /// Reports that the kernel does not have enough memory.
 fn reportOutOfMemory() noreturn {
     serial.printLine("[KNK] FATAL: out of memory", .{});
-    port.haltForever();
+    fatal.stopAfterReport();
 }
 
 /// Programs the registers of model of the system call.
@@ -4060,7 +4061,7 @@ fn installSystemCall() void {
 
     if (!syscall.verify()) {
         serial.printLine("[KNK] FATAL: the registers of the system call were not installed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] syscall: instruction installed and verified, star=0x{x}", .{syscall.readStar()});
@@ -4812,29 +4813,29 @@ fn prepareFsLifecycleProbe() void {
     lifecycle_inodes_before = fs.freeInodeCount();
     const normal_fd = fs.create(normal.id, "/apps/lifecycle-normal.tmp", 0o600) catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle normal create: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     _ = fs.write(normal.id, normal_fd, "normal") catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle normal write: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     fs.close(normal.id, normal_fd) catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle normal close: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     fs.unlink("/apps/lifecycle-normal.tmp") catch unreachable;
 
     const fault_fd = fs.create(fault.id, "/apps/lifecycle-fault.tmp", 0o600) catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle fault create: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     _ = fs.write(fault.id, fault_fd, "fault") catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle fault write: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     fs.close(fault.id, fault_fd) catch |err| {
         serial.printLine("[KNK] FATAL: lifecycle fault close: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     fs.unlink("/apps/lifecycle-fault.tmp") catch unreachable;
     lifecycle_probe_ready = true;
@@ -4862,7 +4863,7 @@ fn verifyFsLifecycleProbe() void {
         fs.freeInodeCount() != lifecycle_inodes_before)
     {
         serial.printLine("[KNK] FATAL: fs lifecycle descriptors were not reclaimed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     serial.printLine("[KNK] fs: lifecycle cleanup normal exit and user fault ok", .{});
 }
@@ -4879,7 +4880,7 @@ fn verifyFsLifecycleProbe() void {
 fn verifyFsPersistence() void {
     const state = fs.stateFor(0) orelse {
         serial.printLine("[KNK] FATAL: the root RamFS volume is unavailable", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     persistence_ramdisk = ramdisk.RamDisk.init(&persistence_ramdisk_memory, persistence_sector_size);
@@ -4892,7 +4893,7 @@ fn verifyFsPersistence() void {
     persistence_sequence += 1;
     knv_volume.commit(&device, state, persistence_sequence, &persistence_staging) catch |err| {
         serial.printLine("[KNK] FATAL: the KNV commit failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: knv committed sequence={d} image={d} bytes over {d} sectors", .{
         persistence_sequence,
@@ -4905,18 +4906,18 @@ fn verifyFsPersistence() void {
     var probe: [8]u8 = undefined;
     if (fs.readFile("/apps/hello.txt", &probe)) |_| {
         serial.printLine("[KNK] FATAL: the wiped volume still holds /apps/hello.txt", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     } else |_| {
         serial.printLine("[KNK] fs: volume wiped, /apps/hello.txt no longer resolvable", .{});
     }
 
     device.readBytes(0, persistence_staging[0..knv.image_size]) catch |err| {
         serial.printLine("[KNK] FATAL: the KNV image could not be read: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     knv.decode(persistence_staging[0..knv.image_size], state, &persistence_scratch) catch |err| {
         serial.printLine("[KNK] FATAL: the KNV recovery failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: knv recovered sequence={d} from the block device", .{persistence_sequence});
 
@@ -4924,11 +4925,11 @@ fn verifyFsPersistence() void {
     var buffer: [8]u8 = undefined;
     const count = fs.readFile("/apps/hello.txt", &buffer) catch |err| {
         serial.printLine("[KNK] FATAL: the recovered volume lost /apps/hello.txt: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (count != 5 or !std.mem.eql(u8, buffer[0..count], "Kynox")) {
         serial.printLine("[KNK] FATAL: the recovered volume returned the wrong content", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     verifyRecoveredSize("/apps/hello.elf", native_image_length);
     verifyRecoveredSize("/apps/toolchain.kex", toolchain_kex_length);
@@ -4946,53 +4947,53 @@ fn verifyFsPersistence() void {
 fn verifyDirectoryRename() void {
     _ = fs.mkdir("/apps/work") catch |err| {
         serial.printLine("[KNK] FATAL: work directory create: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     _ = fs.mkdir("/apps/work/sub") catch |err| {
         serial.printLine("[KNK] FATAL: work subdirectory create: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const fd = fs.create(0, "/apps/work/sub/file.txt", 0o644) catch |err| {
         serial.printLine("[KNK] FATAL: work file create: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     _ = fs.write(0, fd, "renamed") catch |err| {
         serial.printLine("[KNK] FATAL: work file write: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     fs.close(0, fd) catch |err| {
         serial.printLine("[KNK] FATAL: work file close: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 
     fs.rename("/apps/work", "/apps/workspace") catch |err| {
         serial.printLine("[KNK] FATAL: directory rename failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     var buffer: [8]u8 = undefined;
     const count = fs.readFile("/apps/workspace/sub/file.txt", &buffer) catch |err| {
         serial.printLine("[KNK] FATAL: renamed subtree lost the file: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (count != 7 or !std.mem.eql(u8, buffer[0..count], "renamed")) {
         serial.printLine("[KNK] FATAL: renamed subtree holds the wrong content", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     // Ciclo: mover o diretório para dentro da própria subárvore é recusado.
     if (fs.rename("/apps/workspace", "/apps/workspace/sub/loop")) |_| {
         serial.printLine("[KNK] FATAL: a directory cycle was accepted", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     } else |err| {
         if (err != error.InvalidDirectory) {
             serial.printLine("[KNK] FATAL: cycle rejection answered {s}, expected InvalidDirectory", .{@errorName(err)});
-            port.haltForever();
+            fatal.stopAfterReport();
         }
     }
 
     fs.unlink("/apps/workspace/sub/file.txt") catch |err| {
         serial.printLine("[KNK] FATAL: rename work file cleanup: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: directory rename round trip ok", .{});
 }
@@ -5002,29 +5003,29 @@ fn verifyDirectoryRename() void {
 fn verifyLargeFileContent() void {
     const descriptor = fs.open(0, "/apps/large.bin", 0) catch |err| {
         serial.printLine("[KNK] FATAL: the recovered volume lost /apps/large.bin: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     defer fs.close(0, descriptor) catch {};
     var window: [16]u8 = undefined;
 
     fs.seek(0, descriptor, 0) catch |err| {
         serial.printLine("[KNK] FATAL: large file seek failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const first = fs.read(0, descriptor, &window) catch |err| {
         serial.printLine("[KNK] FATAL: large file read failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (first != window.len) {
         serial.printLine("[KNK] FATAL: large file read {d} bytes at the start", .{first});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     for (window, 0..) |byte, index| {
         if (byte != largeFileByte(index)) {
             serial.printLine("[KNK] FATAL: large file byte {d} is 0x{x}, expected 0x{x}", .{
                 index, byte, largeFileByte(index),
             });
-            port.haltForever();
+            fatal.stopAfterReport();
         }
     }
 
@@ -5032,39 +5033,39 @@ fn verifyLargeFileContent() void {
     const indirect_offset: usize = ramfs.direct_blocks * ramfs.block_size;
     fs.seek(0, descriptor, indirect_offset) catch |err| {
         serial.printLine("[KNK] FATAL: large file seek to indirect failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const mid = fs.read(0, descriptor, &window) catch |err| {
         serial.printLine("[KNK] FATAL: large file indirect read failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (mid != window.len) {
         serial.printLine("[KNK] FATAL: large file read {d} bytes at the indirect boundary", .{mid});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     for (window, 0..) |byte, index| {
         if (byte != largeFileByte(indirect_offset + index)) {
             serial.printLine("[KNK] FATAL: large file indirect byte {d} is 0x{x}", .{ index, byte });
-            port.haltForever();
+            fatal.stopAfterReport();
         }
     }
 
     fs.seek(0, descriptor, large_file_size - window.len) catch |err| {
         serial.printLine("[KNK] FATAL: large file seek to end failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const tail = fs.read(0, descriptor, &window) catch |err| {
         serial.printLine("[KNK] FATAL: large file tail read failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (tail != window.len) {
         serial.printLine("[KNK] FATAL: large file read {d} bytes at the end", .{tail});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     for (window, 0..) |byte, index| {
         if (byte != largeFileByte(large_file_size - window.len + index)) {
             serial.printLine("[KNK] FATAL: large file tail byte {d} is 0x{x}", .{ index, byte });
-            port.haltForever();
+            fatal.stopAfterReport();
         }
     }
     serial.printLine("[KNK] fs: large file round trip ok (indirect blocks)", .{});
@@ -5074,11 +5075,11 @@ fn verifyLargeFileContent() void {
 fn verifyRecoveredSize(path: []const u8, expected: usize) void {
     const size = fs.sizeOf(path) catch |err| {
         serial.printLine("[KNK] FATAL: the recovered volume lost {s}: {s}", .{ path, @errorName(err) });
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (size != expected) {
         serial.printLine("[KNK] FATAL: {s} recovered with {d} bytes, expected {d}", .{ path, size, expected });
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 }
 
@@ -5092,33 +5093,33 @@ fn verifyKpkPackaging() void {
     var package: [kpk_pack_buffer_size]u8 = undefined;
     const count = fs.readFile("/apps/sample.kpk", &package) catch |err| {
         serial.printLine("[KNK] FATAL: the recovered volume lost /apps/sample.kpk: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     const info = kpk.validate(package[0..count]) catch |err| {
         serial.printLine("[KNK] FATAL: the recovered KPK failed validation: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (info.entry_count != 2 or info.total_size != kpk_packed_length) {
         serial.printLine("[KNK] FATAL: the recovered KPK geometry changed", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     var entry: [64]u8 = undefined;
     const hello = kpk.readEntryByName(package[0..count], "hello.txt", &entry) catch |err| {
         serial.printLine("[KNK] FATAL: the KPK entry hello.txt failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (hello != 5 or !std.mem.eql(u8, entry[0..hello], "Kynox")) {
         serial.printLine("[KNK] FATAL: the KPK entry hello.txt has the wrong content", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     const manifest = kpk.readEntryByName(package[0..count], "manifest.kcfg", &entry) catch |err| {
         serial.printLine("[KNK] FATAL: the KPK entry manifest.kcfg failed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
     if (!std.mem.eql(u8, entry[0..manifest], "app=hello\nexec=hello.kex\n")) {
         serial.printLine("[KNK] FATAL: the KPK entry manifest.kcfg has the wrong content", .{});
-        port.haltForever();
+        fatal.stopAfterReport();
     }
     serial.printLine("[KNK] kpk: /apps/sample.kpk validated and unpacked ({d} entries, {d} bytes)", .{
         info.entry_count,
@@ -5128,7 +5129,7 @@ fn verifyKpkPackaging() void {
 
     fs.unlink("/apps/sample.kpk") catch |err| {
         serial.printLine("[KNK] FATAL: the KPK file could not be removed: {s}", .{@errorName(err)});
-        port.haltForever();
+        fatal.stopAfterReport();
     };
 }
 
@@ -5244,7 +5245,7 @@ fn syscallSelfTest() void {
             frame.rax,
             syscall.ping_result,
         });
-        port.haltForever();
+        fatal.stopAfterReport();
     }
 
     serial.printLine("[KNK] self test: the handler returned 0x{x}", .{frame.rax});
@@ -5259,7 +5260,7 @@ fn selfTest() void {
     serial.printLine("[KNK] self test: provoking an invalid opcode", .{});
     asm volatile ("ud2");
     serial.printLine("[KNK] FATAL: the exception handling did not stop the kernel", .{});
-    port.haltForever();
+    fatal.stopAfterReport();
 }
 
 test "F14 render latency accumulates bounded min mean max and baseline" {

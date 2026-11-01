@@ -380,9 +380,13 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    migrating a worker to the first online AP — and the **TLB shootdown** exists
    too (vector 66, mailbox with a generation and one acknowledgement per
    processor, wired into every unmap through `paging.installRemoteFlush`). The
-   halt IPI does not, and no IPI of any kind has been delivered here. See
-   `docs/audits/2026-11-01-reschedule-ipi.md` and
-   `docs/audits/2026-11-01-tlb-shootdown.md`.)*
+   **halt IPI** also exists (vector 67: a fatal failure tells the other
+   processors to stop before this one does, and the report says how many IPIs
+   were delivered instead of pretending every processor stopped — `kernel/fatal.zig`
+   is now the only fatal path). No IPI of any kind has been delivered here. See
+   `docs/audits/2026-11-01-reschedule-ipi.md`,
+   `docs/audits/2026-11-01-tlb-shootdown.md` and
+   `docs/audits/2026-11-01-halt-ipi-and-fatal.md`.)*
    *(2026-11-01: the clock of each processor is separate from the clock of the
    machine — `timer.armCpuClock` gives the BSP the `system` role and an AP the
    `local` role, an AP arms its own local timer with the frequency the BSP

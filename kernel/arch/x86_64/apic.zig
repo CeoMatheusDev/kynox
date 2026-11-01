@@ -337,6 +337,23 @@ pub fn sendShootdown(apic_id: u32) void {
     sendIpi(apic_id, 0, shootdown_vector);
 }
 
+/// The vector of the halt IPI.
+///
+/// The last thing a processor that is about to stop does is tell the others to
+/// stop with it: a machine where one processor panics and the rest keep
+/// printing on the same serial port has a report that nobody can read, and a
+/// fault that happened once becomes a fault that is impossible to reproduce.
+pub const halt_vector: u8 = 67;
+
+/// Tells one CPU to stop where it is.
+///
+/// The receiving processor does not answer: it cannot, because the handler halts
+/// it. The sender therefore sends and carries on instead of waiting for an
+/// acknowledgement that will never come.
+pub fn sendHalt(apic_id: u32) void {
+    sendIpi(apic_id, 0, halt_vector);
+}
+
 /// Envia uma IPI para uma CPU de destino (modo fisico).
 ///
 /// `apic_id` e o ID de APIC local da CPU de destino. `delivery_mode` e o

@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 69,
+    "documents": 70,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 10,
+      "record": 11,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 6404
+      "words": 6695
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2858
+      "words": 2921
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 8279
+      "words": 8357
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 5074
+      "words": 5146
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1388
+      "words": 1390
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -330,6 +330,16 @@
       "authority": "record",
       "summary": "Which CPU owns a task: the affinity field the choice respects, one idle task per CPU, and the kernel task that an AP adopts when it enters the scheduler.",
       "words": 1492,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-halt-ipi-and-fatal.md",
+      "title": "A IPI de parada e a máquina que falha inteira — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The halt IPI (vector 67) and the fatal path: the machine stops as one, the report promises what it can (IPIs delivered, not CPUs stopped), and every fatal halt goes through one module that allocates nothing.",
+      "words": 863,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -558,7 +568,7 @@
       "kind": "roadmap",
       "authority": "planning",
       "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
-      "words": 9658,
+      "words": 9696,
       "declared_status": "planning document"
     },
     {

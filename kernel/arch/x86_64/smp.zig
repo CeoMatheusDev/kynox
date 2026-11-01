@@ -416,6 +416,101 @@ pub fn shootdownOutstanding() u32 {
     return shootdown_mailbox.outstanding();
 }
 
+/// O que um pedido de parada conseguiu fazer.
+///
+/// Nao e um booleano porque as tres respostas sao diferentes, e no meio de uma
+/// falha a diferenca importa: nao havia outra CPU, havia e nao foi possivel
+/// avisar, ou foram avisadas N.
+pub const StopReport = struct {
+    /// Processadores online que nao sao o que pediu.
+    targets: u32 = 0,
+    /// IPIs de parada realmente escritas no controlador.
+    delivered: u32 = 0,
+    /// Havia alvo e o APIC local nao esta mapeado: ninguem pode ser avisado.
+    no_apic: bool = false,
+};
+
+var stop_requests: u64 = 0;
+var halted_cpus: u64 = 0;
+
+/// Manda as outras CPUs pararem onde estao.
+///
+/// Nao espera resposta: a CPU que recebe o aviso para, e uma CPU parada nao
+/// responde. O que a funcao garante e o que ela consegue garantir — as IPIs
+/// foram entregues ao controlador — e o relatorio diz quantas, em vez de supor
+/// que todas pararam.
+pub fn stopOtherCpus() StopReport {
+    const self_index = cpuId();
+    var report: StopReport = .{};
+
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        report.targets += 1;
+    }
+
+    if (report.targets == 0) return report;
+    if (!apic.isMapped()) {
+        report.no_apic = true;
+        return report;
+    }
+
+    index = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        apic.sendHalt(cpus[index].apic_id);
+        report.delivered += 1;
+    }
+    stop_requests += report.delivered;
+
+    return report;
+}
+
+/// O que esta CPU faz quando recebe o aviso de parada.
+///
+/// Chamado pelo handler do vetor 67, que para a CPU logo depois. Devolve true
+/// quando a parada foi contada: e o unico efeito observavel, porque o
+/// processador nao volta para contar nada.
+pub fn handleStop() bool {
+    halted_cpus += 1;
+    return true;
+}
+
+/// Quantas IPIs de parada foram entregues ao controlador.
+pub fn stopRequests() u64 {
+    return stop_requests;
+}
+
+/// Quantas CPUs receberam o aviso de parada e pararam.
+pub fn haltedCpus() u64 {
+    return halted_cpus;
+}
+
+/// A linha que o kernel imprime antes de parar a maquina.
+///
+/// Formata em um buffer do chamador porque a funcao roda no caminho de uma
+/// falha: alocar memoria ali e a ultima coisa que se quer fazer.
+pub fn describeStop(report: StopReport, buffer: []u8) []const u8 {
+    if (report.no_apic) {
+        return std.fmt.bufPrint(
+            buffer,
+            "{d} other CPU(s) online, none told to stop: the local APIC is not mapped",
+            .{report.targets},
+        ) catch "other CPUs online and unreachable";
+    }
+    if (report.targets == 0) {
+        return std.fmt.bufPrint(buffer, "no other CPU online; this processor stops alone", .{}) catch
+            "no other CPU online";
+    }
+    return std.fmt.bufPrint(
+        buffer,
+        "{d} other CPU(s) online, {d} told to stop",
+        .{ report.targets, report.delivered },
+    ) catch "other CPUs told to stop";
+}
+
 /// Publica um pedido sem enviar IPI nenhuma.
 ///
 /// Existe para que o handler possa ser exercitado onde nao ha controlador: sem
@@ -806,6 +901,68 @@ test "a reschedule asks for the CPU that can receive it, and refuses the others"
 
     // Nothing was delivered, so the counter that reports delivery did not move.
     try std.testing.expectEqual(before, rescheduleRequests());
+}
+
+test "a machine with one processor has nobody to stop" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = stopRequests();
+    const report = stopOtherCpus();
+
+    try std.testing.expectEqual(@as(u32, 0), report.targets);
+    try std.testing.expectEqual(@as(u32, 0), report.delivered);
+    try std.testing.expect(!report.no_apic);
+    try std.testing.expectEqual(before, stopRequests());
+
+    // The line the kernel prints says exactly that, and does not pretend.
+    var buffer: [160]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "no other CPU online; this processor stops alone",
+        describeStop(report, &buffer),
+    );
+}
+
+test "a stop with no controller says so instead of pretending" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+    _ = registerCpu(1, 7);
+
+    const before = stopRequests();
+    const report = stopOtherCpus();
+
+    try std.testing.expectEqual(@as(u32, 1), report.targets);
+    try std.testing.expectEqual(@as(u32, 0), report.delivered);
+    try std.testing.expect(report.no_apic);
+    try std.testing.expectEqual(before, stopRequests());
+
+    var buffer: [160]u8 = undefined;
+    const line = describeStop(report, &buffer);
+    try std.testing.expect(std.mem.indexOf(u8, line, "none told to stop") != null);
+    try std.testing.expect(std.mem.indexOf(u8, line, "not mapped") != null);
+}
+
+test "the report of a stop counts the CPUs that were told" {
+    var buffer: [160]u8 = undefined;
+
+    // A machine with three other processors where two could be told: the line
+    // carries both numbers, because "three online" and "two told" are different
+    // facts and only the second one is a promise about the machine.
+    const report: StopReport = .{ .targets = 3, .delivered = 2 };
+    try std.testing.expectEqualStrings(
+        "3 other CPU(s) online, 2 told to stop",
+        describeStop(report, &buffer),
+    );
+}
+
+test "a processor that receives the stop counts it once" {
+    const before = haltedCpus();
+    try std.testing.expect(handleStop());
+    try std.testing.expectEqual(before + 1, haltedCpus());
 }
 
 test "a machine with one processor has no remote translation to forget" {

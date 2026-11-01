@@ -300,7 +300,7 @@
     },
     {
       "id": "kernel_cpu_interrupts",
-      "maturity_percent": 73,
+      "maturity_percent": 75,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/",
@@ -319,7 +319,7 @@
         "the ownership of the tick is per processor: timer.CpuClock (system or local), armCpuClock refusing a contradictory role, drivesSchedulerOn answering per CPU, and an ignored-tick counter that turns a wrong clock from an opinion into a number",
         "per-CPU segment: 8 task state segments with their own rsp0 and ist1, 8 tables (one descriptor set per base address), 8 double-fault stacks of 16 KiB, and segment.installForCpu(cpu, stack_top) which builds the table, loads the GDT and reloads the data and code segments",
         "the entry of an AP (kynox_ap_entry) installs the segment of its CPU before it enters its loop, and the scheduler writes rsp0 through segment.tssFor(smp.cpuId())",
-        "three vectors the kernel invents have a gate, a stub and a handler: the local timer (64), the reschedule IPI (65) and the TLB shootdown (66); the hardware range (32..47) is the fourth group"
+        "four vectors the kernel invents have a gate, a stub and a handler: the local timer (64), the reschedule IPI (65), the TLB shootdown (66) and the halt IPI (67); the hardware range (32..47) is the other group"
       ],
       "limitations": [
         "exception recovery audit incomplete",
@@ -327,14 +327,15 @@
         "no hardware diversity validation",
         "boot path unverified here",
         "no AP has reached kynox_ap_entry, so installForCpu has only run for the BSP",
-        "the dispatch path and the tick policy have never run in a VM"
+        "the dispatch path and the tick policy have never run in a VM",
+        "the halt IPI and the fatal path have never stopped a machine: the report is host-tested, the stop is not"
       ],
       "pending_work": [
         "exercise the exception paths in QEMU and record results",
         "see an AP reach kynox_ap_entry (the trampoline is published, but no AP has answered)"
       ],
       "tests": [
-        "arch-tests (172 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, pci, virtio, timer, fpu)",
+        "arch-tests (176 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, pci, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
@@ -489,7 +490,7 @@
     },
     {
       "id": "smp",
-      "maturity_percent": 73,
+      "maturity_percent": 76,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
@@ -512,11 +513,12 @@
         "smp.shootdown refuses with a reason (no_targets, no_apic, complete, timeout) and the handler runs on the processor that holds the stale entry, invalidates it (invlpg, or a reload of CR3 for the all scope) and acknowledges",
         "a clock per processor: timer.armCpuClock gives each CPU a role (system on the BSP, local on an AP), timer.drivesSchedulerOn answers per processor, timer.onCpuTick counts per CPU and moves the clock of the machine only for the system role, and timer.ticksOf/ignoredTicks expose the numbers",
         "an AP enables its own local APIC (enable, TPR 0) and arms its own timer with the bus frequency the BSP measured (timer.armLocalApicTimer), refusing instead of guessing when there is no measurement",
+        "the halt IPI (vector 67): apic.sendHalt and smp.stopOtherCpus, which counts the processors that are online and the IPIs it actually delivered, and smp.describeStop, which prints those two numbers and the reason when they differ (no controller)",
         "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
       "limitations": [
         "no AP has ever answered a startup IPI in this environment: the copy, the fields and the order are code and host tests, not an observed second processor",
-        "no IPI has ever been delivered here: the vector, the gate, the handler and the migration are code and host tests",
+        "no IPI has ever been delivered here: the reschedule, the shootdown and the halt are vectors, gates and handlers, and host tests of what decides what to send",
         "an AP arms its own clock, but no AP has ever run one: the arming and the per-CPU ledger are code and host tests",
         "no nested shootdown: the sender holds the mailbox lock while it waits, so a shootdown requested from inside another one (or from a handler) would deadlock",
         "a shootdown that times out is counted and not retried; nothing chases the processor that did not answer",
@@ -529,7 +531,7 @@
         "a latency measurement of the shootdown, and a retry after a timeout",
         "a tick delivered on an AP (the clock is armed, the delivery has never been observed)",
         "migration of a running task",
-        "an IPI actually delivered (the reschedule and the shootdown exist, nothing here has ever received one)",
+        "an IPI actually delivered (the reschedule, the shootdown and the halt exist; nothing here has ever received one)",
         "record a boot on a machine with more than one processor"
       ],
       "tests": [
@@ -1505,16 +1507,16 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 841 tests, in zig build test",
+        "24 host test artifacts, 845 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "841 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor)",
+        "845 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 72 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 69 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 70 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
@@ -1530,7 +1532,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 52/52 steps, 841/841 tests"
+        "zig build test: 52/52 steps, 845/845 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
