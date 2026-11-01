@@ -401,8 +401,13 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    bit last and every refusal before the first write — with the boot reporting the
    candidate message and `-Dmsi-delivery=true` as the switch, because enabling MSI
    disables INTx of the function. What remains is MSI-X, a driver that consumes a
-   device vector, and an MSI actually delivered. See
-   `docs/audits/2026-11-01-msi-programming.md`.)*
+   device vector, and an MSI actually delivered. The **MSI-X capability is also
+   decoded** — table size stored as N-1, the BIR and offset of the table and the
+   PBA, a 16-byte entry per vector, and the enable order that fills the table
+   while the function is masked — but its table is never written, because the
+   window of the BAR of a device the kernel does not drive is not mapped. See
+   `docs/audits/2026-11-01-msi-programming.md` and
+   `docs/audits/2026-11-01-msix-table.md`.)*
 
 **Completion criteria.**
 - Exactly one component calls `scheduler.tick()`; the call site is listed in the

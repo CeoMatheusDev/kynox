@@ -40,6 +40,7 @@ const port = kynox.port;
 const fatal = @import("fatal.zig");
 const bda = @import("arch/x86_64/bda.zig");
 const msi = @import("arch/x86_64/msi.zig");
+const msix = @import("arch/x86_64/msix.zig");
 const serial = kynox.serial;
 const usermode = kynox.usermode;
 const compositor_abi = kynox.compositor;
@@ -2194,6 +2195,7 @@ const first_device_vector: u8 = msi.first_device_vector;
 fn reportPciInterrupts() void {
     var with_msi: u32 = 0;
     var with_msix: u32 = 0;
+    var with_msix_usable: u32 = 0;
     var programmed: u32 = 0;
 
     var device: u8 = 0;
@@ -2205,17 +2207,20 @@ fn reportPciInterrupts() void {
         const reader = pci.functionReader(&location);
 
         const msi_capability = msi.find(reader);
-        const msix = pci.findCapability(reader, msi.capability_id_msix) catch null;
+        const msix_capability = pci.findCapability(reader, msi.capability_id_msix) catch null;
 
-        if (msi_capability == null and msix == null) continue;
+        if (msi_capability == null and msix_capability == null) continue;
 
         const device_id = pci.readConfigWord(0, device, 0, 0x02);
-        if (msix != null) with_msix += 1;
+        if (msix_capability != null) with_msix += 1;
 
         const found = msi_capability orelse {
-            serial.printLine("[KNK] msi: 00:{d}.0 device=0x{x} offers MSI-X only (table in memory; not programmed here)", .{
-                device, device_id,
-            });
+            // MSI-X: a tabela mora na memoria do dispositivo, apontada por um
+            // BAR. Reportar onde ela esta e o que separa "o dispositivo tem
+            // MSI-X" de "o kernel sabe onde a tabela fica" — e o segundo e o que
+            // um driver precisa. Escrever nela exige a janela do BAR mapeada, e
+            // o boot nao mapeia o BAR de um dispositivo que nao conduz.
+            reportMsix(device, device_id, reader, msix_capability.?, &with_msix_usable);
             continue;
         };
         with_msi += 1;
@@ -2255,9 +2260,69 @@ fn reportPciInterrupts() void {
         );
     }
 
-    serial.printLine("[KNK] msi: {d} function(s) with MSI, {d} with MSI-X only, {d} programmed", .{
-        with_msi, with_msix, programmed,
+    serial.printLine("[KNK] msi: {d} function(s) with MSI, {d} with MSI-X only ({d} with a usable table), {d} programmed", .{
+        with_msi, with_msix, with_msix_usable, programmed,
     });
+}
+
+/// Reporta a tabela de MSI-X de uma funcao.
+///
+/// A capability diz quantas entradas existem (o campo guarda o tamanho menos
+/// um), em qual BAR a tabela comeca e com que deslocamento — e a mesma coisa
+/// para a PBA. O que o relatorio acrescenta e a unica pergunta que importa
+/// antes de um driver escrever: o BAR que a capability nomeia existe nesta
+/// funcao e e de memoria?
+///
+/// O tamanho do BAR nao e sondado aqui. A sonda de tamanho escreve no
+/// registrador do BAR, e um dispositivo que o kernel nao conduz pode estar
+/// ativo: perturbar o BAR de um controlador em uso para satisfazer um relatorio
+/// seria trocar um numero por um risco. `msix.validateTable` faz a checagem de
+/// tamanho quando quem chama ja tem a medida.
+fn reportMsix(
+    device: u8,
+    device_id: u16,
+    reader: pci.Reader,
+    capability_entry: pci.Capability,
+    usable: *u32,
+) void {
+    const places = msix.placement(capability_entry, reader) catch |err| {
+        serial.printLine("[KNK] msix: 00:{d}.0 the capability could not be read: {s}", .{
+            device, @errorName(err),
+        });
+        return;
+    };
+
+    const bars = pci.readBarTable(reader) orelse {
+        serial.printLine("[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s) at BAR {d}+0x{x}, and no readable BAR table", .{
+            device, device_id, places.vectors, places.table.bir, places.table.offset,
+        });
+        return;
+    };
+
+    const index: usize = places.table.bir;
+    const bar = bars.bars[index] orelse {
+        serial.printLine("[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s) at BAR {d}+0x{x}, and the function has no such BAR", .{
+            device, device_id, places.vectors, places.table.bir, places.table.offset,
+        });
+        return;
+    };
+
+    if (bar.is_io) {
+        serial.printLine("[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s) at BAR {d}+0x{x}, and that BAR is I/O space (the table is memory)", .{
+            device, device_id, places.vectors, places.table.bir, places.table.offset,
+        });
+        return;
+    }
+
+    usable.* += 1;
+    serial.printLine(
+        "[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s), table at BAR {d}+0x{x} (0x{x}), PBA at BAR {d}+0x{x} (not programmed: the BAR window is not mapped)",
+        .{
+            device,        device_id,        places.vectors,
+            places.table.bir, places.table.offset, bar.address + places.table.offset,
+            places.pba.bir,   places.pba.offset,
+        },
+    );
 }
 
 /// Leitura de um DWORD do espaco de configuracao para a programacao da MSI.

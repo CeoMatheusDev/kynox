@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-msix-table.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "MSI-X: the table in device memory, the size field that stores N-1, the BIR/offset of the table and the PBA, the 16-byte entry, and the enable order that fills the table before any interrupt can leave.",
+    },
     "docs/audits/2026-11-01-msi-programming.md": {
         "kind": "implementation-record",
         "authority": "record",

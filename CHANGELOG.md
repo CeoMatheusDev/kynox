@@ -21,6 +21,33 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — MSI-X: a tabela na memória do dispositivo
+
+- **A diferença**: a MSI tem uma mensagem nos registradores da capability; a
+  MSI-X põe as mensagens em uma **tabela na memória do dispositivo**, apontada por
+  um BAR, e ganha um vetor por entrada, mascaramento por entrada e um bit que
+  mascara a função inteira.
+- **`kernel/arch/x86_64/msix.zig`**: o tamanho da tabela é o campo **mais um**
+  (o campo guarda N-1 — lê-lo como "quantas" daria uma fila sem vetor), a tabela
+  e a PBA são localizadas por BIR e offset, a entrada de 16 bytes leva endereço,
+  superior, dado e a máscara, e `validateTable` recusa um BAR ausente, um BAR de
+  I/O e uma tabela que não cabe.
+- **Entradas nascem mascaradas**: preencher a tabela e liberar um vetor são duas
+  decisões, e `unmask` só é correto quando o handler daquele vetor existe. A
+  ordem de habilitação (`controlFor`) deixa a **função mascarada** enquanto a
+  tabela é preenchida, sobe o bit de habilitação, desmascara a função por último
+  e desliga a INTx (`Command` bit 10) para o evento não chegar duas vezes.
+- **O relatório do boot** diz onde a tabela está, se o BAR existe, se é de
+  memória, e o que faltaria para escrever nela. O tamanho do BAR **não** é
+  sondado: a sonda escreve no registrador de um dispositivo que pode estar ativo.
+- **Oito testes de host** (868 no total, `arch-tests` 199): o campo de tamanho, a
+  leitura dos dois dwords, a capability errada, as três recusas do BAR, a entrada
+  de 16 bytes com a vizinha intacta, os vetores reservados, a escrita fora da
+  janela e a sequência de habilitação.
+- Documentação: `docs/audits/2026-11-01-msix-table.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`acpi_pci_apic` 57% → 63%), `README.md`,
+  `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
 ### Added (2026-11-01) — MSI: a interrupção que o dispositivo entrega por escrita
 
 - **O buraco**: a capability de MSI (0x05) era percorrida, classificada e

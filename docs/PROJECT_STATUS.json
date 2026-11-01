@@ -335,7 +335,7 @@
         "see an AP reach kynox_ap_entry (the trampoline is published, but no AP has answered)"
       ],
       "tests": [
-        "arch-tests (191 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, virtio, timer, fpu)",
+        "arch-tests (199 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
@@ -437,7 +437,7 @@
     },
     {
       "id": "acpi_pci_apic",
-      "maturity_percent": 57,
+      "maturity_percent": 63,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/acpi.zig",
@@ -456,6 +456,7 @@
         "IOAPIC entries programmed at boot for IRQ0 (PIT) and IRQ1 (keyboard), masked, with the 8259 kept as the delivery path",
         "PCI config-space access with BAR helpers and capability walking",
         "MSI capability programmed (kernel/arch/x86_64/msi.zig): the message is address 0xFEE0_0000 | (apic_id << 12) and the vector, the register layout follows the 64-bit and per-vector-masking bits, the allocation must be a power of two that the device offers, the enable bit is written last, and every refusal happens before the first write",
+        "MSI-X capability decoded (kernel/arch/x86_64/msix.zig): the table size is the field plus one, the table and the PBA are located by BIR and offset, a 16-byte entry carries one vector, entries start masked and are unmasked one at a time, and the enable order fills the table while the function is masked before enabling it",
         "the kernel keeps its vectors to itself: a device may only be given a vector from 68 up, and the boot reports the candidate message (and programs it only with -Dmsi-delivery=true, because enabling MSI disables INTx of the function)",
         "LAPIC xAPIC register access, EOI, TPR and IPI primitives"
       ],
@@ -465,14 +466,16 @@
         "only ISA lines are routed; the PCI GSI range, level-triggered acknowledgement and interrupt remapping are not implemented",
         "overrides beyond the ISA bus (PCI IRQ routing) are parsed but not applied",
         "no MSI has ever been delivered: the message and the programming are code and host tests, and no driver consumes a device vector",
-        "MSI-X is listed by the boot report and not programmed (its table lives in device memory)",
+        "the MSI-X table is located and never written: writing needs the window of the BAR mapped, and the boot does not map the BAR of a device it does not drive",
+        "the PBA is located and not read, and the size of the table BAR is not probed (the probe writes the BAR register of a device that may be active)",
         "per-vector masking is laid out and never written",
         "no QEMU or hardware validation of the discovery or programming path (audit A-02)"
       ],
       "pending_work": [
         "runtime evidence that a line delivered through the I/O APIC reaches the handler and is acknowledged",
         "PCI GSI routing and level-triggered acknowledgement",
-        "a driver that consumes a device vector, and a boot that records an MSI arriving",
+        "a driver that consumes a device vector, and a boot that records an MSI or an MSI-X arriving",
+        "a mapped MSI-X table window and a PBA read",
         "runtime validation under QEMU/OVMF (audit A-02)"
       ],
       "tests": [
@@ -1514,16 +1517,16 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 860 tests, in zig build test",
+        "24 host test artifacts, 868 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "860 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area, +10 for the MSI capability)",
+        "868 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area, +10 for the MSI capability, +8 for the MSI-X table)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 72 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 72 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 73 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
@@ -1539,7 +1542,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 52/52 steps, 860/860 tests"
+        "zig build test: 52/52 steps, 868/868 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
