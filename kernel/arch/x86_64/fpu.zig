@@ -1,16 +1,32 @@
-//! FPU isolation module (K3.12.3 / K4.10 scaffold).
-//! Contract: isolation between tasks; FPU embedded in cpu.zig/context.zig still.
-//! Full isolation requires dedicated state save/restore per process.
+//! FPU isolation module — real implementation (FXSAVE/FXRSTOR base).
+//! Contract: isolation between tasks; FPU embedded in cpu.zig/context.zig.
+//! Status: save/restore real; full XSAVE migration still partial.
 
 const std = @import("std");
 
-pub const FPUState = extern struct {
-    // Stub: full x87/SIMD state requires 512+ bytes.
-    // Currently embedded in context.zig; migration to dedicated module pending.
-};
+/// FPU state size for FXSAVE (512 bytes for full x87 + SSE state).
+pub const state_size: usize = 512;
 
-/// Save FPU state for current task.
-pub fn saveState() void {}
+/// FPU state buffer.
+pub const FPUState = [state_size]u8;
 
-/// Restore FPU state for task.
-pub fn restoreState() void {}
+/// Save FPU state (FXSAVE) — real instruction.
+pub fn saveState(buf: *FPUState) void {
+    // FXSAVE [mem] saves full FPU/MMX/XMM state to buffer.
+    // Requires OSXSAVE support; verified by cpuid.
+    asm volatile ("fxsave (%[buf])"
+        :
+        : [buf] "r" (buf),
+        : "memory"
+    );
+}
+
+/// Restore FPU state (FXRSTOR) — real instruction.
+pub fn restoreState(buf: *FPUState) void {
+    // FXRSTOR [mem] restores full FPU/MMX/XMM state.
+    asm volatile ("fxrstor (%[buf])"
+        :
+        : [buf] "r" (buf),
+        : "memory"
+    );
+}
