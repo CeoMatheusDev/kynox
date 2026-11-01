@@ -15,12 +15,12 @@
 |---|---|
 | Task | `kernel/task/scheduler.zig`: 32 static slots, a state enum, a context pointer, a priority and a tick budget |
 | Context switch | `arch/x86_64/task.s`: saves callee-saved GPRs and `rsp`; **does not save FPU/SSE state** (comment confirms) |
-| Scheduler | EEVDF over the tasks of a CPU: a virtual runtime, a deadline and a weight per task, and a quantum drawn from the slice; **no lock, no idle task**; **12 host tests** over the policy (`kernel/task_root.zig`), none over the switch itself |
+| Scheduler | EEVDF over the tasks of a CPU (a virtual runtime, a deadline and a weight per task, a quantum drawn from the slice), behind a **state lock with per-CPU ownership** (`task/lock.zig`) that every entry point takes and releases, and that counts its own re-entries because the scheduler calls itself inside one decision; **no idle task**; **59 host tests** in `task-tests` |
 | Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path, at the end of the quantum of the running task, or as soon as the task blocks. A tick with slice left only moves the clock |
 | Threads | a task *is* a thread; no thread group |
 | Processes | no process object. Scheduling slots are used directly as "processes"; `fs` indexes by a process id that must be smaller than `max_processes = 8` |
 | Lifecycle | `create`, `start`, `terminateCurrent`; **no join, no wait, no reap, no exit code**; `terminateCurrent` never frees the slot, so a boot that cycles 32 tasks is out of slots |
-| Synchronisation | spinlock and a counting semaphore; **a mutex with ownership, recursion and a direct handoff** (`task/mutex.zig`, 10 host tests) and **a wait queue with a deadline and no lost wakeup** (`task/wait.zig`, 11 host tests) exist since 2026-11-01, **with no caller in the kernel yet**; still no reader/writer lock, no condition variable and no futex-like primitive |
+| Synchronisation | spinlock and a counting semaphore; **a mutex with ownership, recursion and a direct handoff** (`task/mutex.zig`, 10 host tests) and **a wait queue with a deadline and no lost wakeup** (`task/wait.zig`, 11 host tests), and the scheduler blocks a task on any queue through `blockCurrentOn`; the mutex still has **no user in the kernel**; no reader/writer lock, no condition variable, no futex-like primitive |
 | Timers | PIT and LAPIC tick both drive scheduling; no per-task sleep, no timeout list |
 | SMP | `current[]` is per-CPU in shape but the CPU struct's `current_task` is never written; a single global TSS means ring 3 on an AP is impossible |
 

@@ -34,7 +34,9 @@ const paging = @import("../arch/x86_64/paging.zig");
 const segment = @import("../arch/x86_64/segment.zig");
 const smp = @import("../arch/x86_64/smp.zig");
 const channel = @import("../ipc/channel.zig");
+const lock = @import("lock.zig");
 const policy = @import("policy.zig");
+const wait_queue = @import("wait.zig");
 const process = @import("process.zig");
 
 /// The context of a task.
@@ -141,6 +143,12 @@ comptime {
     if (max_tasks > policy.max_entries) {
         @compileError("scheduler.max_tasks is above policy.max_entries");
     }
+    // The ownership table of the state lock names one CPU per entry, and the
+    // scheduler keeps one `current[]` and one ready queue per CPU. The two
+    // limits are the same number in two modules, and they may not drift.
+    if (smp.max_cpus > lock.max_cpus) {
+        @compileError("scheduler: smp.max_cpus is above lock.max_cpus");
+    }
 }
 
 /// Summary of the state of the scheduler.
@@ -165,6 +173,14 @@ pub const Statistics = struct {
     last_switch_cycles: u64 = 0,
     /// Smallest cost of a switch, in cycles.
     minimum_switch_cycles: u64 = 0,
+    /// Acquisitions of the state lock that found it held by another CPU.
+    lock_contentions: u64 = 0,
+    /// Acquisitions of the state lock made by the CPU that already held it.
+    lock_reentries: u64 = 0,
+    /// The largest nesting of the state lock seen so far.
+    lock_max_depth: u32 = 0,
+    /// Releases of the state lock made by a CPU that did not hold it.
+    lock_refused_releases: u64 = 0,
 };
 
 /// The scheduler of the kernel.
@@ -196,6 +212,35 @@ pub const Scheduler = struct {
     /// The state of the scheduler.
     statistics: Statistics = .{},
 
+    /// The lock of everything above.
+    ///
+    /// Every entry point that reads or writes `tasks`, `current`, the ready
+    /// queues or the statistics takes it, and every one releases it on the way
+    /// out. The lock knows the CPU that holds it, so the nested calls that the
+    /// scheduler makes in the course of one decision (`tick` → `prepareNext` →
+    /// expiry → wake) are counted instead of deadlocking; see
+    /// [`lock.zig`](lock.zig) for the contract, including the rule that the
+    /// caller has to disable interrupts before it acquires: the timer already
+    /// runs with them disabled, and the thread-side entry points take the lock
+    /// on a path where the kernel has disabled them as well.
+    state_lock: lock.StateLock = .{},
+
+    /// The CPU that is running this code.
+    fn cpu(self: *const Scheduler) u8 {
+        _ = self;
+        return smp.cpuId();
+    }
+
+    /// Takes the state lock for the current CPU.
+    fn lockState(self: *Scheduler) void {
+        _ = self.state_lock.acquire(self.cpu());
+    }
+
+    /// Releases the state lock for the current CPU.
+    fn unlockState(self: *Scheduler) void {
+        _ = self.state_lock.release(self.cpu());
+    }
+
     /// Returns the task that is running on the current CPU.
     pub fn currentTask(self: *Scheduler) ?*Task {
         return self.current[smp.cpuId()];
@@ -207,6 +252,8 @@ pub const Scheduler = struct {
     /// CPU esvaziar a fila. A funcao ignora silenciosamente filas cheias:
     /// o limite de `max_tasks` ja protege o armazenamento.
     pub fn enqueueReady(self: *Scheduler, task: *Task, cpu_id: u8) void {
+        self.lockState();
+        defer self.unlockState();
         if (cpu_id >= smp.max_cpus) return;
         if (self.ready_count[cpu_id] >= max_tasks) return;
         self.ready_queue[cpu_id][self.ready_count[cpu_id]] = task;
@@ -217,6 +264,8 @@ pub const Scheduler = struct {
     ///
     /// Retorna null quando a fila esta vazia.
     pub fn dequeueReady(self: *Scheduler, cpu_id: u8) ?*Task {
+        self.lockState();
+        defer self.unlockState();
         if (cpu_id >= smp.max_cpus) return null;
         if (self.ready_count[cpu_id] == 0) return null;
         const task = self.ready_queue[cpu_id][0];
@@ -244,6 +293,8 @@ pub const Scheduler = struct {
     /// memory: the frame of an interrupt is built on it, and the frame
     /// cannot live in the stack that the code of the task uses.
     pub fn init(self: *Scheduler, kernel_stack_top: u64, kernel_stack: []u8) void {
+        self.lockState();
+        defer self.unlockState();
         self.tasks = @splat(null);
         self.count = 0;
         self.current = @splat(null);
@@ -279,6 +330,9 @@ pub const Scheduler = struct {
     /// the default and higher values meaning higher priority. If `priority` is
     /// not specified, it defaults to 0.
     pub fn spawn(self: *Scheduler, entry: *const fn () void, stack: []u8, kernel_stack: []u8, priority: u8) ?*Task {
+        self.lockState();
+        defer self.unlockState();
+
         if (stack.len < 256) return null;
         if (kernel_stack.len < 256) return null;
 
@@ -383,6 +437,8 @@ pub const Scheduler = struct {
     /// The function is called by the handler of the timer. When it returns
     /// true, the entry point of the interrupt switches to the next task.
     pub fn tick(self: *Scheduler, timeout_result: u64) bool {
+        self.lockState();
+        defer self.unlockState();
         self.statistics.ticks += 1;
         _ = channel.expireAll(self.statistics.ticks, timeout_result);
 
@@ -537,6 +593,8 @@ pub const Scheduler = struct {
     /// and in that case the task is **not** blocked: the call returns the
     /// error of the wait that cannot happen, and the task continues.
     pub fn blockCurrent(self: *Scheduler, target: *channel.Channel, side: u64, timeout: u64) bool {
+        self.lockState();
+        defer self.unlockState();
         const task = self.current[smp.cpuId()] orelse return false;
 
         // The deadline is in the ticks of the scheduler, which is the
@@ -596,6 +654,8 @@ pub const Scheduler = struct {
     /// mode: the process has a defect, and the defect of a process does not
     /// bring the machine down.
     pub fn killCurrent(self: *Scheduler) void {
+        self.lockState();
+        defer self.unlockState();
         const task = self.current[smp.cpuId()] orelse return;
         if (task.state == .terminated) return;
         task.state = .terminated;
@@ -604,11 +664,82 @@ pub const Scheduler = struct {
         self.statistics.killed += 1;
     }
 
+    /// Blocks the current task on a wait queue, with an optional deadline.
+    ///
+    /// This is the generic form of `blockCurrent`, and it is the one a mutex, a
+    /// condition variable or a reader/writer lock uses: the caller owns the node
+    /// (it lives in the task, or on the stack of the caller), the queue owns the
+    /// order, and the scheduler owns the state of the task.
+    ///
+    /// The contract, in the order it happens:
+    ///
+    /// 1. the deadline is `timeout` ticks from now, or none when `timeout` is
+    ///    zero, and it is written into the node **before** the node enters the
+    ///    queue, so that the expiry can never see a node without one;
+    /// 2. the node is queued, or it already is in this queue because the caller
+    ///    registered the wait itself (the mutex does, since it hands the
+    ///    ownership over at release time). A node that a wake already reached
+    ///    (`already_woken`) or that is queued elsewhere is refused, and the
+    ///    caller re-checks its predicate instead of sleeping;
+    /// 3. the task is marked blocked and the switch is prepared;
+    /// 4. when there is nobody to switch to, the task is marked running again,
+    ///    the node leaves the queue and the call returns false: a wait that
+    ///    cannot happen must not become a task that never wakes.
+    pub fn blockCurrentOn(
+        self: *Scheduler,
+        queue: *wait_queue.WaitQueue,
+        node: *wait_queue.Node,
+        timeout: u64,
+    ) bool {
+        self.lockState();
+        defer self.unlockState();
+
+        const task = self.current[smp.cpuId()] orelse return false;
+
+        node.deadline = if (timeout == 0) 0 else self.statistics.ticks +| timeout;
+
+        switch (queue.add(node)) {
+            .queued => {},
+            // The caller registered the wait itself, which is what a mutex does:
+            // the ownership is handed to the waiter at release time, so the
+            // node is in the queue before the task goes to sleep. The node has
+            // to be in **this** queue; one that is queued elsewhere is a defect
+            // of the caller and is refused.
+            .already_queued => if (!queue.contains(node)) return false,
+            // A wake arrived before the waiter: there is nothing to sleep on,
+            // and the caller re-checks its predicate.
+            .already_woken => return false,
+        }
+
+        task.state = .blocked;
+        self.statistics.blocks += 1;
+
+        if (!self.prepareNext()) {
+            task.state = .running;
+            _ = queue.remove(node);
+            return false;
+        }
+
+        // The entry of the call knows that the task cannot go back to the user
+        // mode, and hands the control to the scheduler.
+        kynox_syscall_blocked = 1;
+
+        return true;
+    }
+
     /// Wakes the task that waits for a message.
     ///
     /// The task becomes ready, and the scheduler chooses it on the next
     /// tick.
     pub fn wakeTask(task: *anyopaque) void {
+        // The wake runs from the delivery of a message and from the expiry of
+        // a wait, which are inside `tick` and inside the send: the state lock
+        // is therefore taken through the same re-entrant path as every other
+        // nested call, and this function is the one that proves the owner check
+        // of the lock is worth having.
+        scheduler.lockState();
+        defer scheduler.unlockState();
+
         const value: *Task = @ptrCast(@alignCast(task));
         if (value.state == .terminated) return;
         value.state = .ready;
@@ -624,6 +755,8 @@ pub const Scheduler = struct {
     /// expires the wait. This function marks the task as blocked and
     /// prepares the switch, exactly like the channel wait.
     pub fn blockCurrentForInput(self: *Scheduler) bool {
+        self.lockState();
+        defer self.unlockState();
         const task = self.current[smp.cpuId()] orelse return false;
         task.state = .blocked;
         self.statistics.blocks += 1;
@@ -646,6 +779,8 @@ pub const Scheduler = struct {
     /// it again. The processor keeps running the task until the next
     /// interruption, and the task does not have to know that it ended.
     pub fn terminateCurrent(self: *Scheduler, code: u64) void {
+        self.lockState();
+        defer self.unlockState();
         const current = self.current[smp.cpuId()] orelse return;
         if (current.state == .terminated) return;
         current.state = .terminated;
@@ -654,12 +789,23 @@ pub const Scheduler = struct {
     }
 
     /// The state of the scheduler, with the measurements of the switches.
+    ///
+    /// The function does **not** take the state lock, and it does not pretend
+    /// to be consistent: it runs from the diagnostics of the serial console,
+    /// where a reading that a tick changed in the middle is worth more than a
+    /// deadlock. `lock_contentions`, `lock_reentries` and `lock_max_depth` come
+    /// from the lock itself, and the first two are the measurement of how often
+    /// the lock was actually needed.
     pub fn statisticsOf(self: *const Scheduler) Statistics {
         var statistics = self.statistics;
         statistics.switches = kynox_switch_count;
         statistics.switch_cycles = kynox_switch_total;
         statistics.last_switch_cycles = kynox_switch_cycles;
         statistics.minimum_switch_cycles = kynox_switch_minimum;
+        statistics.lock_contentions = self.state_lock.contentions;
+        statistics.lock_reentries = self.state_lock.reentries;
+        statistics.lock_max_depth = self.state_lock.max_depth;
+        statistics.lock_refused_releases = self.state_lock.refused_releases;
         statistics.tasks = self.count;
 
         var ready: u32 = 0;
@@ -853,6 +999,7 @@ fn resetSchedulerForTest() void {
     scheduler.ready_count = @splat(0);
     scheduler.next_id = 0;
     scheduler.statistics = .{};
+    scheduler.state_lock = .{};
 }
 
 /// A task that the tests put in the list of the scheduler.
@@ -1147,4 +1294,192 @@ test "the only task keeps the processor when its quantum expires" {
 
     // The tick still moves the clock.
     try testing.expectEqual(@as(u64, 1), scheduler.statistics.ticks);
+}
+
+test "every entry point of the scheduler leaves the state lock free" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const task = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    try testing.expect(!scheduler.state_lock.isHeld());
+
+    task.state = .running;
+    task.quantum = 4;
+    scheduler.current[0] = task;
+
+    _ = scheduler.tick(0);
+    try testing.expect(!scheduler.state_lock.isHeld());
+    try testing.expectEqual(@as(u32, 0), scheduler.state_lock.depth);
+
+    Scheduler.wakeTask(task);
+    try testing.expect(!scheduler.state_lock.isHeld());
+
+    scheduler.terminateCurrent(0);
+    try testing.expect(!scheduler.state_lock.isHeld());
+    try testing.expectEqual(@as(u64, 0), scheduler.state_lock.refused_releases);
+}
+
+test "the nested calls of one decision are re-entries, not a deadlock" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const task = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    task.state = .ready;
+
+    // The caller holds the lock, as the timer does, and then the scheduler is
+    // called: the wake has to recognise the CPU instead of spinning on a lock
+    // it holds itself.
+    _ = scheduler.state_lock.acquire(0);
+    Scheduler.wakeTask(task);
+    try testing.expect(scheduler.state_lock.isHeldBy(0));
+    try testing.expect(scheduler.state_lock.reentries >= 1);
+    _ = scheduler.state_lock.release(0);
+
+    try testing.expect(!scheduler.state_lock.isHeld());
+    try testing.expect(State.ready == task.state);
+}
+
+test "a queue with a waiter outside the scheduler blocks the task and switches" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_kernel_stack: [1024]u8 align(16) = undefined;
+    var second_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const first = scheduler.spawn(noopEntry, stack[0..], first_kernel_stack[0..], 0).?;
+    const second = scheduler.spawn(noopEntry, stack[0..], second_kernel_stack[0..], 0).?;
+    first.state = .running;
+    second.state = .ready;
+    scheduler.current[0] = first;
+    first.quantum = 4;
+
+    var queue: wait_queue.WaitQueue = .{};
+    var node = wait_queue.Node.init(first, Scheduler.wakeTask);
+
+    // One tick of the clock, so that the deadline of the wait is measurable.
+    _ = scheduler.tick(0);
+
+    try testing.expect(scheduler.blockCurrentOn(&queue, &node, 3));
+    try testing.expectEqual(@as(u32, 1), queue.length());
+    try testing.expectEqual(State.blocked, first.state);
+    try testing.expectEqual(second, scheduler.current[0].?);
+    // The clock is at one tick and the wait is three ticks long.
+    try testing.expectEqual(@as(u64, 4), node.deadline);
+    try testing.expect(!scheduler.state_lock.isHeld());
+
+    // The event arrives: the wake takes the task out of the queue and makes it
+    // ready, and the scheduler chooses it on the next opportunity.
+    try testing.expectEqual(&node, queue.popAndWake().?);
+    try testing.expectEqual(State.ready, first.state);
+    try testing.expectEqual(@as(u32, 0), queue.length());
+    try testing.expectEqual(@as(u32, 1), scheduler.readyCount(0));
+}
+
+test "a wait with nobody to switch to is undone" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const only = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    only.state = .running;
+    only.quantum = 4;
+    scheduler.current[0] = only;
+
+    var queue: wait_queue.WaitQueue = .{};
+    var node = wait_queue.Node.init(only, Scheduler.wakeTask);
+
+    // There is no other task: the wait cannot happen, and the task keeps the
+    // processor instead of blocking for ever.
+    try testing.expect(!scheduler.blockCurrentOn(&queue, &node, 0));
+    try testing.expectEqual(State.running, only.state);
+    try testing.expectEqual(@as(u32, 0), queue.length());
+    try testing.expect(!node.queued);
+    try testing.expect(!scheduler.state_lock.isHeld());
+    try testing.expectEqual(@as(u64, 0), scheduler.state_lock.refused_releases);
+}
+
+test "a wake that arrived before the wait makes the caller look again" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_kernel_stack: [1024]u8 align(16) = undefined;
+    var second_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const first = scheduler.spawn(noopEntry, stack[0..], first_kernel_stack[0..], 0).?;
+    const second = scheduler.spawn(noopEntry, stack[0..], second_kernel_stack[0..], 0).?;
+    first.state = .running;
+    second.state = .ready;
+    scheduler.current[0] = first;
+
+    var queue: wait_queue.WaitQueue = .{};
+    var node = wait_queue.Node.init(first, Scheduler.wakeTask);
+
+    // A producer ran before the waiter: the queue remembers the wake.
+    try testing.expectEqual(@as(?*wait_queue.Node, null), queue.wakeOne());
+
+    try testing.expect(!scheduler.blockCurrentOn(&queue, &node, 0));
+    // The task did not sleep: it has to re-check the condition that the wake
+    // was about, and it is still the one on the processor.
+    try testing.expectEqual(State.running, first.state);
+    try testing.expectEqual(first, scheduler.current[0].?);
+    try testing.expectEqual(@as(u32, 0), queue.length());
+}
+
+test "a mutex waiter blocks in the scheduler and is handed the lock when it is woken" {
+    // The end of the chain that the task subsystem was built for: the mutex
+    // queues the waiter in the shared wait queue, the scheduler blocks the task
+    // on that queue, and the release of the mutex hands the ownership over and
+    // wakes the task through `wakeTask` — which is the same routine that the
+    // channel uses for a message.
+    const mutex_module = @import("mutex.zig");
+
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var holder_kernel_stack: [1024]u8 align(16) = undefined;
+    var waiter_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const holder = scheduler.spawn(noopEntry, stack[0..], holder_kernel_stack[0..], 0).?;
+    const waiter = scheduler.spawn(noopEntry, stack[0..], waiter_kernel_stack[0..], 0).?;
+    holder.state = .ready;
+    waiter.state = .running;
+    scheduler.current[0] = waiter;
+
+    var mutex: mutex_module.Mutex = .{};
+    try testing.expectEqual(mutex_module.Mutex.Take.acquired, mutex.take(holder));
+    try testing.expectEqual(mutex_module.Mutex.Take.busy, mutex.take(waiter));
+
+    var node = wait_queue.Node.init(waiter, Scheduler.wakeTask);
+    try testing.expectEqual(wait_queue.AddResult.queued, mutex.waitFor(&node));
+
+    // The waiter goes to sleep on the queue of the mutex, and the holder — the
+    // only other task — takes the processor.
+    try testing.expect(scheduler.blockCurrentOn(&mutex.waiters, &node, 0));
+    try testing.expectEqual(State.blocked, waiter.state);
+    try testing.expectEqual(holder, scheduler.current[0].?);
+    try testing.expectEqual(@as(u32, 1), mutex.waiting());
+
+    // The release transfers the ownership and wakes the waiter, in that order.
+    try testing.expectEqual(mutex_module.Mutex.Release.handed_off, mutex.release(holder));
+    try testing.expect(mutex.isOwnedBy(waiter));
+    try testing.expectEqual(State.ready, waiter.state);
+    try testing.expectEqual(@as(u32, 0), mutex.waiting());
+    try testing.expectEqual(@as(u32, 1), scheduler.readyCount(0));
+
+    // The woken task runs, finishes its critical section and releases: with
+    // nobody in the queue the mutex is free again.
+    try testing.expectEqual(mutex_module.Mutex.Release.unlocked, mutex.release(waiter));
+    try testing.expect(mutex.isFree());
+    try testing.expect(!scheduler.state_lock.isHeld());
 }

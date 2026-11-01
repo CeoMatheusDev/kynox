@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-scheduler-lock.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The state lock of the scheduler: per-CPU ownership, re-entries, the generic blocking primitive and the end-to-end mutex test.",
+    },
     "docs/audits/2026-11-01-task-subsystem.md": {
         "kind": "implementation-record",
         "authority": "record",

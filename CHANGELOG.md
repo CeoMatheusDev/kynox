@@ -21,6 +21,33 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — the scheduler has a state lock with per-CPU ownership
+
+- **`kernel/task/lock.zig`.** The audit's defect 1 was "no lock at all" over state
+  that interrupt context and thread context both write. A plain spinlock would
+  have deadlocked, because the scheduler calls itself inside one decision
+  (`tick → prepareNext → expiry → wake → enqueue`): the new lock knows which CPU
+  holds it and counts the nested acquisitions instead of spinning. It also counts
+  contentions, wait iterations and refused releases, and those four numbers are
+  reported at boot.
+- **Every entry point takes it** — `tick`, `prepareNext`, `spawn`, `spawnUser`,
+  `blockCurrent`, `blockCurrentForInput`, `killCurrent`, `terminateCurrent`,
+  `wakeTask`, `enqueueReady`, `dequeueReady`, `init` — and every path releases it;
+  a test asserts that after `tick`, `spawn`, `wakeTask` and `terminateCurrent` the
+  lock is free and no release was refused. `statisticsOf` is the documented
+  exception: it reads without the lock, because a diagnostic is worth more than a
+  deadlock.
+- **`blockCurrentOn`**: the generic blocking primitive over any wait queue, with
+  the deadline written before the node is queued and the wait undone when there
+  is nobody to switch to. It is what a mutex needs, and the new end-to-end test
+  drives the whole chain: the holder takes the mutex, the waiter blocks on
+  `mutex.waiters`, the release transfers the ownership, `wakeTask` makes the
+  waiter ready, and the waiter releases.
+- Measured: **800 tests in 52/52 steps** (`task-tests` 59, six of them for the
+  lock, one of those a four-thread contention test), `zig build` writing the
+  image, `docs-check` green. No runtime evidence: no AP has ever run, so the lock
+  is never contended in the kernel.
+
 ### Added (2026-11-01) — the channel waits in the shared queue, and the documentation has an index for agents
 
 - **The wait queue has its first caller in the kernel.** `kernel/ipc/channel.zig`

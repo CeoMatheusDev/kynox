@@ -23,7 +23,7 @@
     "note": "GitHub releases of ziglang publish 0.15.x; 0.17.0 must be obtained from a channel that publishes it"
   },
   "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
-  "percentage_note": "no percentage was moved by the planning documents or the ADRs. The single change in this snapshot is virtual_memory 45 -> 50: unmapping now returns the frames the space owns (ownership bit), an address space is destroyed with its private chain and its slot, and the slot is reused with a generation; each of those has a host test. The interrupt registry, the single tick source and the capability destruction are recorded as implementation evidence inside their subsystems but did not move the percentage, because their execution paths have never run. scheduler 55 -> 60 in the follow-up of the same day: its policy now runs in the host suite (12 tests) and writing them closed three preemption defects; the lock, the per-CPU ownership and the idle task remain open, so it is not higher. scheduler 60 -> 62 in the third follow-up of the day: the policy moved into a pure module (K3 step 2), a wait queue with deadlines and a mutex with ownership and direct handoff exist with 21 tests, but nothing in the kernel calls them yet and the scheduler still has no lock, which is why the move is two points and not more.",
+  "percentage_note": "no percentage was moved by the planning documents or the ADRs. The single change in this snapshot is virtual_memory 45 -> 50: unmapping now returns the frames the space owns (ownership bit), an address space is destroyed with its private chain and its slot, and the slot is reused with a generation; each of those has a host test. The interrupt registry, the single tick source and the capability destruction are recorded as implementation evidence inside their subsystems but did not move the percentage, because their execution paths have never run. scheduler 55 -> 60 in the follow-up of the same day: its policy now runs in the host suite (12 tests) and writing them closed three preemption defects; the lock, the per-CPU ownership and the idle task remain open, so it is not higher. scheduler 60 -> 62 in the third follow-up of the day: the policy moved into a pure module (K3 step 2), a wait queue with deadlines and a mutex with ownership and direct handoff exist with 21 tests, but nothing in the kernel calls them yet and the scheduler still has no lock, which is why the move is two points and not more. scheduler 62 -> 68 in the fourth follow-up of the day: the state lock with per-CPU ownership and the generic blocking primitive exist with host tests (including a four-thread contention test), but no AP has ever run and the mutex has no user in the kernel, so it is not higher.",
   "status_values": [
     "not_started",
     "scaffolding",
@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 788/788 tests passed (24 test artifacts; task-tests 47 covers the policy, the scheduler, the context, the wait queue and the mutex; ipc 9 with the channel on the wait queue; docs-conformance 24 with the document-index guard; arch-tests 144; no QEMU target executed)",
+      "result": "success: 52/52 steps, 800/800 tests passed (24 test artifacts; task-tests 59 covers the lock, the policy, the scheduler, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 144; no QEMU target executed)",
       "date": "2026-11-01"
     },
     {
@@ -248,7 +248,7 @@
     "context_pack": "docs/ai/context-pack.md",
     "generator": "tools/scripts/gen-doc-index.py",
     "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
-    "documents": 62,
+    "documents": 63,
     "authorities": [
       "binding",
       "current",
@@ -260,7 +260,7 @@
     ],
     "note": "every Markdown file of the tree, plus VERSION, LICENSE and this file, is classified with an authority; a document that nobody classified fails the build"
   },
-  "runtime_evidence_note": "No QEMU or hardware run was performed on 2026-11-01 either: the environment has no qemu-system-x86_64 and no OVMF firmware. The interrupt dispatch, the frame release on unmap, the address-space slot reuse, the tick-source policy, the preemption policy, the wait queue and the mutex are code plus host tests only; no task in the kernel waits in the new queue and no task takes the new mutex.",
+  "runtime_evidence_note": "No QEMU or hardware run was performed on 2026-11-01 either: the environment has no qemu-system-x86_64 and no OVMF firmware. The interrupt dispatch, the frame release on unmap, the address-space slot reuse, the tick-source policy, the preemption policy, the wait queue, the mutex and the scheduler state lock are code plus host tests only; no two processors ever contend for the lock in the kernel.",
   "subsystems": [
     {
       "id": "uefi_bootloader",
@@ -527,10 +527,11 @@
     },
     {
       "id": "scheduler",
-      "maturity_percent": 62,
+      "maturity_percent": 68,
       "status": "in_progress",
       "evidence": [
         "kernel/task/scheduler.zig",
+        "kernel/task/lock.zig",
         "kernel/task/policy.zig",
         "kernel/task/wait.zig",
         "kernel/task/mutex.zig",
@@ -551,33 +552,34 @@
         "the policy is a pure module with no globals (`task/policy.zig`): pickNext, shouldPreempt, quantumFor, budgetFor, minVruntime, tested on their own",
         "a wait queue with FIFO order, a deadline per wait and a remembered wake, so a producer that runs before its waiter cannot lose the wakeup (task/wait.zig)",
         "a mutex with an owner, a recursion limit and a direct handoff: the ownership moves to the waiter before the wake, so no third task can take it in the interval (task/mutex.zig)",
-        "the channel of the IPC registers its waiters in the wait queue: the queue has its first caller in the kernel, and the queue of waiters is FIFO instead of being the order of the storage array"
+        "the channel of the IPC registers its waiters in the wait queue: the queue has its first caller in the kernel, and the queue of waiters is FIFO instead of being the order of the storage array",
+        "a state lock with per-CPU ownership (owner, depth, contentions, re-entries, refused releases) taken by every entry point of the scheduler, released on every path, and counted in the boot report",
+        "blockCurrentOn: the generic blocking primitive over any wait queue, with a deadline written before the node is queued and the wait undone when there is nobody to switch to"
       ],
       "limitations": [
-        "effectively BSP-centric",
-        "no lock and no per-CPU ownership: ready_queue and current[] are indexed by CPU, but nothing serialises two processors",
-        "the mutex has no caller in the kernel yet (the wait queue does: the channel)",
+        "effectively BSP-centric: no AP has ever run, so the lock is never contended in the kernel (it is contended on the host by four threads)",
         "no idle task; with no ready task the interrupt returns to what it interrupted",
+        "the mutex has no user in the kernel yet; the end-to-end test is the proof of the chain",
+        "statisticsOf reads the state without the lock, by design (diagnostics)",
         "no reader/writer lock, no condition variable, no futex-like primitive",
         "no migration or fairness policy, no SMP safety proof",
         "the assembly of the switch still does not save FPU/SSE state (audit defect 8)"
       ],
       "pending_work": [
-        "lock and per-CPU ownership of the scheduler state",
-        "move the channel waiters onto the wait queue and give blockCurrent a deadline-aware wait",
-        "idle task and the hlt path",
+        "trampoline below 1 MiB, per-CPU TSS and an idle task, so that an AP can run and contend the lock",
+        "a user of the mutex in the kernel",
         "reader/writer lock and condition variable on the same queue",
-        "per-CPU run queues and a migration protocol"
+        "per-CPU run queues with a migration protocol"
       ],
       "tests": [
-        "task-tests (47)",
+        "task-tests (59)",
         "arch-tests (task/context pure parts)",
         "ipc-tests (8 channel tests)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "task-tests (47)",
+          "task-tests (59, including a four-thread lock contention test)",
           "arch-tests (task/context pure parts)",
           "ipc-tests (8 channel tests)"
         ],
@@ -586,7 +588,7 @@
         ],
         "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "the policy, the queue and the mutex are executed on the host; the context switch itself (arch/x86_64/task.s) has never run in this environment, and no kernel path calls the new primitives"
+        "notes": "the policy, the lock, the queue, the mutex and the scheduler state machine are executed on the host; the context switch itself has never run here, and no two processors ever contend in the kernel"
       }
     },
     {
@@ -1467,13 +1469,13 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 788 tests, in zig build test",
+        "24 host test artifacts, 800 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "788 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards)",
+        "800 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 46 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
         "a machine-readable index of the documentation (docs/ai/doc-index.json, 61 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
@@ -1492,7 +1494,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 51/51 steps, 788/788 tests"
+        "zig build test: 52/52 steps, 800/800 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
@@ -1705,7 +1707,7 @@
     {
       "id": "K-01",
       "severity": "P1",
-      "summary": "the scheduler policy had no host test, and the tests found three preemption defects: a switch on every tick whatever the quantum, a quantum that was never refilled, and a preempted task left ready with no successor; closed for the policy (kernel/task_root.zig, scheduler-tests 12 tests). The other half of the defect — no lock, no per-CPU ownership, no idle task — is open",
+      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, and blockCurrentOn gives the mutex its blocking primitive. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the idle task and the trampoline are missing",
       "status": "partially_closed"
     },
     {
@@ -1718,6 +1720,12 @@
       "id": "K-16",
       "severity": "P3",
       "summary": "kernel/task/runqueue.zig was a stub that dequeued without shifting and was imported by nothing; deleted. The per-CPU ready queue of the scheduler is the real one, and it is still not safe under SMP because there is no lock",
+      "status": "closed"
+    },
+    {
+      "id": "K-17",
+      "severity": "P3",
+      "summary": "the scheduler called itself inside one decision (tick -> expiry -> wake -> enqueue) with no way to say so, which is why a plain spinlock would have deadlocked on the first tick that expired a wait; the state lock now knows its CPU and counts the re-entries instead. The counters are reported at boot",
       "status": "closed"
     }
   ],

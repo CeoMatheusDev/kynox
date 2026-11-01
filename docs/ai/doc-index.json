@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 62,
+    "documents": 63,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 3,
+      "record": 4,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 4062
+      "words": 4330
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2373
+      "words": 2419
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 6595
+      "words": 6812
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 4288
+      "words": 4281
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1170
+      "words": 1243
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -178,7 +178,7 @@
       "kind": "architecture",
       "authority": "planning",
       "summary": "Processes, threads, scheduling, synchronisation, time and the user/kernel transition: the model and its state today.",
-      "words": 1711,
+      "words": 1738,
       "declared_status": "planning document"
     },
     {
@@ -320,6 +320,16 @@
       "authority": "record",
       "summary": "The defects of the 2026-10-31 audit that were closed without a hypervisor, with the evidence of each.",
       "words": 1453,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-scheduler-lock.md",
+      "title": "The state lock of the scheduler — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The state lock of the scheduler: per-CPU ownership, re-entries, the generic blocking primitive and the end-to-end mutex test.",
+      "words": 1452,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },

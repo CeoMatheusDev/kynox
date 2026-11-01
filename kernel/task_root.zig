@@ -34,6 +34,7 @@
 
 const Context = @import("task/context.zig").Context;
 
+pub const lock = @import("task/lock.zig");
 pub const policy = @import("task/policy.zig");
 pub const scheduler = @import("task/scheduler.zig");
 pub const wait_queue = @import("task/wait.zig");
@@ -47,11 +48,20 @@ export var kynox_current_context: *Context = undefined;
 export var kynox_next_context: *Context = undefined;
 export var kynox_kernel_stack_pointer: u64 = 0;
 export var kynox_next_cr3: u64 = 0;
+// The two symbols of the switch accounting, and the flag that tells the entry of
+// a call that the task was left waiting. `task.s` and the assembly of the
+// syscall own them in the kernel; the tests only need them to exist.
+export var kynox_switch_count: u64 = 0;
+export var kynox_switch_total: u64 = 0;
+export var kynox_switch_cycles: u64 = 0;
+export var kynox_switch_minimum: u64 = 0;
+export var kynox_syscall_blocked: u64 = 0;
 
 // The unit tests live in the module, and this block is what brings them into
 // the binary. Without it the artifact would be built with zero tests and would
 // pass no matter what.
 test {
+    _ = @import("task/lock.zig");
     _ = @import("task/policy.zig");
     _ = @import("task/scheduler.zig");
     _ = @import("task/wait.zig");

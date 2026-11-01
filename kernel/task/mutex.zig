@@ -33,12 +33,14 @@
 //! state:
 //!
 //! ```text
+//! const node = wait.Node.init(task, Scheduler.wakeTask);   // in the task
+//!
 //! while (true) {
 //!     switch (mutex.take(task)) {
 //!         .acquired, .recursive => break,           // the mutex is ours
 //!         .busy => {
-//!             _ = mutex.waitFor(&node);             // our node, our stack
-//!             if (!scheduler.blockCurrentOn(&mutex.waiters)) {
+//!             _ = mutex.waitFor(&node);             // registered, not sleeping
+//!             if (!scheduler.blockCurrentOn(&mutex.waiters, &node, timeout)) {
 //!                 _ = mutex.waiters.remove(&node);  // no one to switch to
 //!                 return error.WouldBlock;
 //!             }
@@ -48,17 +50,16 @@
 //! }
 //! ```
 //!
-//! The `waitFor` of the code above does not use the remembered wake of the wait
-//! queue, and it must not: the ownership is transferred at release time, so a
-//! wake that arrived before the waiter would name nobody. A waiter that was
-//! already handed the ownership finds `.busy` false on the next `take`, because
-//! the owner is the waiter itself.
+//! The registration (`waitFor`) comes **before** the block, and that order is
+//! the point: the ownership is transferred at release time, so a wake that
+//! arrived before the waiter would name nobody. `scheduler.blockCurrentOn`
+//! accepts a node that is already in the queue for exactly this case, and the
+//! scheduler suite has the end-to-end test: the waiter blocks, the holder
+//! releases, the ownership moves to the waiter and the scheduler makes it ready.
 //!
-//! The blocking helper named above (`scheduler.blockCurrentOn`) does not exist
-//! yet, and this file does not pretend that it does. Until it lands, the mutex
-//! is a tested policy module with no caller in the kernel: the same status as
-//! `policy.zig`, and the reason the synchronisation row of the status file does
-//! not claim integration.
+//! What is still missing is a **user** of the mutex in the kernel: no boot path
+//! takes it, so it is tested code and not live code, and the synchronisation
+//! row of the status file says so.
 
 const std = @import("std");
 const wait = @import("wait.zig");

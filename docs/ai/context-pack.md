@@ -23,13 +23,13 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **51/51 steps, 786/786 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 800/800 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 144 · shared 64 · task 47 · kernel
-22 · user-composition 22 · security 22 · docs-conformance 22+ · damage 15 ·
+Per artifact: kvdi 173 · fs-loader 154 · arch 144 · shared 64 · task 59 · kernel
+22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
 ai 3 · boot-markers-conformance 3.
@@ -47,7 +47,7 @@ operating system.
 | Virtual memory, address spaces | 50 | unmap returns the frames it owns; spaces are destroyed and reused with a generation |
 | ACPI, PCI, APIC | 50 | MADT drives the LAPIC; IOAPIC entries are **masked**, delivery is still the 8259 |
 | SMP | 30 | CPU table exists, **no AP has ever run** |
-| Scheduler and task switching | 62 | EEVDF policy in a pure module, tested; wait queue and mutex exist and have **no caller**; no lock |
+| Scheduler and task switching | 68 | EEVDF policy in a pure module, a state lock with per-CPU ownership, a generic blocking primitive, a wait queue and a mutex — all tested; **no AP has ever run**, no idle task, the mutex has no user |
 | User mode and syscalls | 55–60 | ring 3 and ABI revision 1, contract-checked, never ran in a VM |
 | IPC and capabilities | 60 | channels and a real capability lifecycle |
 | ELF64 and KEX | 55–60 | native loading; no dynamic linking |
@@ -71,7 +71,8 @@ operating system.
 | Area | Files | State |
 |---|---|---|
 | Scheduling policy | `kernel/task/policy.zig` | pure functions, 13 tests, no globals |
-| Scheduler | `kernel/task/scheduler.zig` | EEVDF over 32 slots, quantum enforced and refilled, 11 tests; **no lock** |
+| Scheduler | `kernel/task/scheduler.zig` | EEVDF over 32 slots, quantum enforced and refilled, 18 tests, state lock taken by every entry point |
+| State lock | `kernel/task/lock.zig` | owner per CPU, depth, contentions, re-entries; 6 tests, one with four threads |
 | Wait queue | `kernel/task/wait.zig` | FIFO, deadlines, remembered wake, 11 tests; first caller is the channel |
 | Mutex | `kernel/task/mutex.zig` | owner, recursion ≤255, direct handoff, 10 tests; **no caller** |
 | Channels | `kernel/ipc/channel.zig` | bounded queues, blocking receive with deadline, 8 tests |
@@ -83,12 +84,12 @@ operating system.
 
 | # | Defect | Consequence |
 |---|---|---|
-| 1 | The scheduler has **no lock** and no per-CPU ownership | correct only on one processor; `startAps` refuses anyway |
+| 1 | The scheduler lock is never contended in the kernel: **no AP has ever run** | the lock is host-tested only; the SMP path is unproven |
 | 2 | Single global TSS with one `rsp0` | ring 3 on an AP is impossible |
 | 8 | FPU/SSE state is not saved on the context switch | a switch between threads that use SSE corrupts state |
 | 9 | `kernel/main.zig` mixes bring-up, demo and self-test | the boot order is the source of the system |
 | 11 | No CI, no recorded QEMU result | every runtime claim is unverified |
-| 13 | The mutex and the wait queue have no caller in the kernel | they are tested code, not live code |
+| 13 | The mutex has no user in the kernel; the wait queue has one (the channel) | the mutex is tested code, not live code |
 | A | Seven files remain unreachable from any target | the syscall benchmark cannot run at all |
 
 The full list, with severities and closures, is in
@@ -111,7 +112,8 @@ The full list, with severities and closures, is in
 ## 7. Where the work goes next
 
 From [`../roadmap/KERNEL_COMPLETION_ROADMAP.md`](../roadmap/KERNEL_COMPLETION_ROADMAP.md),
-in order: the scheduler lock and per-CPU ownership (K3), the idle task and `hlt`,
-the process/thread split with `join` and reap (K4), then the syscall and IPC
-surface (K6). The unverified QEMU suites (K0 evidence) are the shortest path to
+in order: the trampoline below 1 MiB with a per-CPU TSS and the idle task, so that
+an AP can run and contend the state lock (K2/K3), a user of the mutex, the
+process/thread split with `join` and reap (K4), then the syscall and IPC surface
+(K6). The unverified QEMU suites (K0 evidence) are the shortest path to
 turning any of it from "host-tested" into "works".

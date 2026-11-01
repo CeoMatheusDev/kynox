@@ -661,6 +661,7 @@ pub fn build(b: *std.Build) void {
         .name = "task-tests",
         .root_module = task_test_module,
         .filters = &.{
+            "task.lock.test.",
             "task.policy.test.",
             "task.scheduler.test.",
             "task.wait.test.",

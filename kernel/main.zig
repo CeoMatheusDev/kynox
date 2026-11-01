@@ -4958,6 +4958,17 @@ fn reportScheduler() void {
         statistics.minimum_switch_cycles,
         statistics.last_switch_cycles,
     });
+    // The state lock of the scheduler: how often it was needed, and how deep
+    // the nested calls of one decision went. A contention of zero on a
+    // single-CPU boot is the expected reading and not a defect; a refused
+    // release is always a defect, because a release without an acquisition
+    // means that some path left the lock behind.
+    serial.printLine("[KNK] sched lock: {d} contentions, {d} reentries, max depth {d}, {d} refused releases", .{
+        statistics.lock_contentions,
+        statistics.lock_reentries,
+        statistics.lock_max_depth,
+        statistics.lock_refused_releases,
+    });
 }
 
 /// A worker of the kernel, it runs until the machine stops.

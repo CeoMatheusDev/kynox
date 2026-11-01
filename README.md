@@ -33,7 +33,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Virtual memory and address spaces | **50%** | User mappings and isolation foundations; unmap returns the frames the space owns and an address space is destroyed and its slot reused (generation-checked); advanced VM remains |
 | ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPIC redirection entries are programmed **masked** and delivery still comes from the 8259; PCI/APIC access paths exist |
 | SMP | **30%** | CPU table and a gated AP startup path exist; **no AP has ever run** and per-CPU scheduling is incomplete |
-| Scheduler and task switching | **62%** | EEVDF policy in its own module with timer-driven preemption, a wait queue that cannot lose a wakeup and a mutex with a direct handoff, all covered by host tests (46 in the task artifact); SMP scheduling, a lock and a caller for the new primitives remain |
+| Scheduler and task switching | **68%** | EEVDF policy in its own module, a state lock with per-CPU ownership that counts its re-entries (the scheduler calls itself inside one decision), a generic blocking primitive that queues a wait with a deadline, plus a wait queue that cannot lose a wakeup and a mutex with a direct handoff — 59 host tests in the task artifact, including a four-thread lock contention test and an end-to-end mutex/scheduler test; **no AP has ever run**, no idle task, and the mutex has no user in the kernel yet |
 | User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI revision 1 is contract-checked; the ABI is still small and never ran in a VM here |
 | IPC and capabilities | **60%** | Core mechanisms and a real object lifecycle (destroy, destroySubject, releaseProcess); broader service model remains |
 | ELF64 and KEX native executables | **55–60%** | Native ELF loading and KEX container exist; dynamic linking remains |
@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**788 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (**800 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (788) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (800) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 52/52 steps, **788/788 tests passed** (fresh cache; the suite grew from 736 to 748 with the scheduler policy tests, to 781 with the wait queue, the mutex and the policy split, and to 788 with the channel integration and the documentation index checks) |
+| `zig build test` | success — 52/52 steps, **800/800 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
