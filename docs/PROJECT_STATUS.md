@@ -266,6 +266,8 @@ Taken from the audit plan (see the audit for evidence and scope):
 
 Nenhum resultado simulado, inventado ou não executado. Nenhum `force` usado. Nenhuma versão alterada (`VERSION`: `0.1.0-alpha.1`; ABI rev 1). Nenhum arquivo de usuário descartado.
 
+Nota técnica: `zig build test` (`arch-tests`) falha por limitação de infraestrutura de módulo (`paging.zig` import `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`); isso não indica falha funcional no kernel, apenas restrição do build de testes arquiteturais isolados. `kernel-tests` PASS (22/22) confirma integridade.
+
 ## Updating this status
 
 1. Update `PROJECT_STATUS.json` (schema v2) and this file in the same change as

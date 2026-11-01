@@ -1217,10 +1217,7 @@ pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
 
 /// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
 pub fn reclaimPhysicalPages(space: *AddressSpace) void {
-    const physical = @import("../../memory/physical.zig");
-    // Access the global manager instance; assume singleton available
-    // This requires integration with kernel initialization; for reclaim path
-    // we call physical.free for each mapped physical page owned by process.
+    const pm_wrapper = @import("pm_wrapper.zig");
     // Only private user-space tables (level3/level2/level1) are reclaimed;
     // kernel mappings in root remain untouched (shared, not owned by process).
     if (space.level3) |l3| {
@@ -1228,8 +1225,8 @@ pub fn reclaimPhysicalPages(space: *AddressSpace) void {
             const entry = l3.entries[i];
             if (entry & Flags.present != 0) {
                 const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
+                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
+                    pm_wrapper.managerFree(addr);
                 }
             }
         }
@@ -1239,8 +1236,8 @@ pub fn reclaimPhysicalPages(space: *AddressSpace) void {
             const entry = l2.entries[i];
             if (entry & Flags.present != 0) {
                 const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
+                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
+                    pm_wrapper.managerFree(addr);
                 }
             }
         }
@@ -1250,8 +1247,8 @@ pub fn reclaimPhysicalPages(space: *AddressSpace) void {
             const entry = l1.entries[i];
             if (entry & Flags.present != 0) {
                 const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
+                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
+                    pm_wrapper.managerFree(addr);
                 }
             }
         }
