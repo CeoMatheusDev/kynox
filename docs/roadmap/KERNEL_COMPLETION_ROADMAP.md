@@ -377,12 +377,48 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    counter), reschedule IPI, and a halt IPI. Shootdown is wired into `unmap`, which
    is what finally satisfies memory invariant M4. *(2026-11-01: the reschedule IPI
    exists — vector 65, gate, stub, handler and `smp.reschedule`, with the boot
-   migrating a worker to the first online AP. The shootdown and the halt IPI do
-   not. See `docs/audits/2026-11-01-reschedule-ipi.md`.)*
+   migrating a worker to the first online AP — and the **TLB shootdown** exists
+   too (vector 66, mailbox with a generation and one acknowledgement per
+   processor, wired into every unmap through `paging.installRemoteFlush`). The
+   **halt IPI** also exists (vector 67: a fatal failure tells the other
+   processors to stop before this one does, and the report says how many IPIs
+   were delivered instead of pretending every processor stopped — `kernel/fatal.zig`
+   is now the only fatal path). No IPI of any kind has been delivered here. See
+   `docs/audits/2026-11-01-reschedule-ipi.md`,
+   `docs/audits/2026-11-01-tlb-shootdown.md` and
+   `docs/audits/2026-11-01-halt-ipi-and-fatal.md`.)*
+   *(2026-11-01: the clock of each processor is separate from the clock of the
+   machine — `timer.armCpuClock` gives the BSP the `system` role and an AP the
+   `local` role, an AP arms its own local timer with the frequency the BSP
+   measured, and a tick that arrives where it is not the clock is counted as
+   ignored. See `docs/audits/2026-11-01-per-cpu-clock.md`.)*
 7. **Unhandled interrupts are counted and named**, not silently acknowledged. A
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);
    the parsed-but-unused capability from the audit is the starting point.
+   *(2026-11-01: the capability is programmed — message address/data, the 32- and
+   64-bit register layouts, an allocation that must be a power of two, the enable
+   bit last and every refusal before the first write — with the boot reporting the
+   candidate message and `-Dmsi-delivery=true` as the switch, because enabling MSI
+   disables INTx of the function. What remains is MSI-X, a driver that consumes a
+   device vector, and an MSI actually delivered. The **MSI-X capability is also
+   decoded** — table size stored as N-1, the BIR and offset of the table and the
+   PBA, a 16-byte entry per vector, and the enable order that fills the table
+   while the function is masked — but its table is never written, because the
+   window of the BAR of a device the kernel does not drive is not mapped. The
+   **vector space a message names now exists**: every vector of 68..254 has its
+   own stub in assembly and an IDT gate installed from a table the kernel indexes,
+   the registry gives each one an owner or counts it as unhandled, and the
+   spurious 255 is excluded — so the remaining gap is a driver and a delivered
+   message, not a place for the message to land. The **allocator** is there too:
+   a driver asks for a block of N (N a power of two, the base a multiple of N,
+   which is what MSI can express) or for one vector per MSI-X table entry, and
+   the block must end before the spurious 255; the largest block is 64, because
+   187 is not a power of two and a block of 128 would start at 0 or at 128. See
+   `docs/audits/2026-11-01-msi-programming.md`,
+   `docs/audits/2026-11-01-msix-table.md`,
+   `docs/audits/2026-11-01-device-vectors.md` and
+   `docs/audits/2026-11-01-vector-pool.md`.)*
 
 **Completion criteria.**
 - Exactly one component calls `scheduler.tick()`; the call site is listed in the

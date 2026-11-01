@@ -38,6 +38,9 @@ const x86_cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
 const segment = @import("segment.zig");
 const trampoline = @import("ap_trampoline.zig");
+const tlb = @import("tlb.zig");
+const timer = @import("timer.zig");
+const bda = @import("bda.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -121,9 +124,18 @@ pub fn publishTrampoline(base: u64) void {
 /// Devolve o erro quando a copia nao aconteceu: um booleano aqui esconderia
 /// **qual** pre-condicao falhou, e um AP iniciado sem trampolim executa o que
 /// estiver naquela pagina.
-pub fn prepareTrampoline(address: u64, cr3: u64, efer_bits: u32) ?trampoline.Error {
+pub fn prepareTrampoline(address: u64, cr3: u64, efer_bits: u32, ebda_base: ?u64) ?trampoline.Error {
     const layout = trampoline.kernelLayout();
     trampoline.validatePlacement(address, layout.size) catch |err| return err;
+
+    // The firmware map calls the whole region below 1 MiB usable RAM, and it is
+    // not: the firmware allocated the extended BIOS data area there at run time,
+    // after the map was built. A block that reaches into it overwrites data that
+    // the firmware still owns, and the failure shows up much later and somewhere
+    // else.
+    if (!bda.fitsBelowEbda(ebda_base, address, trampoline.page_size)) {
+        return error.OverlapsEbda;
+    }
 
     const destination = @as([*]u8, @ptrFromInt(address))[0..@intCast(trampoline.page_size)];
     const source = trampoline.imageAddress()[0..layout.size];
@@ -277,6 +289,248 @@ pub fn rescheduleRequests() u64 {
     return reschedule_requests;
 }
 
+/// O resultado de um TLB shootdown.
+///
+/// Como no reschedule, nao e um booleano: "nao havia ninguem a quem pedir" e
+/// "havia, e eu nao podia falar com eles" sao fatos diferentes, e o segundo e o
+/// caso normal de um host sem controlador.
+pub const ShootdownOutcome = enum {
+    /// Todos os processadores avisados responderam: a traducao sumiu de todos.
+    complete,
+    /// Nao ha outro processador online: a invalidacao local e a historia toda.
+    no_targets,
+    /// Ha outro processador online e o APIC local nao esta mapeado, entao
+    /// ninguem pode ser avisado.
+    no_apic,
+    /// O pedido foi publicado e as IPIs sairam, mas alguem nao respondeu a
+    /// tempo. A pagina pode continuar traduzida nessa CPU.
+    timeout,
+};
+
+/// Quantas voltas de `pause` o remetente espera pelas respostas.
+///
+/// O orcamento e grande de proposito: uma resposta custa uma invalidacao e um
+/// reconhecimento, e desistir cedo demais transformaria um shootdown lento em
+/// uma garantia perdida. O numero existe para que a maquina nao trave para
+/// sempre quando um processador esta morto ou preso.
+const shootdown_spin_budget: u32 = 4 * 1024 * 1024;
+
+/// A caixa de correio do shootdown: um pedido no ar por vez.
+var shootdown_mailbox: tlb.Mailbox = .{};
+
+/// O lock do remetente. Os receptores nunca o tocam: quem espera a resposta nao
+/// pode ser o mesmo que a responde.
+var shootdown_lock: spinlock.Spinlock = .{};
+
+var shootdowns: u64 = 0;
+var shootdown_timeouts: u64 = 0;
+
+/// Pede a todos os outros processadores que esqueçam uma traducao.
+///
+/// Uma entrada obsoleta no TLB de outro processador e memoria que continua
+/// acessivel depois de a tabela dizer que nao esta: a pagina volta para o
+/// alocador, outro dono a recebe, e a CPU que guardou a traducao velha escreve
+/// na pagina do novo dono. A invalidacao local (`invlpg`) cobre so este
+/// processador, e e por isso que existe esta funcao.
+///
+/// O pedido e publicado em `tlb.Mailbox` — a IPI carrega um vetor e nao um
+/// endereco — e este processador espera as respostas por um tempo limitado. Se
+/// alguma faltar, o pedido e abandonado e o resultado diz `timeout`: uma
+/// garantia perdida e reportada, nunca escondida atras de um sucesso.
+pub fn shootdown(scope: tlb.Scope, address: u64) ShootdownOutcome {
+    const self_index = cpuId();
+
+    var targets: u32 = 0;
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        targets += 1;
+    }
+
+    // Uma maquina com um processador nao tem traducao remota para esquecer, e
+    // esse e o caso normal da suite de host.
+    if (targets == 0) return .no_targets;
+    if (!apic.isMapped()) return .no_apic;
+
+    shootdown_lock.lock();
+    defer shootdown_lock.unlock();
+
+    _ = shootdown_mailbox.begin(scope, address, targets);
+    shootdowns += 1;
+
+    index = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        apic.sendShootdown(cpus[index].apic_id);
+    }
+
+    var spins: u32 = 0;
+    while (!shootdown_mailbox.isComplete()) {
+        if (spins == shootdown_spin_budget) {
+            shootdown_mailbox.abandon();
+            shootdown_timeouts += 1;
+            return .timeout;
+        }
+        x86_cpu.pause();
+        spins += 1;
+    }
+
+    return .complete;
+}
+
+/// O que esta CPU faz quando recebe o aviso de um shootdown.
+///
+/// Roda no handler da interrupcao, no processador que tem a traducao velha: ele
+/// invalida e responde. Um aviso reentregue — ou um pedido que esta CPU ja
+/// serviu — nao tem o que fazer, e `latch` e quem sabe disso.
+pub fn handleShootdown() tlb.Ack {
+    const index = cpuId();
+    const request = shootdown_mailbox.latch(index) orelse return .idle;
+
+    switch (request.scope) {
+        .page => x86_cpu.invlpg(request.address),
+        .all => x86_cpu.flushTlb(),
+    }
+
+    return shootdown_mailbox.acknowledge(index, request);
+}
+
+/// O gancho que as tabelas de pagina instalam para a pagina que sai.
+///
+/// `paging.zig` nao importa este modulo: um import circular entre o mapeamento e
+/// o SMP amarraria as duas camadas, e os testes das tabelas rodam sem
+/// controlador. O boot instala `paging.installRemoteFlush(&flushRemotePage)`.
+pub fn flushRemotePage(virtual: u64) void {
+    _ = shootdown(.page, virtual);
+}
+
+/// Quantos pedidos de shootdown foram publicados.
+pub fn shootdownsSent() u64 {
+    return shootdowns;
+}
+
+/// Quantos pedidos foram abandonados por falta de resposta.
+pub fn shootdownTimeouts() u64 {
+    return shootdown_timeouts;
+}
+
+/// Quantos avisos os processadores desta maquina ja serviram.
+pub fn shootdownsServed() u64 {
+    return shootdown_mailbox.served;
+}
+
+/// Quantas respostas ainda faltam no pedido no ar.
+pub fn shootdownOutstanding() u32 {
+    return shootdown_mailbox.outstanding();
+}
+
+/// O que um pedido de parada conseguiu fazer.
+///
+/// Nao e um booleano porque as tres respostas sao diferentes, e no meio de uma
+/// falha a diferenca importa: nao havia outra CPU, havia e nao foi possivel
+/// avisar, ou foram avisadas N.
+pub const StopReport = struct {
+    /// Processadores online que nao sao o que pediu.
+    targets: u32 = 0,
+    /// IPIs de parada realmente escritas no controlador.
+    delivered: u32 = 0,
+    /// Havia alvo e o APIC local nao esta mapeado: ninguem pode ser avisado.
+    no_apic: bool = false,
+};
+
+var stop_requests: u64 = 0;
+var halted_cpus: u64 = 0;
+
+/// Manda as outras CPUs pararem onde estao.
+///
+/// Nao espera resposta: a CPU que recebe o aviso para, e uma CPU parada nao
+/// responde. O que a funcao garante e o que ela consegue garantir — as IPIs
+/// foram entregues ao controlador — e o relatorio diz quantas, em vez de supor
+/// que todas pararam.
+pub fn stopOtherCpus() StopReport {
+    const self_index = cpuId();
+    var report: StopReport = .{};
+
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        report.targets += 1;
+    }
+
+    if (report.targets == 0) return report;
+    if (!apic.isMapped()) {
+        report.no_apic = true;
+        return report;
+    }
+
+    index = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        apic.sendHalt(cpus[index].apic_id);
+        report.delivered += 1;
+    }
+    stop_requests += report.delivered;
+
+    return report;
+}
+
+/// O que esta CPU faz quando recebe o aviso de parada.
+///
+/// Chamado pelo handler do vetor 67, que para a CPU logo depois. Devolve true
+/// quando a parada foi contada: e o unico efeito observavel, porque o
+/// processador nao volta para contar nada.
+pub fn handleStop() bool {
+    halted_cpus += 1;
+    return true;
+}
+
+/// Quantas IPIs de parada foram entregues ao controlador.
+pub fn stopRequests() u64 {
+    return stop_requests;
+}
+
+/// Quantas CPUs receberam o aviso de parada e pararam.
+pub fn haltedCpus() u64 {
+    return halted_cpus;
+}
+
+/// A linha que o kernel imprime antes de parar a maquina.
+///
+/// Formata em um buffer do chamador porque a funcao roda no caminho de uma
+/// falha: alocar memoria ali e a ultima coisa que se quer fazer.
+pub fn describeStop(report: StopReport, buffer: []u8) []const u8 {
+    if (report.no_apic) {
+        return std.fmt.bufPrint(
+            buffer,
+            "{d} other CPU(s) online, none told to stop: the local APIC is not mapped",
+            .{report.targets},
+        ) catch "other CPUs online and unreachable";
+    }
+    if (report.targets == 0) {
+        return std.fmt.bufPrint(buffer, "no other CPU online; this processor stops alone", .{}) catch
+            "no other CPU online";
+    }
+    return std.fmt.bufPrint(
+        buffer,
+        "{d} other CPU(s) online, {d} told to stop",
+        .{ report.targets, report.delivered },
+    ) catch "other CPUs told to stop";
+}
+
+/// Publica um pedido sem enviar IPI nenhuma.
+///
+/// Existe para que o handler possa ser exercitado onde nao ha controlador: sem
+/// ele, o caminho "recebe o aviso, invalida e responde" so rodaria em hardware,
+/// e uma maquina que nunca recebeu uma IPI nao prova nada sobre o codigo que a
+/// atende.
+pub fn publishShootdownForTest(scope: tlb.Scope, address: u64, targets: u32) u64 {
+    return shootdown_mailbox.begin(scope, address, targets).generation;
+}
+
 /// O que o kernel faz quando uma CPU chega em `kynox_ap_entry`.
 ///
 /// Esta tabela existe para o `smp.zig` nao importar o escalonador: o
@@ -413,7 +667,22 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
     // funcao. Sem ela, `current` desta CPU fica nulo, `prepareNext` retorna
     // antes de olhar a fila, e o AP espera para sempre com trabalho pronto ao
     // lado.
-    if (cpu_entry_hook) |hook| hook(cpu_id, stack[0..]);
+    if (cpu_entry_hook) |hook| {
+        hook(cpu_id, stack[0..]);
+
+        // O relogio desta CPU. O 8254 nao chega a uma AP, e sem um relogio
+        // proprio ela so seria preemptada quando outra CPU a cutucasse com um
+        // reschedule. A calibracao nao se repete: o BSP mediu o barramento da
+        // maquina, e a AP arma o proprio timer com essa medida.
+        apic.enable();
+        apic.setTpr(0);
+        _ = timer.armCpuClock(cpu_id, .local);
+        const armed = timer.armLocalApicTimer();
+        kynox.serial.printLine("[KNK] smp: cpu={d} clock {s}", .{
+            cpu_id,
+            if (armed) "armed (its own local APIC timer)" else "not armed (no calibration or no local APIC)",
+        });
+    }
 
     // Entra no loop da CPU: aguarda por trabalho do escalonador.
     // O escalonador ainda e monoprocessador; quando o suporte a multiprocessador
@@ -642,6 +911,138 @@ test "a reschedule asks for the CPU that can receive it, and refuses the others"
 
     // Nothing was delivered, so the counter that reports delivery did not move.
     try std.testing.expectEqual(before, rescheduleRequests());
+}
+
+test "a machine with one processor has nobody to stop" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = stopRequests();
+    const report = stopOtherCpus();
+
+    try std.testing.expectEqual(@as(u32, 0), report.targets);
+    try std.testing.expectEqual(@as(u32, 0), report.delivered);
+    try std.testing.expect(!report.no_apic);
+    try std.testing.expectEqual(before, stopRequests());
+
+    // The line the kernel prints says exactly that, and does not pretend.
+    var buffer: [160]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "no other CPU online; this processor stops alone",
+        describeStop(report, &buffer),
+    );
+}
+
+test "a stop with no controller says so instead of pretending" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+    _ = registerCpu(1, 7);
+
+    const before = stopRequests();
+    const report = stopOtherCpus();
+
+    try std.testing.expectEqual(@as(u32, 1), report.targets);
+    try std.testing.expectEqual(@as(u32, 0), report.delivered);
+    try std.testing.expect(report.no_apic);
+    try std.testing.expectEqual(before, stopRequests());
+
+    var buffer: [160]u8 = undefined;
+    const line = describeStop(report, &buffer);
+    try std.testing.expect(std.mem.indexOf(u8, line, "none told to stop") != null);
+    try std.testing.expect(std.mem.indexOf(u8, line, "not mapped") != null);
+}
+
+test "the report of a stop counts the CPUs that were told" {
+    var buffer: [160]u8 = undefined;
+
+    // A machine with three other processors where two could be told: the line
+    // carries both numbers, because "three online" and "two told" are different
+    // facts and only the second one is a promise about the machine.
+    const report: StopReport = .{ .targets = 3, .delivered = 2 };
+    try std.testing.expectEqualStrings(
+        "3 other CPU(s) online, 2 told to stop",
+        describeStop(report, &buffer),
+    );
+}
+
+test "a processor that receives the stop counts it once" {
+    const before = haltedCpus();
+    try std.testing.expect(handleStop());
+    try std.testing.expectEqual(before + 1, haltedCpus());
+}
+
+test "a machine with one processor has no remote translation to forget" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before_sent = shootdownsSent();
+    const before_served = shootdownsServed();
+    const before_timeouts = shootdownTimeouts();
+
+    try std.testing.expectEqual(
+        ShootdownOutcome.no_targets,
+        shootdown(.page, 0x4000_0000),
+    );
+
+    // Nada foi publicado: nao ha pedido pendente, nao ha resposta a esperar, e
+    // a invalidacao local que `invlpg` ja fez e a historia toda.
+    try std.testing.expectEqual(before_sent, shootdownsSent());
+    try std.testing.expectEqual(before_served, shootdownsServed());
+    try std.testing.expectEqual(before_timeouts, shootdownTimeouts());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "a shootdown refuses to pretend when the controller is not mapped" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+    _ = registerCpu(1, 7);
+
+    const before = shootdownsSent();
+    try std.testing.expectEqual(ShootdownOutcome.no_apic, shootdown(.all, 0));
+
+    // A outra CPU esta online e ninguem pode avisa-la: um `.complete` aqui
+    // seria a mentira mais cara do kernel, porque a traducao velha continua la.
+    try std.testing.expectEqual(before, shootdownsSent());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "a spurious announcement invalidates nothing and counts nothing" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = shootdownsServed();
+    try std.testing.expectEqual(tlb.Ack.idle, handleShootdown());
+    try std.testing.expectEqual(before, shootdownsServed());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "the handler invalidates the page and acknowledges the request once" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const served_before = shootdownsServed();
+    const generation = publishShootdownForTest(.page, 0x2000, 1);
+    try std.testing.expect(generation > 0);
+    try std.testing.expectEqual(@as(u32, 1), shootdownOutstanding());
+
+    // The handler runs with `invlpg` as a no-op on the host: what the test
+    // observes is the protocol — one acknowledgement per request, and not one
+    // more for a repeated announcement.
+    try std.testing.expectEqual(tlb.Ack.accepted, handleShootdown());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+    try std.testing.expectEqual(served_before + 1, shootdownsServed());
+
+    try std.testing.expectEqual(tlb.Ack.idle, handleShootdown());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+    try std.testing.expectEqual(served_before + 1, shootdownsServed());
 }
 
 test "the stack of a CPU is handed out for the numbers the table has" {

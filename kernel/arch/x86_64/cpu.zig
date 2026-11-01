@@ -117,6 +117,21 @@ pub fn invlpg(address: u64) void {
 
 extern fn kynox_invlpg(address: u64) void;
 
+/// Invalidates every entry of the TLB of this processor.
+///
+/// There is no instruction that empties the TLB: the architectural way to do it
+/// is to reload the register that holds the base of the page tables, and that
+/// reload is what the kernel asks the assembly for. It is the expensive half of
+/// a shootdown, so the handler uses it only when the request asks for every
+/// page (a table that is going away, not one page that is being recycled).
+pub fn flushTlb() void {
+    if (comptime @import("builtin").os.tag == .freestanding) {
+        kynox_flush_tlb();
+    }
+}
+
+extern fn kynox_flush_tlb() void;
+
 /// Executes the `CPUID` instruction.
 pub fn cpuid(leaf: u32, subleaf: u32) [4]u32 {
     var eax: u32 = leaf;

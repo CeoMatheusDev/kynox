@@ -125,6 +125,46 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-vector-pool.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The device vector allocator: a block of N aligned to N for MSI, one vector per entry for MSI-X, why 187 is not a power of two and the largest block is 64, and the deliberate gap between reserving and installing a vector.",
+    },
+    "docs/audits/2026-11-01-device-vectors.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The device vector space: 68..254 with the spurious 255 excluded, one entry point per vector because the stub is what names the vector to the handler, the registry that gives each vector an owner, the dispatch that counts an unowned vector instead of guessing, and the PIE relocations the .data stub table needs.",
+    },
+    "docs/audits/2026-11-01-msix-table.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "MSI-X: the table in device memory, the size field that stores N-1, the BIR/offset of the table and the PBA, the 16-byte entry, and the enable order that fills the table before any interrupt can leave.",
+    },
+    "docs/audits/2026-11-01-msi-programming.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "MSI: the message a device writes to interrupt, the layout of its registers (32/64-bit, masking), the order of the writes, the refusal that leaves the capability untouched, and the build flag that decides whether it is programmed.",
+    },
+    "docs/audits/2026-11-01-bda-and-ebda.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The firmware data below 1 MiB: the EBDA pointer at 0x40E is a segment, the block of the trampoline has to end at or below it, and a failed read says that it was not checked instead of reporting null.",
+    },
+    "docs/audits/2026-11-01-halt-ipi-and-fatal.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The halt IPI (vector 67) and the fatal path: the machine stops as one, the report promises what it can (IPIs delivered, not CPUs stopped), and every fatal halt goes through one module that allocates nothing.",
+    },
+    "docs/audits/2026-11-01-per-cpu-clock.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The clock of each processor: the per-CPU role of a clock (system or local), the ledger that counts ticks per CPU, the arming of an AP's local timer from the BSP's measurement, and the counter of ignored ticks.",
+    },
+    "docs/audits/2026-11-01-tlb-shootdown.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The TLB shootdown: vector 66, the mailbox that carries the page, the generation that makes a late answer harmless, the page-table hook and the timeout that is reported instead of hidden.",
+    },
     "docs/audits/2026-11-01-reschedule-ipi.md": {
         "kind": "implementation-record",
         "authority": "record",

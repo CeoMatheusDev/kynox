@@ -166,7 +166,7 @@ on the second attempt.
 | M1 | Every frame is either free, owned by exactly one region, or pinned | allocator accounting test |
 | M2 | Destroying an address space returns its frame count to the pre-creation value | unit + integration |
 | M3 | A mapped user page is never writable from the kernel window by accident | protect test |
-| M4 | No TLB entry survives an unmap on any CPU that ran the space | shootdown test (needs K3) |
+| M4 | No TLB entry survives an unmap on any CPU that ran the space | the mailbox and its acknowledgements are host-tested; an IPI delivery has never been observed, so the invariant is implemented and unproven |
 | M5 | A region list is consistent after any single failed operation | fault-injection unit test |
 | M6 | Kernel heap bytes returned equal bytes requested (no silent leak) | accounting test |
 | M7 | A fault on an unmapped address terminates the faulting task and no other | isolation test |
@@ -177,8 +177,10 @@ on the second attempt.
 - **Per-space lock** protects the region list and the page tables of that space.
   Kernel-global mappings are modified only under the global VMM lock, at init.
 - **TLB invalidation**: `invlpg` locally; a shootdown IPI for remote CPUs. The
-  shootdown is required before stage K2 is declared complete, because otherwise
-  M4 is false by construction on any SMP build.
+  shootdown exists as of 2026-11-01 (`docs/audits/2026-11-01-tlb-shootdown.md`):
+  vector 66, a mailbox that carries the page and a generation, and one
+  acknowledgement per processor. What has never happened is a delivery — no AP
+  has answered here — so M4 is implemented and unproven on hardware.
 - **No allocation while holding the space lock** if the allocation can fault.
   The region list nodes come from a dedicated small pool to keep the lock
   ordering simple.

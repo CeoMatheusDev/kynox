@@ -23,6 +23,10 @@ pub const frame = @import("frame.zig");
 pub const paging = @import("paging.zig");
 pub const spinlock = @import("spinlock.zig");
 pub const smp = @import("smp.zig");
+pub const tlb = @import("tlb.zig");
+pub const bda = @import("bda.zig");
+pub const msi = @import("msi.zig");
+pub const msix = @import("msix.zig");
 pub const ap_trampoline = @import("ap_trampoline.zig");
 pub const apic = @import("apic.zig");
 pub const ioapic = @import("ioapic.zig");
@@ -30,6 +34,7 @@ pub const acpi = @import("acpi.zig");
 pub const fpu = @import("fpu.zig");
 pub const timer = @import("timer.zig");
 pub const interrupt_registry = @import("interrupt_registry.zig");
+pub const vector_pool = @import("vector_pool.zig");
 
 // The instructions that load the tables (GDT and TR) have no register form: the
 // externs of `segment.zig` are defined by `segment.s` in the kernel. The host
@@ -65,6 +70,10 @@ test {
     _ = @import("paging.zig");
     _ = @import("spinlock.zig");
     _ = @import("smp.zig");
+    _ = @import("tlb.zig");
+    _ = @import("bda.zig");
+    _ = @import("msi.zig");
+    _ = @import("msix.zig");
     _ = @import("ap_trampoline.zig");
     _ = @import("apic.zig");
     _ = @import("ioapic.zig");
@@ -76,4 +85,5 @@ test {
     _ = @import("fpu.zig");
     _ = @import("timer.zig");
     _ = @import("interrupt_registry.zig");
+    _ = @import("vector_pool.zig");
 }

@@ -35,6 +35,13 @@
 //!     a guess, so a spurious interrupt is visible and cannot become a storm;
 //!   * the counters are written only by the dispatcher, so the diagnostics
 //!     cannot disagree with the dispatch.
+//!
+//! The same contract covers the **device vectors** — the range above the ones
+//! the kernel uses for itself, which a device names when it interrupts with a
+//! message (MSI, MSI-X). They are not lines: nothing of the platform delivers
+//! them, the device writes the vector into memory. What they share with a line
+//! is the property that matters here: one owner, and an interrupt that arrives
+//! without one has to be visible instead of silently dropped.
 
 const std = @import("std");
 
@@ -47,6 +54,20 @@ pub const first_hardware_vector: u64 = 32;
 
 /// The number of lines that the stubs deliver.
 pub const hardware_interrupt_count: u64 = 16;
+
+/// The first vector that a device may be given.
+///
+/// The number has to agree with the stubs of the device range in `interrupt.s`
+/// and with the first vector that `msi.zig` hands to a device; the copy here
+/// exists so that the table validates a vector without importing the hardware.
+pub const first_device_vector: u64 = 68;
+
+/// The number of device vectors that have a stub: 68..254.
+///
+/// 0xFF is excluded on purpose: it is the vector of the spurious interrupt of
+/// the local APIC, and a device that names it would be asking the kernel to
+/// treat a real message as a defect of the controller.
+pub const device_vector_count: u64 = 187;
 
 /// A handler of one hardware interrupt line.
 ///
@@ -64,6 +85,14 @@ pub const RegistrationError = error{
     /// The vector is not part of the hardware range that has a stub.
     VectorNotDeliverable,
     /// Another component already owns the line.
+    AlreadyRegistered,
+};
+
+/// The errors of a device vector registration.
+pub const DeviceRegistrationError = error{
+    /// The vector is below the device range or is the spurious one.
+    VectorNotDeliverable,
+    /// Another component already owns the vector.
     AlreadyRegistered,
 };
 
@@ -92,6 +121,92 @@ fn slotOf(vector: u64) ?usize {
     const index = vector - first_hardware_vector;
     if (index >= hardware_interrupt_count) return null;
     return @intCast(index);
+}
+
+/// The owners of the device vectors, indexed by the vector minus
+/// `first_device_vector`.
+var device_registrations: [device_vector_count]Registration = @splat(.{});
+
+/// Device interrupts that arrived without an owner.
+var unhandled_device_interrupts: u64 = 0;
+
+/// The slot of a device vector, or null when the vector is not deliverable.
+fn deviceSlotOf(vector: u64) ?usize {
+    if (vector < first_device_vector) return null;
+    const index = vector - first_device_vector;
+    if (index >= device_vector_count) return null;
+    return @intCast(index);
+}
+
+/// Gives a device vector an owner.
+///
+/// The rules are the ones of a line, because the failure mode is the same: a
+/// second registration would make the delivery depend on the order of the
+/// calls, and a vector that fires without an owner is a wiring defect that the
+/// kernel has to be able to see.
+pub fn registerDevice(vector: u64, name: []const u8, handler: Handler) DeviceRegistrationError!void {
+    const slot = deviceSlotOf(vector) orelse return error.VectorNotDeliverable;
+    if (device_registrations[slot].handler != null) return error.AlreadyRegistered;
+    device_registrations[slot] = .{ .handler = handler, .name = name, .count = 0 };
+}
+
+/// Removes the owner of a device vector and returns whether there was one.
+pub fn unregisterDevice(vector: u64) bool {
+    const slot = deviceSlotOf(vector) orelse return false;
+    if (device_registrations[slot].handler == null) return false;
+    device_registrations[slot].handler = null;
+    device_registrations[slot].name = "";
+    return true;
+}
+
+/// The owner of a device vector, or null when it has none.
+pub fn deviceName(vector: u64) ?[]const u8 {
+    const slot = deviceSlotOf(vector) orelse return null;
+    if (device_registrations[slot].handler == null) return null;
+    return device_registrations[slot].name;
+}
+
+/// How many interrupts a device vector delivered to its owner.
+pub fn deviceInterruptCount(vector: u64) u64 {
+    const slot = deviceSlotOf(vector) orelse return 0;
+    return device_registrations[slot].count;
+}
+
+/// How many device vectors have an owner.
+pub fn registeredDeviceVectors() u64 {
+    var total: u64 = 0;
+    for (device_registrations) |registration| {
+        if (registration.handler != null) total += 1;
+    }
+    return total;
+}
+
+/// How many device interrupts arrived without an owner.
+pub fn unhandledDeviceCount() u64 {
+    return unhandled_device_interrupts;
+}
+
+/// True when the vector is one that a device may name.
+pub fn isDeviceVector(vector: u64) bool {
+    return deviceSlotOf(vector) != null;
+}
+
+/// Delivers one device interrupt to its owner.
+///
+/// A vector without an owner is counted and **not** dispatched to a guess: the
+/// interrupt has already been acknowledged by the caller, because a device that
+/// repeats a message nobody serves is a storm that hides every other line.
+pub fn dispatchDevice(vector: u64) bool {
+    const slot = deviceSlotOf(vector) orelse return false;
+
+    const registration = &device_registrations[slot];
+    const handler = registration.handler orelse {
+        unhandled_device_interrupts += 1;
+        return false;
+    };
+
+    registration.count += 1;
+    return handler(vector);
 }
 
 /// Registers a handler for a hardware interrupt line.
@@ -157,9 +272,11 @@ pub fn dispatch(vector: u64) bool {
 }
 
 /// Clears the registry. Host tests only.
-fn resetForTest() void {
+pub fn resetForTest() void {
     registrations = @splat(.{});
     unhandled_interrupts = 0;
+    device_registrations = @splat(.{});
+    unhandled_device_interrupts = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,4 +410,113 @@ test "every line of the hardware range has its own slot" {
     while (index < hardware_interrupt_count) : (index += 1) {
         try testing.expectEqualStrings("line", registeredName(first_hardware_vector + index).?);
     }
+}
+
+test "a device vector dispatches to its owner and counts the interrupts" {
+    resetForTest();
+    defer resetForTest();
+
+    const vector = first_device_vector;
+    try registerDevice(vector, "virtio-blk", testHandler);
+    try testing.expectEqualStrings("virtio-blk", deviceName(vector).?);
+    try testing.expectEqual(@as(u64, 1), registeredDeviceVectors());
+
+    test_handler_calls = 0;
+    test_handler_answer = false;
+    try testing.expect(!dispatchDevice(vector));
+    try testing.expectEqual(@as(u64, 1), deviceInterruptCount(vector));
+    try testing.expectEqual(@as(u64, 1), test_handler_calls);
+
+    // The handler decides whether the interrupted task has to be preempted, and
+    // the dispatcher returns that answer instead of swallowing it.
+    test_handler_answer = true;
+    try testing.expect(dispatchDevice(vector));
+    try testing.expectEqual(@as(u64, 2), deviceInterruptCount(vector));
+
+    // Removing the owner keeps the counter: the device delivered that many
+    // interrupts while it was there.
+    try testing.expect(unregisterDevice(vector));
+    try testing.expect(deviceName(vector) == null);
+    try testing.expectEqual(@as(u64, 0), registeredDeviceVectors());
+    try testing.expectEqual(@as(u64, 2), deviceInterruptCount(vector));
+}
+
+test "a vector without an owner is counted and never dispatched to a guess" {
+    resetForTest();
+    defer resetForTest();
+
+    test_handler_calls = 0;
+    const vector = first_device_vector + 7;
+    try testing.expect(!dispatchDevice(vector));
+    try testing.expectEqual(@as(u64, 1), unhandledDeviceCount());
+    try testing.expectEqual(@as(u64, 0), test_handler_calls);
+    try testing.expectEqual(@as(u64, 0), deviceInterruptCount(vector));
+
+    // An owner that comes later does not inherit the count of the interrupts
+    // that arrived before it existed.
+    try registerDevice(vector, "late", testHandler);
+    try testing.expectEqual(@as(u64, 0), deviceInterruptCount(vector));
+    _ = dispatchDevice(vector);
+    try testing.expectEqual(@as(u64, 1), deviceInterruptCount(vector));
+    try testing.expectEqual(@as(u64, 1), unhandledDeviceCount());
+}
+
+test "a device may not take a vector of the kernel or the spurious one" {
+    resetForTest();
+    defer resetForTest();
+
+    // Every vector below the device range belongs to the kernel: exceptions,
+    // hardware lines, the timer, the reschedule, the shootdown and the halt.
+    for ([_]u64{ 0, 8, 31, 32, 47, 48, 64, 65, 66, 67 }) |vector| {
+        try testing.expectError(error.VectorNotDeliverable, registerDevice(vector, "x", testHandler));
+        try testing.expect(!isDeviceVector(vector));
+        try testing.expect(!dispatchDevice(vector));
+    }
+
+    // 0xFF is the spurious vector of the local APIC: a device that names it is
+    // asking the kernel to treat a real message as a controller defect.
+    try testing.expect(!isDeviceVector(255));
+    try testing.expectError(error.VectorNotDeliverable, registerDevice(255, "x", testHandler));
+
+    // The first and the last of the range are deliverable.
+    try registerDevice(first_device_vector, "first", testHandler);
+    try registerDevice(first_device_vector + device_vector_count - 1, "last", testHandler);
+    try testing.expectEqual(@as(u64, 2), registeredDeviceVectors());
+}
+
+test "a second owner of a device vector is refused" {
+    resetForTest();
+    defer resetForTest();
+
+    const vector = first_device_vector + 3;
+    try registerDevice(vector, "first", testHandler);
+    try testing.expectError(error.AlreadyRegistered, registerDevice(vector, "second", testHandler));
+    try testing.expectEqualStrings("first", deviceName(vector).?);
+
+    // After the owner leaves, the vector can be given to somebody else.
+    try testing.expect(unregisterDevice(vector));
+    try registerDevice(vector, "second", testHandler);
+    try testing.expectEqualStrings("second", deviceName(vector).?);
+    // Removing a vector that never had an owner is not an error either.
+    try testing.expect(!unregisterDevice(vector + 1));
+}
+
+test "the device range and the hardware range are disjoint" {
+    resetForTest();
+    defer resetForTest();
+
+    // A vector in the hardware range must be dispatched as a line and never as
+    // a device message, whatever the order in which the dispatcher asks.
+    const line = first_hardware_vector + 1;
+    try testing.expect(isDeviceVector(line) == false);
+    try register(line, "keyboard", testHandler);
+    try registerDevice(first_device_vector, "device", testHandler);
+
+    _ = dispatch(line);
+    try testing.expectEqual(@as(u64, 1), interruptCount(line));
+    try testing.expectEqual(@as(u64, 0), deviceInterruptCount(first_device_vector));
+
+    _ = dispatchDevice(first_device_vector);
+    try testing.expectEqual(@as(u64, 1), deviceInterruptCount(first_device_vector));
+    try testing.expectEqual(@as(u64, 1), interruptCount(line));
 }

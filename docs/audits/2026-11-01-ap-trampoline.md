@@ -164,7 +164,7 @@ Each refusal is a separate line, because the alternative is a boot that says
 | An AP that answers the IPI | There is no `qemu-system-x86_64` and no OVMF in this environment. The copy, the fields and the order are code and host tests; "the AP started" is a claim about a machine, and this tree still has none |
 | The AP on the scheduler | The AP installs its segment, marks itself online and waits (`sti; hlt`). It does not take a task, and the run queues are still one set |
 | IPIs beyond INIT/SIPI | Reschedule and TLB shootdown need per-CPU queues that do not exist yet |
-| The EBDA | The page is chosen by the vector (0x08) and checked against the firmware map; it is not checked against the EBDA pointer at `0x40E`, which no boot here has ever read |
+| The EBDA | ~~The page is chosen by the vector (0x08) and checked against the firmware map; it is not checked against the EBDA pointer at `0x40E`, which no boot here has ever read~~ — **corrected on 2026-11-01**: the pointer is read and `smp.prepareTrampoline` refuses with `error.OverlapsEbda` when the block would reach it; see [`2026-11-01-bda-and-ebda.md`](2026-11-01-bda-and-ebda.md). It has still never been read on hardware |
 
 ## 8. Documentation updated with the code
 

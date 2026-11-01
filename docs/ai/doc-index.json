@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 67,
+    "documents": 75,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 8,
+      "record": 16,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 5733
+      "words": 8194
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2647
+      "words": 3238
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 7929
+      "words": 9011
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 4848
+      "words": 5516
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1329
+      "words": 1489
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -255,7 +255,7 @@
       "kind": "architecture",
       "authority": "planning",
       "summary": "Physical and virtual memory: the frame manager, the page tables, what unmap returns, and the invariants.",
-      "words": 1637,
+      "words": 1678,
       "declared_status": "planning document"
     },
     {
@@ -319,7 +319,17 @@
       "kind": "implementation-record",
       "authority": "record",
       "summary": "The block of the AP trampoline as data: the copy below 1 MiB, the fields the BSP writes, the order of the ready word, the EFER bits of the AP and one numbering for the CPUs.",
-      "words": 1659,
+      "words": 1688,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-bda-and-ebda.md",
+      "title": "O trampolim e o dado do firmware: a área estendida de dados do BIOS — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The firmware data below 1 MiB: the EBDA pointer at 0x40E is a segment, the block of the trampoline has to end at or below it, and a failed read says that it was not checked instead of reporting null.",
+      "words": 994,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -330,6 +340,26 @@
       "authority": "record",
       "summary": "Which CPU owns a task: the affinity field the choice respects, one idle task per CPU, and the kernel task that an AP adopts when it enters the scheduler.",
       "words": 1492,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-device-vectors.md",
+      "title": "Os vetores de dispositivo têm dono — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The device vector space: 68..254 with the spurious 255 excluded, one entry point per vector because the stub is what names the vector to the handler, the registry that gives each vector an owner, the dispatch that counts an unowned vector instead of guessing, and the PIE relocations the .data stub table needs.",
+      "words": 1762,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-halt-ipi-and-fatal.md",
+      "title": "A IPI de parada e a máquina que falha inteira — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The halt IPI (vector 67) and the fatal path: the machine stops as one, the report promises what it can (IPIs delivered, not CPUs stopped), and every fatal halt goes through one module that allocates nothing.",
+      "words": 863,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -350,6 +380,36 @@
       "authority": "record",
       "summary": "The defects of the 2026-10-31 audit that were closed without a hypervisor, with the evidence of each.",
       "words": 1453,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-msi-programming.md",
+      "title": "MSI: a interrupção que o dispositivo entrega por escrita — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "MSI: the message a device writes to interrupt, the layout of its registers (32/64-bit, masking), the order of the writes, the refusal that leaves the capability untouched, and the build flag that decides whether it is programmed.",
+      "words": 1301,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-msix-table.md",
+      "title": "MSI-X: a tabela na memória do dispositivo — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "MSI-X: the table in device memory, the size field that stores N-1, the BIR/offset of the table and the PBA, the 16-byte entry, and the enable order that fills the table before any interrupt can leave.",
+      "words": 1197,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-per-cpu-clock.md",
+      "title": "The clock of each processor: um relógio por CPU, e um contador que sabe de quem é — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The clock of each processor: the per-CPU role of a clock (system or local), the ledger that counts ticks per CPU, the arming of an AP's local timer from the BSP's measurement, and the counter of ignored ticks.",
+      "words": 1090,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -390,6 +450,26 @@
       "authority": "record",
       "summary": "Policy split, wait queue and mutex: what was implemented, the tests that prove it and what is still open.",
       "words": 1492,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-tlb-shootdown.md",
+      "title": "The TLB shootdown: uma IPI, uma caixa de correio e uma garantia — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The TLB shootdown: vector 66, the mailbox that carries the page, the generation that makes a late answer harmless, the page-table hook and the timeout that is reported instead of hidden.",
+      "words": 1382,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-vector-pool.md",
+      "title": "O vetor vem do kernel, não do driver — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The device vector allocator: a block of N aligned to N for MSI, one vector per entry for MSI-X, why 187 is not a power of two and the largest block is 64, and the deliberate gap between reserving and installing a vector.",
+      "words": 1529,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -538,7 +618,7 @@
       "kind": "roadmap",
       "authority": "planning",
       "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
-      "words": 9567,
+      "words": 9976,
       "declared_status": "planning document"
     },
     {

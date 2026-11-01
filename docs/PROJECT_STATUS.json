@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 828/828 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 159, including the per-CPU segment, the AP trampoline and the reschedule refusals; no QEMU target executed)",
+      "result": "success: 52/52 steps, 881/881 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 212, including the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
       "date": "2026-11-01"
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "command": "zig build docs-check",
-      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json",
+      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (75 documents)",
       "date": "2026-11-01"
     },
     {
@@ -248,7 +248,7 @@
     "context_pack": "docs/ai/context-pack.md",
     "generator": "tools/scripts/gen-doc-index.py",
     "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
-    "documents": 67,
+    "documents": 75,
     "authorities": [
       "binding",
       "current",
@@ -300,7 +300,7 @@
     },
     {
       "id": "kernel_cpu_interrupts",
-      "maturity_percent": 66,
+      "maturity_percent": 81,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/",
@@ -316,8 +316,14 @@
         "the kernel registers the 8254 line and the PS/2 line before interrupts are enabled; the dispatcher no longer hard-codes the vector meanings",
         "single tick source: timer.TickSource + selectTickSource, both interrupt paths ask the policy before they count or preempt",
         "the local APIC timer is calibrated and left disarmed while the 8254 owns the tick",
+        "the ownership of the tick is per processor: timer.CpuClock (system or local), armCpuClock refusing a contradictory role, drivesSchedulerOn answering per CPU, and an ignored-tick counter that turns a wrong clock from an opinion into a number",
         "per-CPU segment: 8 task state segments with their own rsp0 and ist1, 8 tables (one descriptor set per base address), 8 double-fault stacks of 16 KiB, and segment.installForCpu(cpu, stack_top) which builds the table, loads the GDT and reloads the data and code segments",
-        "the entry of an AP (kynox_ap_entry) installs the segment of its CPU before it enters its loop, and the scheduler writes rsp0 through segment.tssFor(smp.cpuId())"
+        "the entry of an AP (kynox_ap_entry) installs the segment of its CPU before it enters its loop, and the scheduler writes rsp0 through segment.tssFor(smp.cpuId())",
+        "four vectors the kernel invents have a gate, a stub and a handler: the local timer (64), the reschedule IPI (65), the TLB shootdown (66) and the halt IPI (67); the hardware range (32..47) is the other group",
+        "the device vector space (68..254, 187 vectors, the spurious 255 excluded) has one entry point per vector in assembly and a table the kernel indexes (kynox_device_stub_table), because the stub is what tells the handler which vector arrived; a shared stub would report the same number for all of them",
+        "interrupt.verify() at boot also rebuilds the gate address of the first and the last device vector and compares them with the stub table, and the kernel stops when they disagree",
+        "a device vector allocator (kernel/arch/x86_64/vector_pool.zig): a driver asks for a block of N and receives a base, N must be a power of two and the base a multiple of N (the two rules of the MSI Message Control field), the block must end before the spurious 255, the largest block is 64 because the range of 187 cannot align 128, MSI-X takes one vector per entry instead of a block, install is all or nothing, and release checks the grant before freeing anything",
+        "the boot reports how many device vectors are free for drivers, and the MSI-X report says whether the pool has one vector per table entry to give"
       ],
       "limitations": [
         "exception recovery audit incomplete",
@@ -325,20 +331,24 @@
         "no hardware diversity validation",
         "boot path unverified here",
         "no AP has reached kynox_ap_entry, so installForCpu has only run for the BSP",
-        "the dispatch path and the tick policy have never run in a VM"
+        "the dispatch path and the tick policy have never run in a VM",
+        "the halt IPI and the fatal path have never stopped a machine: the report is host-tested, the stop is not",
+        "no device vector has ever fired: no MSI and no MSI-X have been delivered, so the device dispatch branch has never run on a machine",
+        "no driver has asked the allocator for a vector, so the reserve/install/release sequence has only run in host tests"
       ],
       "pending_work": [
         "exercise the exception paths in QEMU and record results",
-        "publish the trampoline below 1 MiB so that an AP reaches kynox_ap_entry"
+        "see an AP reach kynox_ap_entry (the trampoline is published, but no AP has answered)",
+        "a driver that asks for a vector, installs its handler and records an MSI or an MSI-X arriving"
       ],
       "tests": [
-        "arch-tests (146 tests: segment, frame, paging, spinlock, apic, acpi, smp, pci, virtio, timer, fpu)",
+        "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (146 tests: segment, frame, paging, spinlock, apic, acpi, smp, pci, virtio, timer, fpu)"
+          "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
         ],
         "commands": [
           "zig build test"
@@ -389,7 +399,7 @@
     },
     {
       "id": "virtual_memory",
-      "maturity_percent": 50,
+      "maturity_percent": 56,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/paging.zig"
@@ -402,19 +412,19 @@
         "software ownership bit (PTE bit 9) records whether the space owns the frame; mapUserPageIn/takeOwnership/unmapUserPageIn honour it",
         "releaseUserPages detaches the window entries and returns only the owned frames, through an injected release callback (the architecture layer no longer imports the memory manager)",
         "destroyAddressSpaceReal returns the frames, clears the root/PDPT/PD/PT, forgets the active space and frees the slot",
-        "address-space slot reuse with a per-slot generation; spaceByIdentity(id, generation) refuses a stale identity; liveSpaceCount/spaces_created expose the state"
+        "address-space slot reuse with a per-slot generation; spaceByIdentity(id, generation) refuses a stale identity; liveSpaceCount/spaces_created expose the state",
+        "an unmap asks every other processor to drop the translation: paging.installRemoteFlush installs a hook (the boot installs smp.flushRemotePage), so the page tables keep no dependency on the APIC and the host tests run with no hook at all"
       ],
       "limitations": [
         "no general VM region allocator",
         "no demand paging, COW or ASLR",
-        "no TLB shootdown",
         "high-half kernel not implemented",
-        "no page-table allocation from the PMM (the pools are static), no region objects, no demand paging/COW, no TLB shootdown",
+        "no page-table allocation from the PMM (the pools are static), no region objects, no demand paging/COW",
         "the release callback is installed at boot; none of this has run in a VM"
       ],
       "pending_work": [
         "region abstraction for user and kernel mappings",
-        "TLB invalidation protocol before multi-CPU scheduling"
+        "a shootdown observed on a machine with more than one processor (the protocol is host-tested, the delivery is not)"
       ],
       "tests": [
         "arch-tests: paging release/ownership/destroy/slot-reuse suite (host)"
@@ -434,7 +444,7 @@
     },
     {
       "id": "acpi_pci_apic",
-      "maturity_percent": 50,
+      "maturity_percent": 66,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/acpi.zig",
@@ -452,18 +462,28 @@
         "ISA routes derived from the overrides (effective GSI, polarity, trigger) for the two lines the kernel consumes",
         "IOAPIC entries programmed at boot for IRQ0 (PIT) and IRQ1 (keyboard), masked, with the 8259 kept as the delivery path",
         "PCI config-space access with BAR helpers and capability walking",
-        "LAPIC xAPIC register access, EOI, TPR and IPI primitives"
+        "MSI capability programmed (kernel/arch/x86_64/msi.zig): the message is address 0xFEE0_0000 | (apic_id << 12) and the vector, the register layout follows the 64-bit and per-vector-masking bits, the allocation must be a power of two that the device offers, the enable bit is written last, and every refusal happens before the first write",
+        "MSI-X capability decoded (kernel/arch/x86_64/msix.zig): the table size is the field plus one, the table and the PBA are located by BIR and offset, a 16-byte entry carries one vector, entries start masked and are unmasked one at a time, and the enable order fills the table while the function is masked before enabling it",
+        "the kernel keeps its vectors to itself: a device may only be given a vector from 68 up, and the boot reports the candidate message (and programs it only with -Dmsi-delivery=true, because enabling MSI disables INTx of the function)",
+        "LAPIC xAPIC register access, EOI, TPR and IPI primitives",
+        "a device vector is deliverable before it is programmable: the boot installs an IDT gate for every vector of 68..254 from the stub table, and the registry gives each of those vectors an owner or counts it as unhandled instead of dispatching it to a guess"
       ],
       "limitations": [
         "delivery of hardware interrupts still comes from the 8259 unless the build option ioapic-delivery=true is set, and that option has never been booted",
         "entries are programmed masked: no interrupt has been observed to arrive through the I/O APIC",
         "only ISA lines are routed; the PCI GSI range, level-triggered acknowledgement and interrupt remapping are not implemented",
         "overrides beyond the ISA bus (PCI IRQ routing) are parsed but not applied",
+        "no MSI has ever been delivered: the message and the programming are code and host tests, and no driver consumes a device vector, so no device vector has ever fired",
+        "the MSI-X table is located and never written: writing needs the window of the BAR mapped, and the boot does not map the BAR of a device it does not drive",
+        "the PBA is located and not read, and the size of the table BAR is not probed (the probe writes the BAR register of a device that may be active)",
+        "per-vector masking is laid out and never written",
         "no QEMU or hardware validation of the discovery or programming path (audit A-02)"
       ],
       "pending_work": [
         "runtime evidence that a line delivered through the I/O APIC reaches the handler and is acknowledged",
         "PCI GSI routing and level-triggered acknowledgement",
+        "a driver that consumes a device vector, and a boot that records an MSI or an MSI-X arriving",
+        "a mapped MSI-X table window and a PBA read",
         "runtime validation under QEMU/OVMF (audit A-02)"
       ],
       "tests": [
@@ -474,20 +494,20 @@
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (128 tests, acpi + ioapic + apic + pci + smp included)"
+          "arch-tests (204 tests, acpi + ioapic + apic + pci + msi + msix + smp included)"
         ],
         "commands": [
           "zig build test --summary all",
           "zig build"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
         "notes": "ACPI discovery and I/O APIC programming are consumed by kernel/main.zig and compiled into the image; no boot has been observed"
       }
     },
     {
       "id": "smp",
-      "maturity_percent": 60,
+      "maturity_percent": 78,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
@@ -506,22 +526,30 @@
         "the reschedule IPI: vector 65 with its gate, its stub and its handler, apic.sendReschedule and smp.reschedule, which refuses the CPU that asks (a self-IPI can be refused by the hardware), an id the table does not have, a CPU that has not registered and a controller that is not mapped",
         "the boot migrates the second worker to the first online AP (distributeWorkToAps), which is what gives an AP something to run: the tasks of the boot are created by the BSP",
         "the online count of the CPU table is incremented once per processor: the AP counts itself in registerCpu, and startAps no longer counts it again",
+        "the TLB shootdown: vector 66, apic.sendShootdown, and a mailbox (kernel/arch/x86_64/tlb.zig) that carries the page because an IPI carries only a vector — a generation per request so a repeated announcement is a duplicate and a late answer is stale, and a compare-and-swap so the count of pending answers never passes below zero",
+        "smp.shootdown refuses with a reason (no_targets, no_apic, complete, timeout) and the handler runs on the processor that holds the stale entry, invalidates it (invlpg, or a reload of CR3 for the all scope) and acknowledges",
+        "a clock per processor: timer.armCpuClock gives each CPU a role (system on the BSP, local on an AP), timer.drivesSchedulerOn answers per processor, timer.onCpuTick counts per CPU and moves the clock of the machine only for the system role, and timer.ticksOf/ignoredTicks expose the numbers",
+        "an AP enables its own local APIC (enable, TPR 0) and arms its own timer with the bus frequency the BSP measured (timer.armLocalApicTimer), refusing instead of guessing when there is no measurement",
+        "the block of the APs is placed against the firmware data, not only against the memory map: kernel/arch/x86_64/bda.zig reads the EBDA segment at 0x40E, fitsBelowEbda requires the block to end at or below its base, and smp.prepareTrampoline refuses with error.OverlapsEbda",
+        "the halt IPI (vector 67): apic.sendHalt and smp.stopOtherCpus, which counts the processors that are online and the IPIs it actually delivered, and smp.describeStop, which prints those two numbers and the reason when they differ (no controller)",
         "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
       "limitations": [
         "no AP has ever answered a startup IPI in this environment: the copy, the fields and the order are code and host tests, not an observed second processor",
-        "no IPI has ever been delivered here: the vector, the gate, the handler and the migration are code and host tests",
-        "an AP has no clock of its own: it is only preempted when another CPU sends it a reschedule",
-        "no TLB shootdown and no migration of a running task",
+        "no IPI has ever been delivered here: the reschedule, the shootdown and the halt are vectors, gates and handlers, and host tests of what decides what to send",
+        "an AP arms its own clock, but no AP has ever run one: the arming and the per-CPU ledger are code and host tests",
+        "no nested shootdown: the sender holds the mailbox lock while it waits, so a shootdown requested from inside another one (or from a handler) would deadlock",
+        "a shootdown that times out is counted and not retried; nothing chases the processor that did not answer",
+        "no migration of a running task",
         "no per-CPU timers/IPIs for scheduling",
-        "the page of the trampoline is checked against the firmware memory map, not against the EBDA pointer at 0x40E",
+        "the EBDA pointer has never been read on hardware, and a firmware that publishes none falls back to the page 0x8000 as a documented assumption",
         "no SMP stress test"
       ],
       "pending_work": [
-        "TLB shootdown on the same mechanism (address and generation, with an acknowledgement)",
-        "a per-CPU tick source chosen by timer.TickSource, so an AP is not woken only from outside",
+        "a latency measurement of the shootdown, and a retry after a timeout",
+        "a tick delivered on an AP (the clock is armed, the delivery has never been observed)",
         "migration of a running task",
-        "IPI for reschedule and TLB shootdown",
+        "an IPI actually delivered (the reschedule, the shootdown and the halt exist; nothing here has ever received one)",
         "record a boot on a machine with more than one processor"
       ],
       "tests": [
@@ -1497,16 +1525,16 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 828 tests, in zig build test",
+        "24 host test artifacts, 868 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "828 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration)",
-        "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 63 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
+        "868 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area, +10 for the MSI capability, +8 for the MSI-X table)",
+        "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 72 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 67 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 73 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
@@ -1522,7 +1550,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 52/52 steps, 828/828 tests"
+        "zig build test: 52/52 steps, 868/868 tests"
       ],
       "validation": {
         "status": "host_tests_passed",

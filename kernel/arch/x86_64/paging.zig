@@ -42,6 +42,27 @@ const handoff = kynox.handoff;
 /// Size of a small page.
 pub const page_size: u64 = 4096;
 
+/// Who invalidates a translation on the other processors.
+///
+/// Clearing an entry of a table changes what **this** processor translates; the
+/// others keep the old answer in their TLB until somebody tells them, and a
+/// stale entry is memory that stays reachable after the table says it is gone.
+/// The hook is how this module asks for that without importing the APIC: the
+/// boot installs `smp.flushRemotePage`, and the host tests of the tables run
+/// with no hook at all, which is exactly a machine with one processor.
+pub var remote_flush: ?*const fn (u64) void = null;
+
+/// Installs (or removes, with null) the shootdown of the other processors.
+pub fn installRemoteFlush(hook: ?*const fn (u64) void) void {
+    remote_flush = hook;
+}
+
+/// Tells the other processors that the page is gone, when there is a way to.
+fn flushRemote(virtual: u64) void {
+    const hook = remote_flush orelse return;
+    hook(virtual);
+}
+
 /// Size of a large page.
 pub const large_page_size: u64 = 2 * 1024 * 1024;
 
@@ -353,9 +374,10 @@ pub fn reserveKernelRange(virtual: u64, length: u64) Error!void {
 
 /// Removes one small page mapping of the kernel.
 ///
-/// The TLB entry of the current processor is invalidated. Other processors
-/// are not interrupted: a caller that recycles a virtual address after this
-/// function must provide a TLB shootdown before the address is used again.
+/// The TLB entry of the current processor is invalidated, and the other
+/// processors are told through the hook that the boot installs
+/// (`installRemoteFlush`). Without a hook — a machine with one processor, or a
+/// host test — the invalidation is local and that is the whole story.
 pub fn unmapKernelPage(virtual: u64) Error!void {
     if (virtual & (page_size - 1) != 0) return error.UnalignedPage;
 
@@ -379,6 +401,7 @@ pub fn unmapKernelPage(virtual: u64) Error!void {
     if (level1.entries[level1_index] & Flags.present == 0) return error.NotMapped;
     level1.entries[level1_index] = 0;
     cpu.invlpg(virtual);
+    flushRemote(virtual);
 }
 
 /// Translates a virtual address in the address space of the kernel.
@@ -828,12 +851,14 @@ pub fn unmapUserPageIn(space: *AddressSpace, virtual: u64) Error!void {
         // to it.
         space.level1.entries[level1_index] = 0;
         cpu.invlpg(virtual);
+        flushRemote(virtual);
         hook(entry1 & address_mask);
         return;
     }
 
     space.level1.entries[level1_index] = 0;
     cpu.invlpg(virtual);
+    flushRemote(virtual);
 }
 
 /// Reads the permissions of a mapped page of the user mode.

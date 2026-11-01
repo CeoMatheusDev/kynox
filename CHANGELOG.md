@@ -21,6 +21,246 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — o vetor vem do kernel, não do driver
+
+- **O buraco**: a faixa 68..254 tinha dono, mas o dono precisava **escolher** o
+  número. Dois drivers que pedissem 70 descobriam o conflito no registro, na
+  máquina, na ordem em que os drivers rodam.
+- **`kernel/arch/x86_64/vector_pool.zig`**: um driver pede um bloco de N e recebe
+  uma base. Três regras vêm do hardware — N é potência de dois (o campo de três
+  bits da MSI guarda log2(N)), a base é múltipla de N (as N mensagens têm de
+  ocupar um bloco alinhado) e o bloco termina antes do espúrio 255.
+- **187 não é potência de dois**: um bloco de 128 teria de começar em 0 ou em
+  128, e 128 + 128 passa do 255 — o maior bloco que a faixa aceita é **64**, e
+  cabe uma vez (128..191). O número é calculado em comptime a partir das
+  constantes do registro, não escrito à mão.
+- **MSI pede um bloco; MSI-X pede N vetores**: a entrada da tabela carrega o
+  próprio vetor, então quatro entradas são quatro reservas de um — a mesma
+  função com outro número, e não um segundo alocador.
+- **Reservar não é instalar**: na janela entre os dois, uma mensagem que chegue é
+  contada como não tratada e não vai para o driver que ainda se configura.
+  `install` é tudo ou nada (`VectorBusy` devolve o bloco inteiro) e `release`
+  confere o grant antes de liberar — base ou contagem erradas não liberam nada.
+- **O relatório do boot** ganhou os vetores livres e, na linha da MSI-X, se o
+  pool tem um vetor por entrada da tabela.
+- **Oito testes de host** (881 no total, `arch-tests` 212).
+- Documentação: `docs/audits/2026-11-01-vector-pool.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`kernel_cpu_interrupts` 78% → 81%),
+  `README.md`, `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
+### Added (2026-11-01) — os vetores de dispositivo têm dono
+
+- **O buraco**: as duas rodadas anteriores deixaram o kernel capaz de *escrever*
+  a mensagem, e nada do outro lado. O vetor 70 estava na faixa "unexpected
+  vector": programar uma MSI teria trocado uma interrupção por um relatório de
+  defeito do kernel.
+- **187 pontos de entrada, não um**: `kernel/arch/x86_64/interrupt.s` ganhou
+  `INTERRUPT_ENTRY 68..254` e a tabela `kynox_device_stub_table` em `.data`. O
+  stub é quem diz ao handler **qual** vetor chegou; um stub compartilhado
+  entregaria o mesmo número para todos.
+- **A faixa**: 68..254, com o **255 excluído** — é o espúrio do APIC local, e um
+  dispositivo que o nomeie está pedindo que o kernel trate uma mensagem real
+  como defeito do controlador.
+- **`interrupt_registry.zig`**: um dono por vetor, `AlreadyRegistered` e
+  `VectorNotDeliverable` como as duas recusas, contador por vetor,
+  `unhandledDeviceCount` para o vetor que chega sem dono (contado, nunca
+  despachado para um palpite) e `resetForTest` limpando as duas tabelas.
+- **`interrupt.zig`**: os portões saem da tabela do assembly, o laço do
+  "unexpected" pula a faixa, o despacho reconhece o vetor de dispositivo antes do
+  halt IPI e reconhece a interrupção **depois** do handler. `verify()` no boot
+  também compara as duas pontas da faixa com a tabela.
+- **PIE medido, não suposto**: `readelf -rW` mostra **187 relocações
+  `R_X86_64_RELATIVE` dentro da tabela** (1724 na imagem), e o carregador aceita
+  só relativa com alvo em segmento gravável — três condições que fariam o portão
+  apontar para o endereço errado se falhassem.
+- **O boot reporta** `device vectors: 0 of 187 registered`, com a capacidade ao
+  lado de um zero que nenhum driver preencheu ainda.
+- **Cinco testes de host** (873 no total, `arch-tests` 204).
+- Documentação: `docs/audits/2026-11-01-device-vectors.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`kernel_cpu_interrupts` 75% → 78%,
+  `acpi_pci_apic` 63% → 66%), `README.md`, `docs/ai/context-pack.md` e o item 8
+  do K2 no roadmap.
+
+### Added (2026-11-01) — MSI-X: a tabela na memória do dispositivo
+
+- **A diferença**: a MSI tem uma mensagem nos registradores da capability; a
+  MSI-X põe as mensagens em uma **tabela na memória do dispositivo**, apontada por
+  um BAR, e ganha um vetor por entrada, mascaramento por entrada e um bit que
+  mascara a função inteira.
+- **`kernel/arch/x86_64/msix.zig`**: o tamanho da tabela é o campo **mais um**
+  (o campo guarda N-1 — lê-lo como "quantas" daria uma fila sem vetor), a tabela
+  e a PBA são localizadas por BIR e offset, a entrada de 16 bytes leva endereço,
+  superior, dado e a máscara, e `validateTable` recusa um BAR ausente, um BAR de
+  I/O e uma tabela que não cabe.
+- **Entradas nascem mascaradas**: preencher a tabela e liberar um vetor são duas
+  decisões, e `unmask` só é correto quando o handler daquele vetor existe. A
+  ordem de habilitação (`controlFor`) deixa a **função mascarada** enquanto a
+  tabela é preenchida, sobe o bit de habilitação, desmascara a função por último
+  e desliga a INTx (`Command` bit 10) para o evento não chegar duas vezes.
+- **O relatório do boot** diz onde a tabela está, se o BAR existe, se é de
+  memória, e o que faltaria para escrever nela. O tamanho do BAR **não** é
+  sondado: a sonda escreve no registrador de um dispositivo que pode estar ativo.
+- **Oito testes de host** (868 no total, `arch-tests` 199): o campo de tamanho, a
+  leitura dos dois dwords, a capability errada, as três recusas do BAR, a entrada
+  de 16 bytes com a vizinha intacta, os vetores reservados, a escrita fora da
+  janela e a sequência de habilitação.
+- Documentação: `docs/audits/2026-11-01-msix-table.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`acpi_pci_apic` 57% → 63%), `README.md`,
+  `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
+### Added (2026-11-01) — MSI: a interrupção que o dispositivo entrega por escrita
+
+- **O buraco**: a capability de MSI (0x05) era percorrida, classificada e
+  ignorada — o kernel lia "este dispositivo suporta MSI" e a interrupção continuava
+  chegando pela linha do 8259.
+- **`kernel/arch/x86_64/msi.zig`**: a mensagem
+  (`0xFEE0_0000 | (apic_id << 12)` e o vetor no dado), o layout dos registradores
+  para capabilities de 32 e de 64 bits com e sem máscara por vetor, a alocação de
+  vetores (potência de dois que o dispositivo oferece, recusando em vez de
+  arredondar) e a programação com o bit de habilitação **por último**, como a
+  especificação manda.
+- **Os vetores do kernel são do kernel**: um dispositivo só pode receber vetor a
+  partir de 68; os de 0 a 47 e de 64 a 67 são recusados, porque entregar o vetor 8
+  a uma placa faria o kernel tratar um pacote como falha dupla.
+- **Uma recusa não deixa nada pela metade**: layout, mensagem e alocação são
+  validados antes da primeira escrita, e o teste compara os 256 bytes da imagem
+  antes e depois de três recusas.
+- **Um estouro de `u8` corrigido antes de sair**: uma capability no fim do espaço
+  somava 12 a 0xF8 e voltava ao começo em silêncio; a aritmética passou a ser
+  feita no tamanho do espaço, com a verificação de que o último registrador cabe.
+- **O relatório do boot** (`reportPciInterrupts`) diz, por função, o que ela
+  oferece e o que **seria** escrito; com `-Dmsi-delivery=true` a capability é
+  programada de verdade, porque habilitar a MSI **desliga a INTx** da função e um
+  driver que ainda depende da linha perderia a interrupção.
+- **Dez testes de host** (860 no total, `arch-tests` 191): a mensagem, os vetores
+  reservados, a codificação do `Message Control`, a alocação, os quatro layouts,
+  a capability no fim do espaço, a programação de 32 e de 64 bits, a recusa que
+  não escreve e a descoberta pela lista.
+- Documentação: `docs/audits/2026-11-01-msi-programming.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`acpi_pci_apic` 50% → 57%), `README.md`,
+  `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
+### Added (2026-11-01) — o trampolim respeita o dado do firmware
+
+- **O buraco**: a região abaixo de 1 MiB era considerada livre porque o mapa do
+  handoff diz que é RAM utilizável — e o mapa está certo sobre a RAM, mas foi
+  construído **antes** de o firmware alocar a área estendida de dados do BIOS
+  (EBDA). Escrever o trampolim por cima dela corrompe dados que ninguém mais no
+  sistema conhece, e a falha aparece depois e em outro lugar.
+- **`kernel/arch/x86_64/bda.zig`**: a palavra em 0x40E é um **segmento**
+  (`ebdaFromWord` devolve `word << 4`, e zero é "o firmware não publicou uma"),
+  `ebdaBase`/`conventionalKiB` leem a BDA com `error.Short` para uma fatia curta,
+  e `fitsBelowEbda` aplica a regra conservadora: o **fim** do bloco tem de ficar
+  na base da EBDA ou abaixo — a EBDA não declara tamanho, e a função diz isso em
+  vez de fingir que sabe onde ela acaba.
+- **A recusa**: `smp.prepareTrampoline` ganhou `ebda_base` e
+  `error.OverlapsEbda`; `main.zig` mapeia a página zero por identidade, lê a
+  palavra e imprime o que encontrou — ou imprime que **não foi possível olhar**,
+  que é diferente de "não há EBDA".
+- **Cinco testes de host** (850 no total, `arch-tests` 181): o ponteiro zero, o
+  segmento contra o endereço, a leitura nos offsets certos com `error.Short`, os
+  quatro casos de colocação (abaixo, exatamente na base, um byte dentro, começo
+  abaixo e fim dentro) e o estouro do fim do bloco.
+- Documentação: `docs/audits/2026-11-01-bda-and-ebda.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 76% → 78%), `README.md`,
+  `docs/ai/context-pack.md` e a correção datada no §7 da auditoria do trampolim.
+
+### Added (2026-11-01) — a máquina falha inteira: a IPI de parada e um caminho de falha só
+
+- **O buraco**: todas as falhas fatais terminavam em `port.haltForever()`, que
+  para **aquele** processador. Numa máquina com mais de um, as outras CPUs
+  continuam escrevendo no mesmo serial — o relatório da falha sai intercalado
+  com o trabalho normal, e um defeito que aconteceu uma vez vira um defeito
+  impossível de reproduzir.
+- **O vetor 67**: `apic.halt_vector`, `apic.sendHalt`, stub em `interrupt.s`,
+  porta no IDT e um handler que encerra a interrupção, conta a parada e para a
+  CPU.
+- **`smp.stopOtherCpus()`** devolve um `StopReport` com os dois fatos que são
+  diferentes — quantos processadores online existem (`targets`) e quantas IPIs
+  foram realmente entregues ao controlador (`delivered`) — mais o caso
+  `no_apic`, em que havia alvo e ninguém pôde ser avisado. A CPU que recebe não
+  responde (ela para), então o relatório promete só o que pode.
+- **`smp.describeStop`** formata a linha em um buffer do chamador, porque roda no
+  caminho da falha, onde o alocador pode ser justamente o que quebrou.
+- **`kernel/fatal.zig`**: um lugar só para morrer. `stopTheMachine(reason)` e
+  `stopAfterReport()` substituem as 176 chamadas a `port.haltForever()` que
+  estavam espalhadas (174 em `main.zig`, 2 em `interrupt.zig`), e acrescentam o
+  aviso às outras CPUs antes da última linha.
+- **Quatro testes de host** (845 no total, `arch-tests` 176): a máquina com um
+  processador (ninguém a quem pedir, e a linha diz isso), a parada sem
+  controlador (diz "none told to stop" em vez de fingir), o relatório com três
+  alvos e duas entregas, e o processador que recebe a parada contando uma vez.
+- Documentação: `docs/audits/2026-11-01-halt-ipi-and-fatal.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 73% → 76%, `kernel_cpu_interrupts`
+  73% → 75%), `README.md`, `docs/ai/context-pack.md` e o item 6 do K2 no roadmap.
+
+### Added (2026-11-01) — um relógio por processador, e um contador que sabe de quem é
+
+- **O defeito**: o handler do vetor 64 perguntava `timer.drivesScheduler(.apic)`,
+  uma política **por sistema**. Como o 8254 é o dono, um tick da APIC nunca era o
+  dono — então, numa AP (que só tem o próprio timer local), a interrupção era
+  reconhecida e **não preemptava**, sem nada no log dizendo isso.
+- **As duas perguntas separadas**: `timer.drivesScheduler(source)` continua
+  respondendo pelo **relógio da máquina**, e `timer.drivesSchedulerOn(cpu, source)`
+  responde pelo **relógio daquela CPU**.
+- **Um papel por CPU**: `timer.armCpuClock(cpu, role)` com `system` (o BSP conta a
+  fonte que `selectTickSource` escolheu) e `local` (a AP conta o próprio timer e
+  **nunca** move o relógio da máquina). Armar duas vezes com o mesmo papel não
+  muda nada; armar com papel diferente é recusado — contar os dois relógios é o
+  defeito C.6 da auditoria em outro lugar.
+- **O contador que torna o erro visível**: um tick que chega num processador cujo
+  relógio não é o que disparou é `timer.ignoredTicks()`, impresso no boot.
+- **A AP arma o próprio relógio**: depois do gancho que lhe dá uma tarefa, ela faz
+  `apic.enable()`, `apic.setTpr(0)`, `timer.armCpuClock(cpu, .local)` e
+  `timer.armLocalApicTimer()`, que usa a frequência de barramento que o BSP mediu
+  (`calibrated_bus_frequency`) e **recusa** quando não há medida em vez de
+  adivinhar o divisor.
+- **Quatro testes de host** (841 no total, `arch-tests` 172): a armação
+  idempotente e o papel contraditório recusado; o relógio do sistema contado só
+  por quem o possui (o tick da APIC no BSP é ignorado); a AP contando os próprios
+  ticks sem mover o tempo da máquina; e o processador que ninguém armou.
+- **Linhas de boot**: `[KNK] timer: cpu=N owns the clock of the system`,
+  `[KNK] timer: N ignored ticks` e `[KNK] smp: cpu=N clock armed (...)`.
+- Documentação: `docs/audits/2026-11-01-per-cpu-clock.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 68% → 73%, `kernel_cpu_interrupts`
+  70% → 73%), `README.md`, `docs/ai/context-pack.md` e a anotação do item 6 do
+  K2 no roadmap.
+
+### Added (2026-11-01) — a TLB shootdown, so a page that leaves the tables leaves every TLB
+
+- **O vetor e o aviso**: `apic.shootdown_vector` (66) e `apic.sendShootdown`, com
+  stub em `interrupt.s`, porta no IDT e um handler que encerra a interrupcao e
+  responde.
+- **A caixa de correio** (`kernel/arch/x86_64/tlb.zig`): a IPI carrega um vetor e
+  nao um endereco, entao a pagina viaja por memoria. Cada pedido tem uma geracao:
+  um aviso reentregue e `duplicate`, um reconhecimento atrasado e `stale`, e o
+  desconto e um compare-and-swap que nunca deixa a contagem de respostas passar
+  por baixo de zero — sem isso um unico atraso transformaria o pendente em
+  4 294 967 295 e o pedido seguinte nunca fecharia.
+- **`smp.shootdown`** recusa com motivo (`no_targets`, `no_apic`), devolve
+  `.complete` quando todos responderam e `.timeout` quando alguem nao respondeu,
+  contando o tempo perdido em vez de esconde-lo. O handler roda no processador
+  que tem a traducao velha, invalida (`invlpg`, ou CR3 recarregado para o escopo
+  `all`) e so entao reconhece.
+- **O gancho das tabelas de pagina**: `paging.installRemoteFlush` instala
+  `smp.flushRemotePage` no boot, e as tres saidas de pagina (`unmapKernelPage` e
+  os dois caminhos de `unmapUserPageIn`) chamam o gancho depois do `invlpg`
+  local. O `paging.zig` continua sem importar o APIC, e os testes das tabelas
+  rodam sem controlador.
+- **`cpu.flushTlb`** e `kynox_flush_tlb` em `cpu.s`: a unica forma de esvaziar o
+  TLB inteiro e recarregar o registrador da base das tabelas.
+- **Nove testes de host** (837 no total, `arch-tests` 168): cinco em `tlb.zig`
+  (o pedido que so termina com todas as respostas, o aviso repetido, o pedido
+  abandonado e o atrasado, a geracao nova contra o reconhecimento velho, a caixa
+  vazia) e quatro em `smp.zig` (a maquina com um processador, a recusa sem
+  controlador, o aviso espuro e o handler que invalida e reconhece uma vez).
+- **Linha de boot**: `[KNK] tlb: N shootdowns, N flushes served, N timeouts`.
+- Documentacao: `docs/audits/2026-11-01-tlb-shootdown.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 60% → 68%, `virtual_memory` 50% → 56%,
+  `kernel_cpu_interrupts` 66% → 70%), `README.md`,
+  `docs/architecture/memory-management.md` (o invariante M4),
+  `docs/ai/context-pack.md` e a anotacao do item 6 do K2 no roadmap.
+
 ### Fixed (2026-11-01) — the version of the image builder goes to stdout
 
 - `kynox-fsimg --version` printed the banner with `std.debug.print`, which
