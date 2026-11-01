@@ -249,6 +249,7 @@ Taken from the audit plan (see the audit for evidence and scope):
    static ELF64 matrix; Windows as a separate PE32+/Win64 personality.
 10. Expand VFS and durable storage (journal/atomic commit) with recovery tests.
 11. **Audit K3.12.2 (scheduler/SMP)**: branch `audit/k3-12-2-scheduler-smp` merged to `main` (`39335ae`). Defeitos registrados (per-CPU `ready_queue` nunca usado; `wakeTask` sem enqueue; `prepareNext` stale `.ready`; `cpuId()` fixo; `registerCpu` duplo incremento; `failed` ausente). Regressão `tests/scheduler_regression.zig`; maturidade 55% mantida (sem validação runtime); correções bloqueadas até design de lock/`running_cpu`/migração; K4 NÃO iniciado.
+12. **Audit K3.12.4 (preemption/wait/lifecycle)**: branch `audit/k3-12-4-wait-lifecycle` merged to `main` (`5d5a9ac`). `wait.zig`/`runqueue.zig`/`thread.zig`/`metrics.zig`/`clock.zig`/`irq.zig`/`ipi.zig` ausentes; `preempt_disable`/`preempt_enable` não encontrados; `timer.zig` tem tick/EOI; testes de regressão adicionados; maturidade do scheduler permanece 55%; K4 NÃO iniciado.
 
 ## Updating this status
 
