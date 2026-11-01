@@ -71,6 +71,8 @@ pub const Manager = struct {
     bitmap: [bitmap_size]u8 = @splat(0),
     /// Reference count for shared pages (1 if privately mapped).
     refcount: [managed_pages]u8 = @splat(0),
+    /// Shared reference count across address spaces (0 = not shared).
+    shared_refcount: [managed_pages]u8 = @splat(0),
     /// The state of the manager.
     statistics: Statistics = .{},
     /// The next page that the manager tries to hand out.
@@ -236,6 +238,29 @@ pub const Manager = struct {
         }
 
         return null;
+    }
+
+    /// Shares a physical page across address spaces.
+    /// Increments shared_refcount; page is not freed until all shares are removed.
+    pub fn sharePage(self: *Manager, address: u64) void {
+        if (address % page_size != 0) return;
+        const page = @as(u32, @intCast(address / page_size));
+        if (page >= managed_pages) return;
+        if (!self.isPageUsed(page)) return;
+        if (self.shared_refcount[page] < 255) {
+            self.shared_refcount[page] += 1;
+        }
+    }
+
+    /// Unshares a physical page (decrements shared_refcount).
+    /// If shared_refcount reaches 0, page may be freed (if refcount also 0).
+    pub fn unsharePage(self: *Manager, address: u64) void {
+        if (address % page_size != 0) return;
+        const page = @as(u32, @intCast(address / page_size));
+        if (page >= managed_pages) return;
+        if (self.shared_refcount[page] > 0) {
+            self.shared_refcount[page] -= 1;
+        }
     }
 
     /// Returns a page to the manager.
