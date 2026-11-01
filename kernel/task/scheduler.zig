@@ -756,3 +756,13 @@ pub extern var kynox_syscall_blocked: u64;
 
 /// Captures the context of the task that is running.
 extern fn kynox_capture_context(task_context: *Context) callconv(.c) void;
+
+/// K4.9 / K3.12.2: desabilita preempção (stub — requer interrupção real de timer).
+pub fn preempt_disable() void {
+    // Full: CLI + lock counter; stub here.
+}
+
+/// K4.9 / K3.12.2: restaura preempção.
+pub fn preempt_enable() void {
+    // Full: STI + unlock; stub here.
+}
