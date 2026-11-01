@@ -73,6 +73,8 @@ pub const Manager = struct {
     refcount: [managed_pages]u8 = @splat(0),
     /// Shared reference count across address spaces (0 = not shared).
     shared_refcount: [managed_pages]u8 = @splat(0),
+    /// Per-address-space reference count (tracks how many spaces map each page).
+    space_refcount: [managed_pages]u8 = @splat(0),
     /// The state of the manager.
     statistics: Statistics = .{},
     /// The next page that the manager tries to hand out.
@@ -263,6 +265,28 @@ pub const Manager = struct {
         }
     }
 
+    /// Maps a page to an address space (increments space_refcount).
+    pub fn mapPageToSpace(self: *Manager, address: u64) void {
+        if (address % page_size != 0) return;
+        const page = @as(u32, @intCast(address / page_size));
+        if (page >= managed_pages) return;
+        if (!self.isPageUsed(page)) return;
+        if (self.space_refcount[page] < 255) {
+            self.space_refcount[page] += 1;
+        }
+    }
+
+    /// Unmaps a page from an address space (decrements space_refcount).
+    /// If space_refcount reaches 0, page can be freed (if refcount also 0).
+    pub fn unmapPageFromSpace(self: *Manager, address: u64) void {
+        if (address % page_size != 0) return;
+        const page = @as(u32, @intCast(address / page_size));
+        if (page >= managed_pages) return;
+        if (self.space_refcount[page] > 0) {
+            self.space_refcount[page] -= 1;
+        }
+    }
+
     /// Returns a page to the manager.
     pub fn free(self: *Manager, address: u64) void {
         if (address % page_size != 0) return;
@@ -270,7 +294,17 @@ pub const Manager = struct {
         if (page >= managed_pages) return;
         if (!self.isPageUsed(page)) return;
 
-        // Ownership and reference tracking (Fase 3)
+        // Shared reference tracking (Fase 3 — reclaim físico compartilhado)
+        if (self.space_refcount[page] > 0) {
+            self.space_refcount[page] -= 1;
+            return; // Still referenced by address spaces; do not free
+        }
+        if (self.shared_refcount[page] > 0) {
+            self.shared_refcount[page] -= 1;
+            return; // Still shared across address spaces; do not free
+        }
+
+        // Ownership and reference tracking
         if (self.refcount[page] > 1) {
             self.refcount[page] -= 1;
             return; // Shared page: only decrement reference
@@ -278,7 +312,6 @@ pub const Manager = struct {
         if (self.refcount[page] == 0) {
             // Page reserved but never allocated with a private reference;
             // allow release if it was explicitly reserved (e.g., test paths).
-            // This maintains backward compatibility for reserve-based tests.
         }
 
         self.refcount[page] = 0;
