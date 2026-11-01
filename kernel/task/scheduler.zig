@@ -96,6 +96,8 @@ pub const Task = struct {
     /// A null value means the space of the kernel, which is the space of
     /// the tasks of the kernel.
     space: ?*paging.AddressSpace = null,
+    /// The process that owns this thread (null for kernel-only threads).
+    process_ref: ?*process.Process = null,
     /// The state of the task.
     state: State = .ready,
     /// The code with which the task ended.
@@ -658,6 +660,11 @@ pub const Scheduler = struct {
             const task = self.tasks[index] orelse continue;
             if (task == current) continue;
             if (task.state != .ready) continue;
+            // K4.3 fix: skip threads whose process is terminating or reaped.
+            if (task.process_ref) |proc_ref| {
+                const proc_state = proc_ref.state;
+                if (proc_state == .exiting or proc_state == .reaped) continue;
+            }
             // EEVDF: escolhe a tarefa elegivel com menor vruntime.
             if (best_task == null or task.vruntime < best_vruntime) {
                 best_vruntime = task.vruntime;
