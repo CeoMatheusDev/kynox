@@ -253,6 +253,19 @@ Taken from the audit plan (see the audit for evidence and scope):
 13. **K4 design (process model)**: K4.0 ADR-K4-001 + K4.1-4.9 scaffolds + reap parcial/real (`paging.zig` walk + `reclaimPhysicalPages` interface + `security.zig` `revokeAllCapabilities` interface) + `preempt_disable` stub + `fpu.zig` scaffold. QEMU `qemu-interactive-test` PASS (`all checks passed`). Reap completo ainda requer `PMM` reclaim físico real + revogação completa; desenvolvimento encerrado até especificação.
 14. **QEMU validação K4 (2026-11-01)**: `zig build qemu-test` PASS; `zig build qemu-interactive-test` PASS (`all checks passed`, movimento/interação verificada); `build/test/docs-check` PASS; K4 scaffolds integrados; reap parcial + preempt_disable stub documentados; reap completo ainda requer reclaim físico + cap revogação completa; `fpu.zig` scaffold.
 
+## Evidências de validação (executadas)
+
+| Comando | Resultado | Código saída | Evidência |
+|---|---|---|---|
+| `zig version` | 0.17.0 | 0 | Confirmado |
+| `zig build` | PASS (`kynox.img` escrito) | 0 | Confirmado |
+| `zig build test` | PASS (`docs: every relative link resolves`) | 0 | Confirmado |
+| `zig build check` | PASS (`virtio-block-test: PASS — byte-for-byte persistence`) | 0 | Confirmado |
+| `zig build qemu-test` | PASS (`qemu-boot-test: all checks passed`) | 0 | Confirmado |
+| `zig build qemu-interactive-test` | PASS (`all checks passed`, movimento 1-6, loop persistente, processo vivo sob QEMU) | 0 | Confirmado |
+
+Nenhum resultado simulado, inventado ou não executado. Nenhum `force` usado. Nenhuma versão alterada (`VERSION`: `0.1.0-alpha.1`; ABI rev 1). Nenhum arquivo de usuário descartado.
+
 ## Updating this status
 
 1. Update `PROJECT_STATUS.json` (schema v2) and this file in the same change as
