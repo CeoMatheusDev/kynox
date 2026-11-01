@@ -28,3 +28,17 @@ pub fn wakeOne(condition_ptr: *anyopaque) void {
 pub fn wakeAll(condition_ptr: *anyopaque) void {
     _ = condition_ptr;
 }
+
+/// Reap a process (K4.9 stub): verifies .exited, increments generation.
+/// Full resource release (AddressSpace + capabilities) deferred.
+pub fn reapProcess(proc: *import("process.zig").Process, handle: import("process.zig").ProcessHandle) bool {
+    return proc.reapProcess(handle); // delegate to process.zig stub
+}
+
+/// Wait for child exit (K4.9 stub): blocks parent until child exits.
+/// Requires full wait queue integration (deferred to complete K4.9).
+pub fn waitForChild(parent: *import("process.zig").Process, child_pid: u32) bool {
+    _ = parent;
+    _ = child_pid;
+    return true; // stub only
+}
