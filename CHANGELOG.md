@@ -21,6 +21,15 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Fixed (2026-11-01) — the version of the image builder goes to stdout
+
+- `kynox-fsimg --version` printed the banner with `std.debug.print`, which
+  writes to **stderr**: `kynox-fsimg --version | grep ...` saw an empty stream,
+  and the CI step that checks the version of the generated artifact failed on
+  the last commit of the branch while the build and 828 tests passed. The
+  banner is data, not a diagnostic, and now goes through a stdout writer with
+  an explicit flush. The exact CI snippet was re-run here and exits 0.
+
 ### Added (2026-11-01) — a reschedule IPI, so another CPU can hand over a task
 
 - **The IPI**: `apic.reschedule_vector` (65), `apic.sendReschedule`, the stub of

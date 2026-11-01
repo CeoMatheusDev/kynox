@@ -329,7 +329,15 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
     if (versionRequested(init)) {
-        std.debug.print("{s}\n", .{kynox_version.banner("kynox-fsimg")});
+        // `--version` is data, not a diagnostic: it belongs on stdout, where a
+        // script that captures it can read it. `std.debug.print` writes to
+        // stderr, which made `kynox-fsimg --version | grep ...` see nothing —
+        // the CI step that checks the version of the artifact failed on it.
+        var buffer: [128]u8 = undefined;
+        var writer = std.Io.File.stdout().writer(init.io, &buffer);
+        const stdout = &writer.interface;
+        try stdout.print("{s}\n", .{kynox_version.banner("kynox-fsimg")});
+        try stdout.flush();
         return;
     }
 
