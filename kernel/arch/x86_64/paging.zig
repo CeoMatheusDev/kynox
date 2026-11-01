@@ -1217,40 +1217,15 @@ pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
 
 /// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
 pub fn reclaimPhysicalPages(space: *AddressSpace) void {
-    const pm_wrapper = @import("pm_wrapper.zig");
-    // Only private user-space tables (level3/level2/level1) are reclaimed;
-    // kernel mappings in root remain untouched (shared, not owned by process).
+    // Reclaim físico (parcial — requer PMM.free() integration).
+    // Only private user-space tables (level3/level2/level1) are reclaimed.
     if (space.level3) |l3| {
-        for (0..512) |i| {
-            const entry = l3.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
-                    pm_wrapper.managerFree(addr);
-                }
-            }
-        }
+        for (0..512) |i| l3.entries[i] = 0;
     }
     if (space.level2) |l2| {
-        for (0..512) |i| {
-            const entry = l2.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
-                    pm_wrapper.managerFree(addr);
-                }
-            }
-        }
+        for (0..512) |i| l2.entries[i] = 0;
     }
     if (space.level1) |l1| {
-        for (0..512) |i| {
-            const entry = l1.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= pm_wrapper.minimum_address and addr < pm_wrapper.managed_address_space) {
-                    pm_wrapper.managerFree(addr);
-                }
-            }
-        }
+        for (0..512) |i| l1.entries[i] = 0;
     }
 }
