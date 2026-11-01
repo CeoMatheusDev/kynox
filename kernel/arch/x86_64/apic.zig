@@ -33,7 +33,9 @@
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
-const timer = @import("timer.zig");
+// The APIC does not import the timer: the timer programs the local timer
+// through this module, and the import that used to be here was unused and
+// closed a cycle (apic <-> timer, audit defect 7).
 
 /// Endereco base padrao do APIC local (mapeamento de memoria).
 ///
@@ -301,6 +303,24 @@ pub fn timerPeriodic(divisor: u32) void {
     // Bit 17 = periodico, mascarado por enquanto (bit 16 = 0).
     write32(ApicOffset.timer_config, 0x0002_0000 | timer_vector);
     write32(ApicOffset.timer_icr, divisor);
+}
+
+/// The vector of the reschedule IPI.
+///
+/// One vector per CPU, delivered as a fixed IPI: the processor that receives it
+/// re-evaluates its own queue instead of waiting for the next tick of a clock it
+/// may not even have. The number is above the local timer (64), which is the
+/// only other vector the kernel uses beyond the hardware range.
+pub const reschedule_vector: u8 = 65;
+
+/// Sends a reschedule IPI to one CPU (physical destination, fixed delivery).
+///
+/// The caller checks the destination (`smp.reschedule` does): an IPI to a
+/// processor that is not in long mode yet lands in whatever that processor is
+/// doing, and to its own APIC id it is a message to itself that the hardware
+/// may refuse.
+pub fn sendReschedule(apic_id: u32) void {
+    sendIpi(apic_id, 0, reschedule_vector);
 }
 
 /// Envia uma IPI para uma CPU de destino (modo fisico).

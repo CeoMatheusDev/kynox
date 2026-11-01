@@ -14,8 +14,8 @@
 | Component | File | Reality |
 |---|---|---|
 | Physical manager | `kernel/memory/physical.zig` | 4 KiB bitmaps for the addressable range, but the manager refuses to initialise above 4 GiB; host-tested; frees and invalidates TLB |
-| Kernel page tables | `kernel/arch/x86_64/paging.zig` | four-level, maps the kernel, the 24 KiB user window and the 64 MiB DMA window; **never unmaps a frame** except in the DMA release path and the materialiser's failure path |
-| Address spaces | `kernel/arch/x86_64/paging.zig` | 8 static slots, a per-slot process-window PDPT; **no destroy**, no teardown of the level-2 copy |
+| Kernel page tables | `kernel/arch/x86_64/paging.zig` | four-level, maps the kernel, the 24 KiB user window and the 64 MiB DMA window. Unmapping returns a frame only when the entry carries the software ownership bit (`Flags.owned`); a borrowed page stays allocated. Before 2026-11-01 the tables **never unmaps a frame** except in the DMA release path and the materialiser's failure path — the audit's defect 4 |
+| Address spaces | `kernel/arch/x86_64/paging.zig` | 8 static slots with reuse, a monotonic generation per slot, a per-slot process-window PDPT; `destroyAddressSpaceReal` returns the owned frames, clears the private chain and frees the slot; invariant **M2** now has a unit test |
 | Kernel heap | `kernel/memory/heap.zig` | arena allocator over a reserved region, no lock (single-threaded assumption), no stats beyond high-water |
 | DMA | `kernel/memory/dma.zig` | 64 MiB identity window with a bitmap; allocate/free/release |
 | Regions, demand paging, COW, file-backed pages, page cache | — | **not started** |

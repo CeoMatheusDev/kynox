@@ -1,3 +1,12 @@
+> **Unverified report — not validation evidence.** This file is a pasted report
+> from another working copy (branch `audit/k3-12-5-final-integration`, base
+> `dfa0f8b`). It is kept because it records what somebody reported, not because
+> the repository can reproduce it: no serial log, screenshot, artifact or CI run
+> accompanies it, the branch does not exist in this history, and it claims a
+> `qemu-test` pass and 716 host tests that contradict the current inventory
+> (`docs/PROJECT_STATUS.md` reports 736 host tests and **no recorded QEMU run**,
+> because no QEMU/OVMF is available). Do not cite it as an executed result.
+
 Audit K3.12.5 — Final Integration and K4 Readiness Gate
 Branch: audit/k3-12-5-final-integration
 Merge main: dfa0f8b + audit branch (will merge with --no-ff)

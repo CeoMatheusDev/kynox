@@ -173,6 +173,23 @@ pub const msr_gs_base: u32 = 0xC000_0101;
 /// The bit of `EFER` that enables the no-execute bit of the page tables.
 pub const efer_nxe: u64 = 1 << 11;
 
+/// The bit of `EFER` that enables long mode (the processor enters it when
+/// paging is enabled with this bit set).
+pub const efer_lme: u64 = 1 << 8;
+
+/// The bits of `EFER` that a processor has to have before it can run the
+/// kernel: long mode, and the no-execute bit when the kernel uses it.
+///
+/// An AP starts with the reset state of `EFER`, so the trampoline has to set
+/// these before it loads the CR3 of the kernel. The value is read from the BSP
+/// instead of being hard-coded: the kernel only enables NXE when the processor
+/// reports the feature, and a processor that does not have it would take a
+/// general protection fault on the write.
+pub fn modeBits() u32 {
+    const efer = readEfer();
+    return @truncate(efer & (efer_lme | efer_nxe));
+}
+
 /// Reads the extended features register.
 pub fn readEfer() u64 {
     return readMsr(msr_efer);
@@ -264,6 +281,17 @@ pub fn pause() void {
 /// Halts the processor until the next interrupt.
 pub fn halt() void {
     asm volatile ("hlt" ::: .{ .memory = true });
+}
+
+/// Enables interrupts and halts until one arrives.
+///
+/// The pair is the body of an idle loop, and the order is the reason the
+/// function exists: `hlt` with interrupts disabled never returns, and the
+/// window between an interrupt that arrives and the `hlt` that follows it is
+/// closed because `sti` only takes effect after the *next* instruction — the
+/// processor does not deliver an interrupt between the two.
+pub fn waitForInterrupt() void {
+    asm volatile ("sti; hlt" ::: .{ .memory = true });
 }
 
 /// The control word of the x87 unit.

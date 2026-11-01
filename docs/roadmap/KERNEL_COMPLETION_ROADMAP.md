@@ -1,7 +1,11 @@
 # Kernel and core systems completion roadmap
 
 - Status: **planning document**. No stage below is started. Nothing in this
-  document is an implementation claim.
+  document is an implementation claim. Work done after it was written is
+  recorded, with its evidence level, in
+  [`../audits/2026-11-01-kernel-core-fixes.md`](../audits/2026-11-01-kernel-core-fixes.md);
+  this document keeps the initial state that the audit measured, so that the
+  plan is not rewritten to match what happened.
 - Date: 2026-10-31. Identity: **Kynox One 0.1.0-alpha.1** (this roadmap does not
   change the version, and no stage completion implies a version change).
 - Basis: [`../audits/2026-10-31-kernel-core-audit.md`](../audits/2026-10-31-kernel-core-audit.md)
@@ -187,7 +191,10 @@ message; no record survives.
    boot keeps it, the production boot does not.
 3. Replace the global TSS with **one TSS per CPU**, allocated with the per-CPU
    area; `rsp0` is updated on privilege transitions of that CPU only. IST stacks
-   become per-CPU as well.
+   become per-CPU as well. *(2026-11-01: done in `segment.zig` — eight segments,
+   each with its own `rsp0`, `ist1` and descriptor table, installed by
+   `installForCpu`; see `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md`.
+   The per-CPU area of item 4 is still missing.)*
 4. Define the per-CPU area now (this is the K2 prerequisite): a fixed struct
    containing `self`, `apic_id`, `current_thread`, `kernel_stack`, `tss`, `idle`,
    `preempt_count`, reached through the GS base *or* through a single accessor
@@ -361,10 +368,17 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
 5. **AP startup** with a real INIT-SIPI-SIPI sequence: trampoline published,
    AP enters long mode on a per-CPU stack, initialises its GDT/TSS/APIC, then
    signals ready. `smp.startAps()` has a caller. APs that fail to start are
-   counted, not ignored.
+   counted, not ignored. *(2026-11-01: the trampoline is published below 1 MiB
+   and patched per AP, `smp.startAps()` has a caller, and the AP installs its
+   segment before it waits — but no AP has answered, the per-CPU block does not
+   exist, and the AP initialses no APIC of its own yet. See
+   `docs/audits/2026-11-01-ap-trampoline.md`.)*
 6. **IPI infrastructure**: TLB shootdown (address + generation, with an ack
    counter), reschedule IPI, and a halt IPI. Shootdown is wired into `unmap`, which
-   is what finally satisfies memory invariant M4.
+   is what finally satisfies memory invariant M4. *(2026-11-01: the reschedule IPI
+   exists — vector 65, gate, stub, handler and `smp.reschedule`, with the boot
+   migrating a worker to the first online AP. The shootdown and the halt IPI do
+   not. See `docs/audits/2026-11-01-reschedule-ipi.md`.)*
 7. **Unhandled interrupts are counted and named**, not silently acknowledged. A
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);
@@ -438,8 +452,15 @@ stage), `kernel/arch/x86_64/task.s`, `kernel/arch/x86_64/spinlock.zig`, new
    owns the queues and the lock.
 3. **Lock the scheduler.** One lock per run queue plus a documented ordering
    against the wait-queue lock. Preemption is disabled while holding it.
+   *(2026-11-01: one state lock with per-CPU ownership covers every entry point,
+   and each task names the CPU that owns it — a machine-wide lock, not one per
+   queue. See `docs/audits/2026-11-01-scheduler-lock.md` and
+   `docs/audits/2026-11-01-cpu-affinity.md`.)*
 4. **Idle task per CPU** at the lowest priority that `hlt`s. The kernel stops
-   falling off the end of `kmain`.
+   falling off the end of `kmain`. *(2026-11-01: done — one idle task per CPU,
+   with its own stacks, chosen only when nothing else of that CPU can run. See
+   `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` and
+   `docs/audits/2026-11-01-cpu-affinity.md`.)*
 5. **FPU state in the context**: `xsave`/`xrstor` with a per-CPU save area; the
    test writes a distinct pattern per thread and reads it back.
 6. **Wait queues** with the standard predicate loop (`while (!cond) wait`), a

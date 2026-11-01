@@ -179,6 +179,11 @@ pub fn install() void {
     // The APIC local timer uses vector 64 (aligned with assembly INTERRUPT_ENTRY 64).
     setGate(64, @intFromPtr(&kynox_interrupt_64));
 
+    // The reschedule IPI. A processor that receives it re-evaluates its own
+    // queue: it is how a task that became ready on another CPU gets a processor
+    // without waiting for a clock that may not exist on that CPU.
+    setGate(apic.reschedule_vector, @intFromPtr(&kynox_interrupt_65));
+
     // The vectors that are not handled point at a stub that reports them.
     const unexpected = stubFor(255);
     for (exception_count + hardware_interrupt_count..entry_count) |vector| {
@@ -392,6 +397,35 @@ fn rewriteFrame(frame: *const Registers, kernel_stack: u64) void {
     ss.* = kernel_data_selector;
 }
 
+
+// The table of the handlers of the lines lives in `interrupt_registry.zig`,
+// which has no dependency on the hardware: the assembly stubs, the IDT and the
+// exception paths stay here. The split is what makes the dispatch testable on
+// the host — importing this file into a host test pulls in the scheduler and the
+// system calls of the exception path.
+const registry = @import("interrupt_registry.zig");
+
+/// A handler of one hardware interrupt line. See `interrupt_registry.zig`.
+pub const Handler = registry.Handler;
+
+/// The errors of the registry of handlers.
+pub const RegistrationError = registry.RegistrationError;
+
+/// Registers the owner of a line.
+pub const register = registry.register;
+
+/// Removes the owner of a line.
+pub const unregister = registry.unregister;
+
+/// The name of the owner of a line.
+pub const registeredName = registry.registeredName;
+
+/// The number of interrupts that the owner of a line received.
+pub const interruptCount = registry.interruptCount;
+
+/// The number of interrupts of the hardware range without an owner.
+pub const unhandledCount = registry.unhandledCount;
+
 /// Handler of the hardware interrupts.
 ///
 /// The handler acknowledges the interrupt to the controllers and returns to
@@ -400,44 +434,46 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
     _ = frame;
 
     if (vector >= first_hardware_vector and vector < first_hardware_vector + hardware_interrupt_count) {
-        const timer = @import("timer.zig");
-        if (vector == first_hardware_vector) {
-            timer.onTick();
-
-            // A espera bloqueante de entrada pendente recebe o evento ou
-            // expira antes de o escalonador escolher a próxima tarefa.
-            const syscall = @import("syscall.zig");
-            syscall.inputWaitTick();
-
-            // The waits whose deadline has passed expire before the
-            // scheduler chooses the next task, so that a task that timed
-            // out is ready in this tick. The result of the expired call is
-            // the error of the timeout of the contract of the calls.
-            const scheduler = @import("../../task/scheduler.zig");
-            const must_switch = scheduler.scheduler.tick(syscall.failure(syscall.Error.timeout));
-            timer.endOfInterrupt(@intCast(vector));
-            return if (must_switch) 1 else 0;
-        }
-
-        if (vector == first_hardware_vector + 1) {
-            @import("../../input/ps2.zig").onInterrupt();
-        }
-        timer.endOfInterrupt(@intCast(vector));
+        // The line has an owner that the kernel registered at boot: the 8254 on
+        // the first line, the PS/2 controller on the second, and whatever comes
+        // next. The dispatcher counts the interrupts of an unregistered line
+        // instead of guessing what to do with it.
+        const must_switch = registry.dispatch(vector);
+        @import("timer.zig").endOfInterrupt(@intCast(vector));
+        return if (must_switch) 1 else 0;
     }
 
-    // Interrupcao do timer local da APIC (vetor timer_vector, usado em SMP).
-    // Cada CPU trata seu proprio timer local de forma independente.
+    // Interrupcao do timer local da APIC (vetor timer_vector).
+    //
+    // The local timer is calibrated at boot, and on an AP it will be the only
+    // clock. On the BSP the 8254 owns the tick until the periodic delivery of
+    // this vector has been validated, so the interrupt is acknowledged and the
+    // tick is not counted twice. Without this check the machine counts every
+    // interval twice, because both clocks are armed.
     if (vector == @as(u64, apic.timer_vector)) {
         const timer = @import("timer.zig");
-        timer.onTick();
+        const owns_tick = timer.drivesScheduler(.apic);
+        timer.onTick(.apic);
+        apic.eoi();
+
+        if (!owns_tick) return 0;
 
         const syscall = @import("syscall.zig");
         syscall.inputWaitTick();
 
         const scheduler = @import("../../task/scheduler.zig");
         const must_switch = scheduler.scheduler.tick(syscall.failure(syscall.Error.timeout));
+        return if (must_switch) 1 else 0;
+    }
 
+    // The reschedule IPI: the processor asks its own queue again, without
+    // counting a tick (it is not a clock, and the tick of the system belongs to
+    // one source) and without moving the quantum of the task that runs.
+    if (vector == @as(u64, apic.reschedule_vector)) {
         apic.eoi();
+
+        const scheduler = @import("../../task/scheduler.zig");
+        const must_switch = scheduler.scheduler.rescheduleCurrent();
         return if (must_switch) 1 else 0;
     }
 
@@ -503,3 +539,4 @@ extern var kynox_interrupt_45: u8;
 extern var kynox_interrupt_46: u8;
 extern var kynox_interrupt_47: u8;
 extern var kynox_interrupt_64: u8;
+extern var kynox_interrupt_65: u8;

@@ -129,10 +129,14 @@ protected_mode_start:
     movl (cr3_value - .Lstart)(%ebx), %eax
     movl %eax, %cr3
 
-    /* Liga EFER.LME. */
+    /* Liga os bits de EFER que o BSP usa (LME e, quando o processador
+       reportou a feature, NXE). Os bits vem do bloco: as tabelas do kernel
+       marcam paginas sem permissao de execucao, e um bit de entrada de tabela
+       que o processador considera reservado levanta #GP — dentro do
+       trampoline, sem IDT, o que e um triple fault silencioso. */
     movl $0xC0000080, %ecx
     rdmsr
-    orl $0x100, %eax
+    orl (efer_value - .Lstart)(%ebx), %eax
     wrmsr
 
     /* Liga a paginacao. Com PAE e LME ja ligados, o processador entra no
@@ -236,6 +240,14 @@ far64:
 .global kynox_ap_trampoline_cr3
 kynox_ap_trampoline_cr3:
 cr3_value:
+    .long 0
+
+/* Bits de EFER que o AP tem de ligar antes de carregar o CR3 do kernel
+   (LME e, quando o BSP o ligou, NXE), preenchido pelo BSP. */
+.align 4
+.global kynox_ap_trampoline_efer
+kynox_ap_trampoline_efer:
+efer_value:
     .long 0
 
 /* Topo da pilha de kernel do AP, preenchido pelo BSP. */

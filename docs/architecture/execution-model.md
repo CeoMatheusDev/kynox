@@ -15,18 +15,23 @@
 |---|---|
 | Task | `kernel/task/scheduler.zig`: 32 static slots, a state enum, a context pointer, a priority and a tick budget |
 | Context switch | `arch/x86_64/task.s`: saves callee-saved GPRs and `rsp`; **does not save FPU/SSE state** (comment confirms) |
-| Scheduler | round-robin over a ready ring with a simple priority preemption check; **no lock**; `0` tests; not importable in the host test root |
-| Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path |
+| Scheduler | EEVDF over the tasks of a CPU (a virtual runtime, a deadline and a weight per task, a quantum drawn from the slice), behind a **state lock with per-CPU ownership** (`task/lock.zig`) that every entry point takes and releases, and that counts its own re-entries because the scheduler calls itself inside one decision; **an idle task per CPU** that the policy chooses only when no other task of that CPU is eligible (ring 3, `sti; hlt`, never displaces a real task), and **an owner per task** (`Task.cpu`): the choice of a CPU skips the tasks of another, and an AP that enters the scheduler adopts a kernel task of its own; a **reschedule IPI** that makes a CPU re-evaluate its queue (without counting a tick or charging the slice) and `migrateTo` to place a task on another CPU; **72 host tests** in `task-tests` |
+| Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path, at the end of the quantum of the running task, or as soon as the task blocks. A tick with slice left only moves the clock |
 | Threads | a task *is* a thread; no thread group |
 | Processes | no process object. Scheduling slots are used directly as "processes"; `fs` indexes by a process id that must be smaller than `max_processes = 8` |
 | Lifecycle | `create`, `start`, `terminateCurrent`; **no join, no wait, no reap, no exit code**; `terminateCurrent` never frees the slot, so a boot that cycles 32 tasks is out of slots |
-| Synchronisation | spinlock and a counting semaphore; **no mutex with ownership, no reader/writer lock, no wait queue, no condition variable, no futex-like primitive** |
+| Synchronisation | spinlock and a counting semaphore; **a mutex with ownership, recursion and a direct handoff** (`task/mutex.zig`, 10 host tests) and **a wait queue with a deadline and no lost wakeup** (`task/wait.zig`, 11 host tests), and the scheduler blocks a task on any queue through `blockCurrentOn`; the mutex still has **no user in the kernel**; no reader/writer lock, no condition variable, no futex-like primitive |
 | Timers | PIT and LAPIC tick both drive scheduling; no per-task sleep, no timeout list |
 | SMP | `current[]` is per-CPU in shape but the CPU struct's `current_task` is never written; a single global TSS means ring 3 on an AP is impossible |
 
 The audit's summary applies: the scheduler is a correct *mechanism* for the
-single-CPU demonstration and an incorrect *system* for anything else. It has no
-tests, which is why the roadmap makes the policy testable before it is extended.
+single-CPU demonstration and an incorrect *system* for anything else. Its policy
+is now covered by 12 host tests (`audits/2026-11-01-scheduler-tests.md`), and
+writing them closed three preemption defects; the lock followed
+(`audits/2026-11-01-scheduler-lock.md`) and then the idle task and the per-CPU
+segment (`audits/2026-11-01-idle-task-and-per-cpu-tss.md`). The SMP stress test
+is still missing, because no AP has ever run, which is why the roadmap keeps the
+policy testable before it is extended.
 
 ## 2. Objects
 
@@ -166,7 +171,7 @@ Rules:
 | Tier | What |
 |---|---|
 | Unit (host) | policy functions: pick order, budget charge, preemption decision, queue invariants |
-| Unit (host) | lock implementations: try-lock behaviour, wait-queue lost-wakeup property, rwlock writer preference |
+| Unit (host) | lock implementations: try-lock behaviour, wait-queue lost-wakeup property, rwlock writer preference. The mutex and the wait queue have their tests; the rwlock does not exist |
 | Integration (QEMU) | create N threads that increment a counter under a mutex; assert the exact count |
 | Integration (QEMU) | thread exits and is joined; slot and stack accounting returns to baseline |
 | Concurrency (QEMU, SMP) | run the counter test on 2+ APs with the same assertion |

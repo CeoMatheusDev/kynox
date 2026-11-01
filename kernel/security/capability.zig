@@ -247,6 +247,88 @@ pub fn give(process: u64, handle: u64, rights: u64) bool {
     return true;
 }
 
+/// Destroys a capability: removes the entry and takes it from every holder.
+///
+/// The function is the other half of `create`, and the kernel calls it when the
+/// object that the capability names ceases to exist — a channel that is closed,
+/// a process that is reaped, a display that is hot-unplugged. Without it the
+/// table is a lifetime resource: sixteen capabilities and the kernel can never
+/// create another one, which is exactly the defect that the audit names.
+///
+/// Every holder loses the handle. The entry is marked free **before** the sets
+/// are walked, so a lookup that starts after the destruction cannot observe a
+/// handle that is being taken away.
+///
+/// The function returns false when the handle never named a capability, which
+/// keeps the call idempotent for a caller that destroys an object twice.
+pub fn destroy(handle: u64) bool {
+    if (handle >= table.len) return false;
+
+    const entry = &table[@intCast(handle)];
+    if (!entry.used) return false;
+
+    entry.* = .{};
+
+    for (&sets) |*set| {
+        _ = removeFromSet(set, handle);
+    }
+    return true;
+}
+
+/// Destroys every capability of the kind over the subject and returns how many
+/// entries were destroyed.
+///
+/// The function is the object-level form of `destroy`: the caller names the
+/// object — the channel, the process, the display, the input queue — and does
+/// not have to remember which handles the kernel created for it.
+pub fn destroySubject(kind: Kind, subject: u64) u64 {
+    var destroyed: u64 = 0;
+    for (&table, 0..) |*entry, index| {
+        if (!entry.used) continue;
+        if (entry.kind != kind) continue;
+        if (entry.subject != subject) continue;
+        // `destroy` removes the handle from every set; the index is a valid
+        // handle because it names this entry.
+        if (destroy(index)) destroyed += 1;
+    }
+    return destroyed;
+}
+
+/// Releases everything a process holds, and destroys the capabilities that
+/// named it.
+///
+/// The set of a process is indexed by its identifier, and the identifier is
+/// handed out again when the slot of the address space is reused. Clearing the
+/// set is therefore not enough: a capability of another process over the
+/// *process object* would otherwise name the next process that received the
+/// slot, and would authorize writing in its space.
+///
+/// The capabilities that the dead process held over other objects are removed
+/// from its set; the entries themselves stay, because the objects still exist
+/// and the other holders still have their rights.
+///
+/// The function returns how many entries of the table were destroyed.
+pub fn releaseProcess(process: u64) u64 {
+    const destroyed = destroySubject(.process, process);
+    if (process < max_processes) {
+        sets[@intCast(process)] = .{};
+    }
+    return destroyed;
+}
+
+/// Removes the handle from a set, if the set holds it.
+fn removeFromSet(set: *Set, handle: u64) bool {
+    var index: u8 = 0;
+    while (index < set.count) : (index += 1) {
+        if (set.entries[index].handle == handle) {
+            set.entries[index] = set.entries[set.count - 1];
+            set.count -= 1;
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Transfers a capability of the caller to another process.
 ///
 /// The caller has to hold the capability with the right of delegation, and
@@ -272,18 +354,10 @@ pub fn revoke(caller: u64, target: u64, handle: u64) bool {
     if (!holds(caller, handle, Rights.delegate)) return false;
     if (target >= max_processes) return false;
 
-    const set = &sets[@intCast(target)];
-    var index: u8 = 0;
-    while (index < set.count) : (index += 1) {
-        if (set.entries[index].handle != handle) continue;
-
-        // The last entry takes the place of the one that is removed, and
-        // the set does not grow.
-        set.entries[index] = set.entries[set.count - 1];
-        set.count -= 1;
-        return true;
-    }
-    return false;
+    // Revoking removes the handle from one holder; the entry of the table
+    // stays, because the capability still exists for the other holders. The
+    // object-level removal is `destroy`.
+    return removeFromSet(&sets[@intCast(target)], handle);
 }
 
 /// True when the process holds the capability with the right.
@@ -629,4 +703,103 @@ test "the display capability authorizes only the process that holds it" {
     // The owner takes the capability back.
     try testing.expect(revoke(0, 1, handle));
     try testing.expect(!holdsSubject(1, .display, 0, Rights.write));
+}
+
+test "a destroyed capability is taken from every holder and the entry is reused" {
+    init();
+
+    const handle = create(.channel, 7, Rights.send | Rights.receive | Rights.delegate).?;
+    try testing.expect(give(0, handle, Rights.send | Rights.delegate));
+    try testing.expect(give(1, handle, Rights.send));
+    try testing.expect(holdsSubject(1, .channel, 7, Rights.send));
+
+    try testing.expect(destroy(handle));
+
+    // No holder keeps the handle, and the subject is unknown to the lookups:
+    // a handle that is destroyed may not authorize anything, not even for a
+    // moment.
+    try testing.expect(!holds(0, handle, Rights.send));
+    try testing.expect(!holds(1, handle, Rights.send));
+    try testing.expect(rightsOf(0, handle) == null);
+    try testing.expect(!holdsSubject(0, .channel, 7, Rights.send));
+    try testing.expect(handleOf(0, .channel, 7) == null);
+    try testing.expectEqual(@as(u64, 0), count(0));
+    try testing.expectEqual(@as(u64, 0), count(1));
+    try testing.expectEqual(@as(u64, 0), tableUsed());
+
+    // The table is a pool, not a lifetime budget: the entry that was freed is
+    // handed out again.
+    const again = create(.channel, 8, Rights.send).?;
+    try testing.expectEqual(handle, again);
+
+    // Destroying a handle that names nothing is refused instead of corrupting
+    // the table, and destroying the same handle twice is refused as well.
+    try testing.expect(!destroy(handle +% 1));
+    try testing.expect(destroy(again));
+    try testing.expect(!destroy(again));
+}
+
+test "the table survives more capabilities than it has entries" {
+    init();
+
+    // Twenty creation and destruction cycles: with sixteen entries and no
+    // destruction the third cycle would fail. This is the defect the audit
+    // records as a lifetime limit.
+    var cycle: u64 = 0;
+    while (cycle < 20) : (cycle += 1) {
+        const handle = create(.channel, cycle, Rights.send).?;
+        try testing.expect(give(0, handle, Rights.send));
+        try testing.expect(holdsSubject(0, .channel, cycle, Rights.send));
+        try testing.expect(destroy(handle));
+        try testing.expectEqual(@as(u64, 0), count(0));
+    }
+    try testing.expectEqual(@as(u64, 0), tableUsed());
+}
+
+test "destroying the capabilities of a subject removes every handle of it" {
+    init();
+
+    const first = create(.process, 3, Rights.write | Rights.delegate).?;
+    const second = create(.process, 3, Rights.write).?;
+    const other = create(.process, 4, Rights.write).?;
+    try testing.expect(give(1, first, Rights.write));
+    try testing.expect(give(2, second, Rights.write));
+    try testing.expect(give(1, other, Rights.write));
+
+    try testing.expectEqual(@as(u64, 2), destroySubject(.process, 3));
+
+    try testing.expect(!holdsSubject(1, .process, 3, Rights.write));
+    try testing.expect(!holdsSubject(2, .process, 3, Rights.write));
+    try testing.expect(holdsSubject(1, .process, 4, Rights.write));
+    try testing.expectEqual(@as(u64, 1), tableUsed());
+}
+
+test "reaping a process releases its set and the capabilities that named it" {
+    init();
+
+    // Process 3 holds a channel and is named by process 1.
+    const channel = create(.channel, 9, Rights.send).?;
+    const process_capability = create(.process, 3, Rights.write | Rights.delegate).?;
+    const display = create(.display, 0, Rights.write).?;
+    try testing.expect(give(3, channel, Rights.send));
+    try testing.expect(give(1, process_capability, Rights.write));
+    try testing.expect(give(1, display, Rights.write));
+
+    try testing.expectEqual(@as(u64, 1), releaseProcess(3));
+
+    // The set of the dead process is empty, and the capability that another
+    // process held over it is gone: the slot may be reused, and the handle may
+    // not open the process that receives it.
+    try testing.expectEqual(@as(u64, 0), count(3));
+    try testing.expect(!holdsSubject(1, .process, 3, Rights.write));
+    try testing.expect(holdsSubject(1, .display, 0, Rights.write));
+
+    // The channel entry survives, because the object still exists; the dead
+    // process simply does not hold it.
+    try testing.expect(holdsSubject(3, .channel, 9, Rights.send) == false);
+    try testing.expectEqual(@as(u64, 2), tableUsed());
+
+    // Releasing the same process twice is harmless.
+    try testing.expectEqual(@as(u64, 0), releaseProcess(3));
+    try testing.expectEqual(@as(u64, 2), tableUsed());
 }

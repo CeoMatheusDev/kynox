@@ -1,0 +1,50 @@
+# Kynox
+
+> Kynox One 0.1.0-alpha.1 — a from-scratch x86-64 microkernel-style operating
+> system in Zig 0.17.0 with a UEFI bootloader, its own kernel, kernel objects and
+> a native SDK. This file is a manifest for agents and crawlers: it names the
+> documents that are authoritative about what the tree does **today**, and the
+> ones that are history. Nothing here is a runtime claim: the environment that
+> builds this tree has no QEMU and no OVMF, so every statement about a running
+> system is `not_executed`.
+
+## Start here
+
+- [AGENTS.md](AGENTS.md): binding rules — toolchain, what counts as validation, status vocabulary, prohibited claims.
+- [docs/ai/README.md](docs/ai/README.md): how to read this repository — order, authority of each document, hard rules.
+- [docs/ai/context-pack.md](docs/ai/context-pack.md): the state of the tree in one page — commands, counts, matrix, open defects, invariants.
+- [docs/ai/doc-index.json](docs/ai/doc-index.json): machine-readable index of all documents with `kind`, `authority`, date and summary.
+
+## Current state (authoritative)
+
+- [README.md](README.md): overview, the subsystem maturity matrix, the executed verification table.
+- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md): evidence-based inventory — per subsystem, what exists, what limits it, what is open.
+- [docs/PROJECT_STATUS.json](docs/PROJECT_STATUS.json): the same inventory in JSON (percentages, evidence paths, validations, findings).
+- [CHANGELOG.md](CHANGELOG.md): what changed, dated, with the command and the result.
+
+## Implemented, with host tests
+
+- [docs/audits/2026-11-01-task-subsystem.md](docs/audits/2026-11-01-task-subsystem.md): the scheduling policy in its own pure module, a wait queue with deadlines and no lost wakeup, a mutex with a direct handoff.
+- [docs/audits/2026-11-01-scheduler-tests.md](docs/audits/2026-11-01-scheduler-tests.md): the scheduler policy tests and the three preemption defects they exposed.
+- [docs/audits/2026-11-01-kernel-core-fixes.md](docs/audits/2026-11-01-kernel-core-fixes.md): the audit defects closed without a hypervisor, each with its evidence.
+
+## Model and plan
+
+- [docs/architecture/execution-model.md](docs/architecture/execution-model.md): tasks, processes, scheduling, synchronisation.
+- [docs/architecture/memory-management.md](docs/architecture/memory-management.md): frames, page tables, what unmap returns.
+- [docs/architecture/kernel-internals.md](docs/architecture/kernel-internals.md): the structure of the kernel and the contracts between its parts.
+- [docs/roadmap/KERNEL_COMPLETION_ROADMAP.md](docs/roadmap/KERNEL_COMPLETION_ROADMAP.md): the fourteen stages of the kernel, K0 to K13 — the plan of record.
+- [docs/decisions/README.md](docs/decisions/README.md): the architecture decision records.
+
+## History — never a source of current state
+
+- [docs/audits/2026-10-31-kernel-core-audit.md](docs/audits/2026-10-31-kernel-core-audit.md): read-only audit of the tree at `343e9fb`.
+- [AUDIT_K3.12.5_REPORT.md](AUDIT_K3.12.5_REPORT.md): report from another working copy; its QEMU passes were never reproduced here.
+- [docs/roadmap/PRODUCT_ROADMAP.md](docs/roadmap/PRODUCT_ROADMAP.md): product plan; states that it raises no maturity percentage.
+- [docs/architecture/linux-compatibility.md](docs/architecture/linux-compatibility.md) and [windows-compatibility.md](docs/architecture/windows-compatibility.md): personalities that do not exist yet.
+
+## Optional
+
+- [docs/specs/syscall-abi.md](docs/specs/syscall-abi.md): the syscall ABI, revision 1.
+- [docs/validation/qemu.md](docs/validation/qemu.md): how a QEMU run is performed and recorded, and the failed attempts of this environment.
+- [docs/BUILD.md](docs/BUILD.md): the build procedure.

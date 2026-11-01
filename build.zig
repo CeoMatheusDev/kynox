@@ -627,8 +627,49 @@ pub fn build(b: *std.Build) void {
     const ipc_tests = b.addTest(.{
         .name = "ipc-tests",
         .root_module = ipc_test_module,
+        // The channel imports the context of the tasks, which imports the
+        // policy of the scheduler: without the filter, the tests of those two
+        // modules would be counted here **and** in `task-tests`, and the suite
+        // would grow without testing anything new. The filter also drops the
+        // anonymous test block of the root itself, which asserts nothing.
+        .filters = &.{"ipc.channel.test."},
     });
     unit_test_step.dependOn(&b.addRunArtifact(ipc_tests).step);
+
+    // The task subsystem is tested on the host as well: the policy of the
+    // scheduler, the scheduler, the wait queue and the mutex are the parts that
+    // can be wrong without a processor noticing, and none of them had a test
+    // before 2026-11-01 (defect 1 of the audit of 2026-10-31). The root sits at
+    // the top of the kernel tree because the scheduler imports `arch/`, `ipc/`
+    // and `fs/`.
+    //
+    // The artifact keeps the filters of its own modules: the scheduler imports
+    // the architecture modules, whose tests already run in `arch-tests`, and
+    // running them twice would inflate the count of the suite without testing
+    // anything new. The context of the task is listed as well because the
+    // scheduler is what makes it reachable, and a name that appears once is
+    // easier to read than a directory scan.
+    const task_test_module = b.createModule(.{
+        .root_source_file = b.path("kernel/task_root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    task_test_module.addImport("kynox_shared", shared);
+    // The architecture modules read the configuration at comptime.
+    task_test_module.addOptions("kynox_config", kernel_options);
+    const task_tests = b.addTest(.{
+        .name = "task-tests",
+        .root_module = task_test_module,
+        .filters = &.{
+            "task.lock.test.",
+            "task.policy.test.",
+            "task.scheduler.test.",
+            "task.wait.test.",
+            "task.mutex.test.",
+            "task.context.test.",
+        },
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(task_tests).step);
 
     // The RamFS and the ELF64 load planner are free of architecture
     // specific code. They share a root at the top of the kernel tree
@@ -716,11 +757,21 @@ pub fn build(b: *std.Build) void {
     // Documentation link check: the Markdown is the only reference the
     // project publishes, and a link to a deleted file is invisible in review.
     // The step is part of `test` because it needs no device and no firmware.
-    const docs_step = b.step("docs-check", "Validate the relative links of the Markdown documentation");
+    //
+    // The same step checks the index that the agents read: every Markdown file
+    // of the tree has to be classified in `docs/ai/doc-index.json`, and the
+    // index on disk has to be the one the classification produces. A new
+    // document that nobody classified therefore fails the build instead of
+    // becoming invisible to the next agent that reads the tree.
+    const docs_step = b.step("docs-check", "Validate the Markdown links and the AI document index");
     const docs_check = b.addSystemCommand(&.{ "python3", "scripts/check-docs-links.py", "." });
     docs_check.has_side_effects = true;
     docs_step.dependOn(&docs_check.step);
+    const docs_index_check = b.addSystemCommand(&.{ "python3", "tools/scripts/gen-doc-index.py", "--check" });
+    docs_index_check.has_side_effects = true;
+    docs_step.dependOn(&docs_index_check.step);
     unit_test_step.dependOn(&docs_check.step);
+    unit_test_step.dependOn(&docs_index_check.step);
 
     const check_step = b.step("check", "Run the unit tests and the automated boot test");
     check_step.dependOn(unit_test_step);

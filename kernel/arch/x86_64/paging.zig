@@ -66,6 +66,19 @@ pub const Flags = struct {
     /// entry that carries it raises a page fault. `cpu.enableNoExecute`
     /// turns the support on before the kernel ever sets this bit.
     pub const no_execute: u64 = 1 << 63;
+
+    /// The space owns the physical page of the entry.
+    ///
+    /// The processor ignores this bit. The kernel uses it to answer the one
+    /// question a page table cannot answer by itself: when the entry is
+    /// removed, does the physical page go back to the manager? A page that
+    /// the kernel obtained for the space — the pages of an image, of a stack,
+    /// of a buffer — is owned, and removing the entry returns it. A page that
+    /// the kernel only maps — a static buffer of the image, a page that two
+    /// spaces share — is not owned, and removing the entry leaves it alone.
+    /// Freeing a page that the space does not own would return the memory of
+    /// the kernel or of another space to the pool.
+    pub const owned: u64 = 1 << 9;
 };
 
 /// The bits of an entry that hold the physical address of the page or of
@@ -132,8 +145,11 @@ var process_level1_pool: [max_process_spaces]PageTable align(4096) = @splat(.{})
 /// The address spaces that the kernel handed out.
 var process_spaces: [max_process_spaces]AddressSpace = @splat(.{});
 
-/// The number of address spaces that the kernel handed out.
-var process_spaces_used: usize = 0;
+/// The number of address spaces that the kernel handed out since it started.
+///
+/// The counter is cumulative: releasing a space does not lower it. It exists
+/// for the diagnostics and for the tests, not for the allocation.
+var spaces_created: u32 = 0;
 
 /// An address space of a process.
 ///
@@ -150,11 +166,28 @@ pub const AddressSpace = struct {
     /// The private table of the first level, the one of the window.
     level1: *PageTable = undefined,
     /// The identifier of the process that owns the space.
+    ///
+    /// The identifier is the index of the slot, because that is the number
+    /// that the system call interface uses to name a process, and the number
+    /// that indexes the set of capabilities of a process (eight of them, the
+    /// same `max_process_spaces`). It is therefore bounded, and it is handed
+    /// out again when a slot is reused.
     id: u32 = 0,
+    /// The generation of the identifier.
+    ///
+    /// Every time the slot is handed out the generation grows, so an identity
+    /// is the pair (id, generation) and not the id alone. A caller that kept
+    /// the identity of a reaped process compares the generation and refuses
+    /// to act on the process that received the same slot afterwards.
+    generation: u32 = 0,
+    /// True while the space is handed out by `createAddressSpace`.
+    live: bool = false,
 };
 
-/// The number of pages of the window of the user mode of a process.
-pub const window_pages: u64 = 4;
+// The number of pages of a window of the user mode is not a constant of the
+// tables: the window is a range that the loader plans and the materialiser
+// maps (`shared/usermode.zig` owns its size). A constant here would be a second
+// source of truth, and the one that the tables used to carry was already wrong.
 
 /// The level 4 table, the root of the hierarchy.
 var level4: PageTable align(4096) = .{};
@@ -186,6 +219,9 @@ pub const Error = error{
     NotMapped,
     /// The page is already mapped: substituicao silenciosa nao permitida.
     AlreadyMapped,
+    /// The entry owns a page, but no release callback is installed, so the
+    /// page cannot be returned. The entry is preserved.
+    ReleaseUnavailable,
 };
 
 /// Maps a page of the kernel, with the same address in the physical and in
@@ -564,8 +600,6 @@ pub fn rootAddress() u64 {
 /// before it calls the function, and the function refuses a window that
 /// does not satisfy the requirement.
 pub fn createAddressSpace(window: u64) ?*AddressSpace {
-    if (process_spaces_used >= max_process_spaces) return null;
-
     // The window lives in the first gigabyte, and the table of the second
     // level of the first gigabyte holds the image of the kernel. The window
     // needs a table of the first level of its own, and the table of the
@@ -574,10 +608,18 @@ pub fn createAddressSpace(window: u64) ?*AddressSpace {
     const level2_index = (window >> 21) & 511;
     if (level3_index != 0) return null;
 
-    const index = process_spaces_used;
-    process_spaces_used += 1;
+    // A released slot is handed out again with a new identifier: the tables
+    // are rewritten from the tables of the kernel below, so nothing of the
+    // previous process survives, and the identifier tells the two processes
+    // apart for every caller that kept the old one.
+    const index = freeSpaceSlot() orelse return null;
 
     const space = &process_spaces[index];
+    // The generation is preserved across the reuse of the slot, and zero is
+    // never handed out, so a field that was never written cannot be mistaken
+    // for a live identity.
+    var generation = space.generation +% 1;
+    if (generation == 0) generation = 1;
     const root = &process_root_pool[index];
     const private_level3 = &process_level3_pool[index];
     const private_level2 = &process_level2_pool[index];
@@ -608,9 +650,30 @@ pub fn createAddressSpace(window: u64) ?*AddressSpace {
         .level2 = private_level2,
         .level1 = private_level1,
         .id = @intCast(index),
+        .generation = generation,
+        .live = true,
     };
 
+    spaces_created += 1;
+
     return space;
+}
+
+/// The first slot that is not handed out, or null when the pool is full.
+fn freeSpaceSlot() ?usize {
+    for (&process_spaces, 0..) |*space, index| {
+        if (!space.live) return index;
+    }
+    return null;
+}
+
+/// The number of spaces that are currently handed out.
+pub fn liveSpaceCount() usize {
+    var count: usize = 0;
+    for (process_spaces) |space| {
+        if (space.live) count += 1;
+    }
+    return count;
 }
 
 /// Maps a page of the user mode in the space of a process.
@@ -690,16 +753,55 @@ pub fn protectUserPageIn(
         return error.NotMapped;
     }
 
-    space.level1.entries[level1_index] = (entry1 & address_mask) | userPageEntryFlags(flags);
+    // The ownership is a fact about the page, not about the permissions, and
+    // it survives a change of permissions.
+    space.level1.entries[level1_index] =
+        (entry1 & address_mask) | (entry1 & Flags.owned) | userPageEntryFlags(flags);
     cpu.invlpg(virtual);
+}
+
+/// Makes the space the owner of the page of a mapping.
+///
+/// The materialiser calls the function once the whole image is in place: from
+/// that moment removing the mapping returns the page to the manager, and the
+/// space is responsible for it. A partial load does not take ownership, so its
+/// failure path keeps freeing the pages that it allocated itself.
+///
+/// The permissions are preserved; only the software bit that records the
+/// ownership changes.
+pub fn takeOwnership(space: *AddressSpace, virtual: u64) Error!void {
+    if (virtual & (page_size - 1) != 0) return error.UnalignedPage;
+
+    const level2_index = (virtual >> 21) & 511;
+    const level1_index = (virtual >> 12) & 511;
+
+    const entry2 = space.level2.entries[level2_index];
+    if (entry2 & Flags.present == 0) return error.OutOfTables;
+    if (entry2 & Flags.large != 0) return error.OutOfTables;
+    if ((entry2 & address_mask) != addressOf(space.level1)) {
+        return error.OutOfTables;
+    }
+
+    const entry1 = space.level1.entries[level1_index];
+    if (entry1 & Flags.present == 0 or entry1 & Flags.user == 0) {
+        return error.NotMapped;
+    }
+
+    space.level1.entries[level1_index] = entry1 | Flags.owned;
 }
 
 /// Removes the mapping of a page of the user mode.
 ///
 /// The materializer uses the function when it has to undo a partial load.
-/// The TLB entry is invalidated before the caller returns the physical page
-/// to the allocator, so that the processor cannot keep writing through a
-/// stale translation.
+/// The TLB entry is invalidated before the page goes back to the allocator, so
+/// that the processor cannot keep writing through a stale translation.
+///
+/// When the entry owns its page (`Flags.owned`) the function returns the page
+/// through the release callback, because the caller asked to remove the only
+/// reference that existed. A page that the space does not own stays allocated:
+/// it belongs to the kernel image or to another space. Without a callback the
+/// function refuses to remove an owned entry, so that the page is not lost
+/// silently.
 pub fn unmapUserPageIn(space: *AddressSpace, virtual: u64) Error!void {
     if (virtual & (page_size - 1) != 0) return error.UnalignedPage;
 
@@ -716,6 +818,18 @@ pub fn unmapUserPageIn(space: *AddressSpace, virtual: u64) Error!void {
     const entry1 = space.level1.entries[level1_index];
     if (entry1 & Flags.present == 0 or entry1 & Flags.user == 0) {
         return error.NotMapped;
+    }
+
+    if (entry1 & Flags.owned != 0) {
+        const hook = page_release_hook orelse return error.ReleaseUnavailable;
+        // The entry is cleared before the page returns to the pool, and the
+        // TLB entry goes with it: a page that is reachable after the return
+        // would be used by the next owner before this space stopped writing
+        // to it.
+        space.level1.entries[level1_index] = 0;
+        cpu.invlpg(virtual);
+        hook(entry1 & address_mask);
+        return;
     }
 
     space.level1.entries[level1_index] = 0;
@@ -789,11 +903,41 @@ pub fn spaceRoot(space: *const AddressSpace) u64 {
 
 /// The address space of a process, by its identifier.
 ///
-/// The identifier of a space is the order in which the kernel handed it
-/// out, and the function returns null when the identifier does not exist.
+/// The identifier is the index of the slot, so it is bounded by
+/// `max_process_spaces` and it is handed out again after a reap. While the slot
+/// is free the identifier resolves to nothing; after the reuse it resolves to
+/// the new process, which is why a caller that has to survive a reap compares
+/// the generation with `spaceByIdentity`.
 pub fn spaceById(id: u64) ?*AddressSpace {
-    if (id >= process_spaces_used) return null;
-    return &process_spaces[@intCast(id)];
+    if (id >= max_process_spaces) return null;
+    const space = &process_spaces[@intCast(id)];
+    if (!space.live) return null;
+    return space;
+}
+
+/// The address space of a process identity: the identifier and the
+/// generation that the space received when the slot was handed out.
+///
+/// The function is the strict form: it returns null when the slot exists, is
+/// live and belongs to another generation, which is what a caller that kept an
+/// identity across a reap has to check before it writes in a space that is no
+/// longer the one it knew.
+pub fn spaceByIdentity(id: u64, generation: u32) ?*AddressSpace {
+    const space = spaceById(id) orelse return null;
+    if (space.generation != generation) return null;
+    return space;
+}
+
+/// The identity of the space of a process, for the diagnostics and for the
+/// handles that have to survive a reap.
+pub const Identity = struct {
+    id: u32,
+    generation: u32,
+};
+
+/// The identity of a space.
+pub fn identityOf(space: *const AddressSpace) Identity {
+    return .{ .id = space.id, .generation = space.generation };
 }
 
 /// Checks whether a range of virtual addresses belongs to the user mode in
@@ -981,7 +1125,7 @@ const testing = std.testing;
 
 test "the mapping of the window refuses an address outside the window" {
     try setup(0x200000, 0x300000, 0, 0);
-    process_spaces_used = 0;
+    resetAddressSpacesForTest();
 
     const window: u64 = 0x200000 - 0x4000;
     const space = createAddressSpace(window).?;
@@ -1011,7 +1155,7 @@ test "the mapping of the window refuses an address outside the window" {
 
 test "the mapping refuses an address that is not aligned to the page" {
     try setup(0x200000, 0x300000, 0, 0);
-    process_spaces_used = 0;
+    resetAddressSpacesForTest();
 
     const window: u64 = 0x200000 - 0x4000;
     const space = createAddressSpace(window).?;
@@ -1055,7 +1199,7 @@ test "a large mapping that crosses a gigabyte is refused" {
 
 test "the permissions of a user page separate code from data" {
     try setup(0x200000, 0x300000, 0, 0);
-    process_spaces_used = 0;
+    resetAddressSpacesForTest();
 
     const window: u64 = 0x200000 - 0x4000;
     const space = createAddressSpace(window).?;
@@ -1170,7 +1314,7 @@ test "unmapping a kernel page removes the translation" {
 
 test "a reserved kernel range is shared with a process address space" {
     try setup(0x400000, 0x500000, 0, 0);
-    process_spaces_used = 0;
+    resetAddressSpacesForTest();
 
     const dma_base: u64 = 0x4000_0000;
     try reserveKernelRange(dma_base, 2 * page_size);
@@ -1191,70 +1335,364 @@ test "a reserved kernel range is shared with a process address space" {
     try testing.expect(translateIn(space, dma_base) == null);
 }
 
-/// K4.9 full reap: destroy address space (stub; full table walk + free required).
+/// Entry point for a caller that has no address space to destroy.
 pub fn destroyAddressSpace() void {
-    // Full release of PML4/PDPT/PD/PT entries for the process.
-    // Currently stub; requires full page-table walk and physical-page reclaim.
+    // The space of the kernel is the active one and it is never destroyed;
+    // the function exists for the caller that has no space to destroy. A
+    // process space goes through `destroyAddressSpaceReal`, which releases the
+    // pages and returns the slot.
 }
 
-/// K4.9 reap completo: destrói todas as entradas das tabelas do processo (PML4/PDPT/PD/PT walk).
-pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
-    // Walk: PML4 (level4) entries → PDPT (level3) → PD (level2) → PT (level1).
-    // Clear all entries; physical page reclaim ainda requer PMM (pending).
-    if (space.root) |r| {
-        for (0..512) |i| r.entries[i] = 0;
+/// Removes every mapping of an address space and returns the slot.
+///
+/// The order is the whole contract of the function:
+///
+///   1. the pages that the space owns go back to the manager, while the
+///      entries still hold their addresses;
+///   2. the private chain is cleared, so no entry points at a table that the
+///      space no longer describes;
+///   3. the space stops being live, so `spaceById` refuses its identifier and
+///      `createAddressSpace` may hand the slot out again;
+///   4. the table of the active space is forgotten; if the space being
+///      destroyed is the active one, the kernel switches to its own tables
+///      first, because clearing the tables that CR3 points at would fault on
+///      the next instruction.
+///
+/// The caller has to make sure that no task still refers to the space: this
+/// function frees the frames, not the tasks that run on them. The root table is
+/// cleared as well and receives a fresh copy of the tables of the kernel on the
+/// next creation.
+pub fn destroyAddressSpaceReal(space: *AddressSpace) ReleaseReport {
+    // A space that is still active is left first. Clearing the tables that CR3
+    // points at would fault on the next instruction, and the space is about to
+    // stop existing.
+    if (active_space) |active| {
+        if (active == space) {
+            activate();
+        }
     }
-    if (space.level3) |l3| {
-        for (0..512) |i| l3.entries[i] = 0;
+
+    const report = releaseUserPages(space);
+
+    for (0..512) |i| space.level1.entries[i] = 0;
+    for (0..512) |i| space.level2.entries[i] = 0;
+    for (0..512) |i| space.level3.entries[i] = 0;
+    for (0..512) |i| space.root.entries[i] = 0;
+
+    if (active_space) |active| {
+        if (active == space) active_space = null;
     }
-    if (space.level2) |l2| {
-        for (0..512) |i| l2.entries[i] = 0;
+
+    // The slot is free and the identifier names nothing. The generation stays
+    // with the slot: it is what the next owner differs by.
+    space.live = false;
+    space.id = 0;
+
+    return report;
+}
+
+/// Releases every address space. Host tests only.
+///
+/// The kernel never destroys the spaces that it created for its own tasks, so
+/// this function exists to give each test the same starting point. It releases
+/// the owned pages through the installed callback, exactly as the reaper does.
+fn resetAddressSpacesForTest() void {
+    for (&process_spaces) |*space| {
+        if (space.live) _ = destroyAddressSpaceReal(space);
     }
-    if (space.level1) |l1| {
-        for (0..512) |i| l1.entries[i] = 0;
+    process_spaces = @splat(.{});
+    spaces_created = 0;
+    active_space = null;
+}
+
+/// Releases a physical page back to the physical memory manager.
+///
+/// The architecture layer does not import the memory layer. The manager owns
+/// the bitmap that describes the pages, and it depends on the tables only for
+/// diagnostics; importing it from here would invert that direction, and it
+/// would pull the whole manager into the host tests that only need the
+/// tables. The kernel installs the callback once, after the manager is
+/// initialised, and the callback validates alignment, range and ownership
+/// before it frees anything.
+pub const PageReleaseHook = *const fn (physical_address: u64) void;
+
+/// The installed callback, or `null` when nothing returns pages.
+var page_release_hook: ?PageReleaseHook = null;
+
+/// Installs the callback that releases a page; `null` uninstalls it.
+pub fn installPageReleaseHook(hook: ?PageReleaseHook) void {
+    page_release_hook = hook;
+}
+
+/// What `releaseUserPages` did with the mappings of a space.
+pub const ReleaseReport = struct {
+    /// Pages that were mapped in the private window of the user.
+    detached: u32 = 0,
+    /// Pages that the hook accepted and returned to the manager.
+    released: u32 = 0,
+};
+
+/// Detaches the pages of the window of the user and returns the ones the
+/// space owns.
+///
+/// Only the entries of the first level of the private chain are considered.
+/// The entries of the levels above point at the static tables of the space
+/// (`process_level*_pool`), so a walk that treated every present entry as a
+/// page would hand the manager the address of a table that it never
+/// allocated — the table pools are part of the image of the kernel, not of
+/// the pool of free pages.
+///
+/// Two facts decide what happens to an entry:
+///
+///   * the user bit says that the entry is a mapping of the process, so the
+///     entry is detached. An entry without it belongs to the kernel and is
+///     left in place;
+///   * the owned bit says that the page came from the manager, so the page is
+///     returned. An entry without it maps a page of the image of the kernel or
+///     a page that another space shares, and freeing it would return memory
+///     that this space never had.
+///
+/// Without a callback the owned pages are detached but not released, and the
+/// report shows the difference: the caller can then report the leak instead of
+/// believing that the memory came back.
+pub fn releaseUserPages(space: *AddressSpace) ReleaseReport {
+    var report: ReleaseReport = .{};
+    const level1 = space.level1;
+
+    for (0..512) |i| {
+        const entry = level1.entries[i];
+        if (entry & Flags.present == 0) continue;
+        if (entry & Flags.user == 0) continue;
+
+        report.detached += 1;
+        level1.entries[i] = 0;
+
+        if (entry & Flags.owned == 0) continue;
+        if (page_release_hook) |hook| {
+            hook(entry & address_mask);
+            report.released += 1;
+        }
+    }
+
+    return report;
+}
+
+test "releasing the window returns the pages of the user to the manager" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+    try mapUserPageIn(space, window, 0x400000);
+    try mapUserPageIn(space, window + page_size, 0x401000);
+    try mapUserPageIn(space, window + 2 * page_size, 0x402000);
+    // The three pages came from the manager, so the space owns them and the
+    // release returns them.
+    try takeOwnership(space, window);
+    try takeOwnership(space, window + page_size);
+    try takeOwnership(space, window + 2 * page_size);
+
+    // The hook stands in for the physical memory manager and records what it
+    // was asked to release, so that the test can check the addresses without
+    // depending on the manager.
+    page_released_by_test = 0;
+    released_addresses_by_test = @splat(0);
+    installPageReleaseHook(&recordRelease);
+    defer installPageReleaseHook(null);
+
+    const report = releaseUserPages(space);
+    try testing.expectEqual(@as(u32, 3), report.detached);
+    try testing.expectEqual(@as(u32, 3), report.released);
+    try testing.expectEqual(@as(usize, 3), page_released_by_test);
+
+    // The pages are named in the order of the window, and the mappings are
+    // gone: a released page that stayed mapped would be reachable by the
+    // processor after it went back to the pool.
+    try testing.expectEqual(@as(u64, 0x400000), released_addresses_by_test[0]);
+    try testing.expectEqual(@as(u64, 0x401000), released_addresses_by_test[1]);
+    try testing.expectEqual(@as(u64, 0x402000), released_addresses_by_test[2]);
+    try testing.expect(!isUserRangeIn(space, window, 3 * page_size, true));
+
+    // A second release finds nothing: the entries were cleared, and a page
+    // that is returned twice corrupts the pool.
+    const again = releaseUserPages(space);
+    try testing.expectEqual(@as(u32, 0), again.detached);
+    try testing.expectEqual(@as(usize, 3), page_released_by_test);
+}
+
+test "releasing the window without a hook detaches but does not claim a release" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+    try mapUserPageIn(space, window, 0x400000);
+    try takeOwnership(space, window);
+
+    installPageReleaseHook(null);
+    const report = releaseUserPages(space);
+
+    // The mapping is detached; the physical page is not accounted as
+    // returned, which is what the caller needs to know to report the leak
+    // instead of hiding it.
+    try testing.expectEqual(@as(u32, 1), report.detached);
+    try testing.expectEqual(@as(u32, 0), report.released);
+    try testing.expect(!isUserRangeIn(space, window, page_size, true));
+}
+
+test "a page that the space does not own survives the release" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+
+    // The kernel maps a page of its own image into the space: the entry is a
+    // page of the user, but the page belongs to the kernel.
+    try mapUserPageIn(space, window, 0x400000);
+
+    page_released_by_test = 0;
+    installPageReleaseHook(&recordRelease);
+    defer installPageReleaseHook(null);
+
+    const report = releaseUserPages(space);
+
+    // The entry is detached, and the page is not returned: the manager never
+    // handed it out to this space, and returning it would put a page of the
+    // kernel image in the pool.
+    try testing.expectEqual(@as(u32, 1), report.detached);
+    try testing.expectEqual(@as(u32, 0), report.released);
+    try testing.expectEqual(@as(usize, 0), page_released_by_test);
+}
+
+test "unmapping an owned page returns it and unmapping a borrowed one does not" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+    try mapUserPageIn(space, window, 0x400000);
+    try mapUserPageIn(space, window + page_size, 0x401000);
+    try takeOwnership(space, window);
+
+    page_released_by_test = 0;
+    released_addresses_by_test = @splat(0);
+    installPageReleaseHook(&recordRelease);
+    defer installPageReleaseHook(null);
+
+    try unmapUserPageIn(space, window);
+    try testing.expectEqual(@as(usize, 1), page_released_by_test);
+    try testing.expectEqual(@as(u64, 0x400000), released_addresses_by_test[0]);
+
+    // The borrowed page leaves the space without going back to the pool.
+    try unmapUserPageIn(space, window + page_size);
+    try testing.expectEqual(@as(usize, 1), page_released_by_test);
+
+    // The entry is gone in both cases.
+    try testing.expect(!isUserRangeIn(space, window, 2 * page_size, true));
+    try testing.expectError(error.NotMapped, unmapUserPageIn(space, window));
+}
+
+test "an owned page is not removed when nothing can return it" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+    try mapUserPageIn(space, window, 0x400000);
+    try takeOwnership(space, window);
+
+    installPageReleaseHook(null);
+    try testing.expectError(error.ReleaseUnavailable, unmapUserPageIn(space, window));
+
+    // The entry survives, with its permissions and its ownership: a refusal
+    // may not leave the space with the page detached and the page lost.
+    try testing.expect(isUserRangeIn(space, window, page_size, true));
+    try testing.expect(space.level1.entries[(window >> 12) & 511] & Flags.owned != 0);
+}
+
+test "a destroyed space returns its slot and grows the generation" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    var spaces: [max_process_spaces]*AddressSpace = undefined;
+    for (&spaces) |*slot| {
+        slot.* = createAddressSpace(0x1FF000).?;
+    }
+
+    // The pool is exhausted, and a full pool refuses instead of handing out a
+    // space that is live.
+    try testing.expectEqual(@as(usize, max_process_spaces), liveSpaceCount());
+    try testing.expect(createAddressSpace(0x1FF000) == null);
+
+    const first = spaces[0];
+    const identity = identityOf(first);
+    try testing.expect(spaceById(identity.id) == first);
+    try testing.expectEqual(first, spaceByIdentity(identity.id, identity.generation).?);
+
+    // The page of the space comes back when the space is destroyed.
+    try mapUserPageIn(first, 0x1FF000, 0x400000);
+    try takeOwnership(first, 0x1FF000);
+    page_released_by_test = 0;
+    installPageReleaseHook(&recordRelease);
+    defer installPageReleaseHook(null);
+
+    const report = destroyAddressSpaceReal(first);
+    try testing.expectEqual(@as(u32, 1), report.released);
+    try testing.expectEqual(@as(usize, max_process_spaces - 1), liveSpaceCount());
+
+    // While the slot is free the identifier names nothing at all.
+    try testing.expect(spaceById(identity.id) == null);
+    try testing.expect(spaceByIdentity(identity.id, identity.generation) == null);
+
+    // The slot is handed out again with the same index and a new generation:
+    // the identity of the previous process does not open the new one.
+    const replacement = createAddressSpace(0x1FF000).?;
+    try testing.expectEqual(first, replacement);
+    try testing.expectEqual(identity.id, replacement.id);
+    try testing.expect(replacement.generation != identity.generation);
+    try testing.expect(spaceById(identity.id) == replacement);
+    try testing.expect(spaceByIdentity(identity.id, identity.generation) == null);
+    try testing.expectEqual(
+        replacement,
+        spaceByIdentity(replacement.id, replacement.generation).?,
+    );
+
+    // The new space starts empty: nothing of the previous process is mapped.
+    try testing.expect(!isUserRangeIn(replacement, 0x1FF000, page_size, true));
+}
+
+test "destroying the space clears the private chain and every table" {
+    try setup(0x200000, 0x300000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x200000 - 0x4000;
+    const space = createAddressSpace(window).?;
+    try mapUserPageIn(space, window, 0x400000);
+
+    _ = destroyAddressSpaceReal(space);
+
+    try testing.expect(!isUserRangeIn(space, window, page_size, true));
+    try testing.expect(!space.live);
+    try testing.expectEqual(@as(u32, 0), space.id);
+    for (0..512) |i| {
+        try testing.expectEqual(@as(u64, 0), space.level1.entries[i]);
+        try testing.expectEqual(@as(u64, 0), space.level2.entries[i]);
+        try testing.expectEqual(@as(u64, 0), space.level3.entries[i]);
+        try testing.expectEqual(@as(u64, 0), space.root.entries[i]);
     }
 }
 
-/// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
-pub fn reclaimPhysicalPages(space: *AddressSpace) void {
-    const physical = @import("../../memory/physical.zig");
-    // Reclaim físico REAL: percorre as tabelas privadas do processo
-    // e libera cada página física via PMM.free().
-    // Kernel mappings (root) são compartilhados e não liberados.
-    if (space.level3) |l3| {
-        for (0..512) |i| {
-            const entry = l3.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
-                }
-            }
-            l3.entries[i] = 0;
-        }
+/// Addresses that the test hook received.
+var released_addresses_by_test: [8]u64 = @splat(0);
+
+/// Number of addresses that the test hook received.
+var page_released_by_test: usize = 0;
+
+/// Test hook: records the address instead of returning it to a manager.
+fn recordRelease(address: u64) void {
+    if (page_released_by_test < released_addresses_by_test.len) {
+        released_addresses_by_test[page_released_by_test] = address;
     }
-    if (space.level2) |l2| {
-        for (0..512) |i| {
-            const entry = l2.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
-                }
-            }
-            l2.entries[i] = 0;
-        }
-    }
-    if (space.level1) |l1| {
-        for (0..512) |i| {
-            const entry = l1.entries[i];
-            if (entry & Flags.present != 0) {
-                const addr = entry & address_mask;
-                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
-                    physical.manager.free(addr);
-                }
-            }
-            l1.entries[i] = 0;
-        }
-    }
+    page_released_by_test += 1;
 }

@@ -14,8 +14,8 @@
     "policy": "docs/VERSIONING.md",
     "tag_created": false
   },
-  "snapshot_date": "2026-10-31",
-  "audit_type": "source_tree_review_plus_executed_build_and_host_tests",
+  "snapshot_date": "2026-11-01",
+  "audit_type": "source_tree_review_plus_executed_build_and_host_tests_plus_implementation_of_audit_defects_that_need_no_hypervisor",
   "toolchain": {
     "zig_version": "0.17.0",
     "declared_minimum": "0.17.0",
@@ -23,7 +23,7 @@
     "note": "GitHub releases of ziglang publish 0.15.x; 0.17.0 must be obtained from a channel that publishes it"
   },
   "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
-  "percentage_note": "no percentage was changed by the 2026-10-31 audit, by the P1 readiness work or by the architecture/market/roadmap study; planning documents and ADRs record intent and constraints, not behaviour, and adding them is not evidence of implementation",
+  "percentage_note": "no percentage was moved by the planning documents or the ADRs. The single change in this snapshot is virtual_memory 45 -> 50: unmapping now returns the frames the space owns (ownership bit), an address space is destroyed with its private chain and its slot, and the slot is reused with a generation; each of those has a host test. The interrupt registry, the single tick source and the capability destruction are recorded as implementation evidence inside their subsystems but did not move the percentage, because their execution paths have never run. scheduler 55 -> 60 in the follow-up of the same day: its policy now runs in the host suite (12 tests) and writing them closed three preemption defects; the lock, the per-CPU ownership and the idle task remain open, so it is not higher. scheduler 60 -> 62 in the third follow-up of the day: the policy moved into a pure module (K3 step 2), a wait queue with deadlines and a mutex with ownership and direct handoff exist with 21 tests, but nothing in the kernel calls them yet and the scheduler still has no lock, which is why the move is two points and not more. scheduler 62 -> 68 in the fourth follow-up of the day: the state lock with per-CPU ownership and the generic blocking primitive exist with host tests (including a four-thread contention test), but no AP has ever run and the mutex has no user in the kernel, so it is not higher.",
   "status_values": [
     "not_started",
     "scaffolding",
@@ -52,37 +52,42 @@
     {
       "command": "zig version",
       "result": "0.17.0",
-      "date": "2026-10-31"
+      "date": "2026-11-01"
     },
     {
       "command": "zig build",
-      "result": "success: 14/14 steps; kynox-boot.efi 185344 B, kynox-kernel (debug) 66777813 B, kynox.img 128 MiB / 32731 clusters",
-      "date": "2026-10-31"
+      "result": "success: image written (kynox-boot.efi 185344 B, kynox.img 128 MiB / 32731 clusters)",
+      "date": "2026-11-01"
     },
     {
-      "command": "zig build test",
-      "result": "success: 49/49 steps, 716/716 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests, which grew from 15 to 22 tests with the kernel planning documents)",
-      "date": "2026-10-31"
+      "command": "zig build test --summary all (fresh cache)",
+      "result": "success: 52/52 steps, 828/828 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 159, including the per-CPU segment, the AP trampoline and the reschedule refusals; no QEMU target executed)",
+      "date": "2026-11-01"
+    },
+    {
+      "command": "zig test kernel/task_root.zig --test-filter task.scheduler.test. (host, Zig 0.17.0)",
+      "result": "success: 12/12 tests (11 named policy tests + the unnamed root test block); run to print the names that the filtered artifact reports",
+      "date": "2026-11-01"
     },
     {
       "command": "zig build docs-check",
-      "result": "success: docs: every relative link resolves across all Markdown files, including the six planning documents and ADR-0004…0007",
-      "date": "2026-10-31"
+      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json",
+      "date": "2026-11-01"
     },
     {
       "command": "zig build qemu-test",
-      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
-      "date": "2026-10-31"
+      "result": "not executed: no qemu-system-x86_64 and no OVMF firmware in the environment",
+      "date": "2026-11-01"
     },
     {
       "command": "zig build qemu-storage-test",
-      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
-      "date": "2026-10-31"
+      "result": "not executed: no qemu-system-x86_64 and no OVMF firmware in the environment",
+      "date": "2026-11-01"
     },
     {
       "command": "zig build qemu-interactive-test",
-      "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
-      "date": "2026-10-31"
+      "result": "not executed: no qemu-system-x86_64 and no OVMF firmware in the environment",
+      "date": "2026-11-01"
     }
   ],
   "planning_documents": [
@@ -237,7 +242,25 @@
       "adrs": []
     }
   ],
-  "runtime_evidence_note": "No QEMU or hardware run was performed. Any runtime statement about the produced image is unverified for this snapshot.",
+  "documentation_index": {
+    "path": "docs/ai/doc-index.json",
+    "entry_point": "docs/ai/README.md",
+    "context_pack": "docs/ai/context-pack.md",
+    "generator": "tools/scripts/gen-doc-index.py",
+    "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
+    "documents": 67,
+    "authorities": [
+      "binding",
+      "current",
+      "record",
+      "audit",
+      "planning",
+      "decision",
+      "reference"
+    ],
+    "note": "every Markdown file of the tree, plus VERSION, LICENSE and this file, is classified with an authority; a document that nobody classified fails the build"
+  },
+  "runtime_evidence_note": "No QEMU or hardware run was performed on 2026-11-01 either: the environment has no qemu-system-x86_64 and no OVMF firmware. The interrupt dispatch, the frame release on unmap, the address-space slot reuse, the tick-source policy, the preemption policy, the wait queue, the mutex and the scheduler state lock are code plus host tests only; no two processors ever contend for the lock in the kernel.",
   "subsystems": [
     {
       "id": "uefi_bootloader",
@@ -277,7 +300,7 @@
     },
     {
       "id": "kernel_cpu_interrupts",
-      "maturity_percent": 60,
+      "maturity_percent": 66,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/",
@@ -288,32 +311,41 @@
         "GDT/TSS/IDT installation with verification markers",
         "exception and interrupt stubs with a single frame shape",
         "deliberate-fault exception self test at the end of boot",
-        "NX enablement enforced before user pages are mapped"
+        "NX enablement enforced before user pages are mapped",
+        "interrupt-line registry (kernel/arch/x86_64/interrupt_registry.zig): one owner per line, second registration refused, unregister, per-line counters, unhandled-line accounting",
+        "the kernel registers the 8254 line and the PS/2 line before interrupts are enabled; the dispatcher no longer hard-codes the vector meanings",
+        "single tick source: timer.TickSource + selectTickSource, both interrupt paths ask the policy before they count or preempt",
+        "the local APIC timer is calibrated and left disarmed while the 8254 owns the tick",
+        "per-CPU segment: 8 task state segments with their own rsp0 and ist1, 8 tables (one descriptor set per base address), 8 double-fault stacks of 16 KiB, and segment.installForCpu(cpu, stack_top) which builds the table, loads the GDT and reloads the data and code segments",
+        "the entry of an AP (kynox_ap_entry) installs the segment of its CPU before it enters its loop, and the scheduler writes rsp0 through segment.tssFor(smp.cpuId())"
       ],
       "limitations": [
         "exception recovery audit incomplete",
-        "per-CPU state incomplete",
+        "per-CPU state incomplete beyond the segment (no per-CPU interrupt state)",
         "no hardware diversity validation",
-        "boot path unverified here"
+        "boot path unverified here",
+        "no AP has reached kynox_ap_entry, so installForCpu has only run for the BSP",
+        "the dispatch path and the tick policy have never run in a VM"
       ],
       "pending_work": [
         "exercise the exception paths in QEMU and record results",
-        "per-CPU GDT/TSS/IST ownership before SMP scheduling"
+        "publish the trampoline below 1 MiB so that an AP reaches kynox_ap_entry"
       ],
       "tests": [
-        "arch-tests (91 tests: segment, frame, paging, spinlock, apic, pci, virtio)"
+        "arch-tests (146 tests: segment, frame, paging, spinlock, apic, acpi, smp, pci, virtio, timer, fpu)",
+        "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (91 tests: segment, frame, paging, spinlock, apic, pci, virtio)"
+          "arch-tests (146 tests: segment, frame, paging, spinlock, apic, acpi, smp, pci, virtio, timer, fpu)"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -357,7 +389,7 @@
     },
     {
       "id": "virtual_memory",
-      "maturity_percent": 45,
+      "maturity_percent": 50,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/paging.zig"
@@ -366,32 +398,38 @@
         "four-level paging with explicit page flags",
         "per-process user windows (code/data/stack offsets in shared/usermode.zig)",
         "W^X encoded where flags are produced, with negative tests",
-        "isUserRange/isUserRangeIn validation used by every user-pointer syscall"
+        "isUserRange/isUserRangeIn validation used by every user-pointer syscall",
+        "software ownership bit (PTE bit 9) records whether the space owns the frame; mapUserPageIn/takeOwnership/unmapUserPageIn honour it",
+        "releaseUserPages detaches the window entries and returns only the owned frames, through an injected release callback (the architecture layer no longer imports the memory manager)",
+        "destroyAddressSpaceReal returns the frames, clears the root/PDPT/PD/PT, forgets the active space and frees the slot",
+        "address-space slot reuse with a per-slot generation; spaceByIdentity(id, generation) refuses a stale identity; liveSpaceCount/spaces_created expose the state"
       ],
       "limitations": [
         "no general VM region allocator",
         "no demand paging, COW or ASLR",
         "no TLB shootdown",
-        "high-half kernel not implemented"
+        "high-half kernel not implemented",
+        "no page-table allocation from the PMM (the pools are static), no region objects, no demand paging/COW, no TLB shootdown",
+        "the release callback is installed at boot; none of this has run in a VM"
       ],
       "pending_work": [
         "region abstraction for user and kernel mappings",
         "TLB invalidation protocol before multi-CPU scheduling"
       ],
       "tests": [
-        "arch-tests (paging subset)"
+        "arch-tests: paging release/ownership/destroy/slot-reuse suite (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (paging subset)"
+          "zig build test (arch-tests, 159 tests)"
         ],
         "commands": [
-          "zig build test"
+          "zig build test --summary all"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "host tests executed on 2026-11-01; no QEMU run, so the tables were never exercised by a processor"
       }
     },
     {
@@ -449,7 +487,7 @@
     },
     {
       "id": "smp",
-      "maturity_percent": 30,
+      "maturity_percent": 60,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
@@ -460,41 +498,59 @@
         "CPU table built from the MADT enabled processors (order preserved, duplicates skipped, max_cpus cap)",
         "BSP identified by APIC id; cpuId() translates the local APIC id through the table",
         "AP stacks, trampoline and the INIT-SIPI-SIPI path",
+        "the trampoline is copied into the page below 1 MiB that the startup IPI names, with its placement validated against the firmware memory map and its identity mapping installed in the kernel tables (installApTrampoline at boot)",
+        "the fields of the block are written in two steps: install (GDT base, far pointer, CR3, EFER bits of the BSP, entry address) and arm (stack and CPU number of one AP, with the ready word cleared before and written last); the offsets come from the symbols of ap_trampoline.s and are validated against the size of the block",
+        "one numbering for the CPUs: the index in the CPU table that comes from the MADT indexes the stacks, is passed to the AP in RDI and is what cpuId() returns; a CPU number the table cannot hold is refused before any IPI",
+        "the AP sets the EFER bits of the BSP (LME and, when the kernel enabled it, NXE) before it loads the kernel CR3: an NX entry with NXE clear is a reserved bit that faults inside the trampoline, where there is no IDT",
+        "an AP that reaches kynox_ap_entry installs its segment, marks itself online and enters the scheduler through a hook (smp.installCpuEntryHook): it adopts a kernel task of its own and gets the idle task of its CPU, so its queue is never empty and current[CPU] is never null",
+        "the reschedule IPI: vector 65 with its gate, its stub and its handler, apic.sendReschedule and smp.reschedule, which refuses the CPU that asks (a self-IPI can be refused by the hardware), an id the table does not have, a CPU that has not registered and a controller that is not mapped",
+        "the boot migrates the second worker to the first online AP (distributeWorkToAps), which is what gives an AP something to run: the tasks of the boot are created by the BSP",
+        "the online count of the CPU table is incremented once per processor: the AP counts itself in registerCpu, and startAps no longer counts it again",
         "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
       "limitations": [
-        "the trampoline is never copied below 1 MiB, so startAps() refuses to start any AP",
-        "no AP has ever run in this tree: no concurrent execution evidence",
+        "no AP has ever answered a startup IPI in this environment: the copy, the fields and the order are code and host tests, not an observed second processor",
+        "no IPI has ever been delivered here: the vector, the gate, the handler and the migration are code and host tests",
+        "an AP has no clock of its own: it is only preempted when another CPU sends it a reschedule",
+        "no TLB shootdown and no migration of a running task",
         "no per-CPU timers/IPIs for scheduling",
+        "the page of the trampoline is checked against the firmware memory map, not against the EBDA pointer at 0x40E",
         "no SMP stress test"
       ],
       "pending_work": [
-        "copy the trampoline to low memory and fill its ready/GDT/CR3/stack fields",
-        "put APs on the scheduler path with per-CPU run queues",
-        "IPI for reschedule and TLB shootdown"
+        "TLB shootdown on the same mechanism (address and generation, with an acknowledgement)",
+        "a per-CPU tick source chosen by timer.TickSource, so an AP is not woken only from outside",
+        "migration of a running task",
+        "IPI for reschedule and TLB shootdown",
+        "record a boot on a machine with more than one processor"
       ],
       "tests": [
-        "arch-tests smp suite: table order, disabled and duplicate processors, BSP by APIC id, empty MADT fallback, max_cpus cap"
+        "arch-tests smp suite: table order, disabled and duplicate processors, BSP by APIC id, empty MADT fallback, max_cpus cap, the unpublished trampoline, an announcement without a copy, one stack per logical CPU, the stack accessor, one count per registered AP, the four refusals of a reschedule and the first online AP",
+        "arch-tests trampoline suite: the vector and the page, refused placements, the copy with every field, arming two APs in a row, refused layouts and truncated 32-bit values"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (128 tests, smp table included)"
+          "arch-tests (159 tests, smp table, the trampoline block and the reschedule included)"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles and the CPU table is host-tested; AP startup is refused until the trampoline exists, and no boot has been observed"
+        "notes": "compiles; the CPU table, the trampoline copy and the per-AP arming are host-tested; no AP has answered a SIPI, and no boot of this tree has been observed"
       }
     },
     {
       "id": "scheduler",
-      "maturity_percent": 55,
+      "maturity_percent": 83,
       "status": "in_progress",
       "evidence": [
         "kernel/task/scheduler.zig",
+        "kernel/task/lock.zig",
+        "kernel/task/policy.zig",
+        "kernel/task/wait.zig",
+        "kernel/task/mutex.zig",
         "kernel/task/context.zig",
         "kernel/arch/x86_64/task.s"
       ],
@@ -502,34 +558,65 @@
         "timer-driven preemption",
         "task contexts and state machine",
         "context-switch assembly",
-        "scheduler statistics"
+        "scheduler statistics",
+        "one clock counts the tick, so the quantum and the timeout math are no longer doubled by two armed timers",
+        "EEVDF choice of the next ready task with a virtual runtime, a deadline and a weight per task",
+        "the quantum decides when a task leaves: a tick with slice left only moves the clock",
+        "the entering task gets the quantum of its slice, so time-slicing is not a once-per-lifetime event",
+        "a preemption that finds no other ready task restores the current one instead of leaving it ready",
+        "the scheduler policy covered by host tests (kernel/task_root.zig, artifact scheduler-tests)",
+        "the policy is a pure module with no globals (`task/policy.zig`): pickNext, shouldPreempt, quantumFor, budgetFor, minVruntime, tested on their own",
+        "a wait queue with FIFO order, a deadline per wait and a remembered wake, so a producer that runs before its waiter cannot lose the wakeup (task/wait.zig)",
+        "a mutex with an owner, a recursion limit and a direct handoff: the ownership moves to the waiter before the wake, so no third task can take it in the interval (task/mutex.zig)",
+        "the channel of the IPC registers its waiters in the wait queue: the queue has its first caller in the kernel, and the queue of waiters is FIFO instead of being the order of the storage array",
+        "a state lock with per-CPU ownership (owner, depth, contentions, re-entries, refused releases) taken by every entry point of the scheduler, released on every path, and counted in the boot report",
+        "blockCurrentOn: the generic blocking primitive over any wait queue, with a deadline written before the node is queued and the wait undone when there is nobody to switch to",
+        "an idle task created at boot by Scheduler.ensureIdle (idempotent, reported as Statistics.idle): a ring 3 task whose body halts the processor with sti; hlt, with 8 KiB of user stack and 8 KiB of kernel stack",
+        "the policy chooses the idle task only when no other task is eligible, whatever its virtual runtime (policy.Entry.idle, policy.idleVruntime), so it is the last resort of the queue and never displaces a real task",
+        "one idle task per CPU, with its own user and kernel stacks: the last resort of a processor belongs to that processor",
+        "an owner per task (Task.cpu): the choice of a CPU skips every task of another processor, so a second CPU cannot take the task, the stack or the idle task of the first; enqueueReady records the owning CPU",
+        "adoptKernelTask: an AP that arrives from the trampoline gets a kernel task of its own (ring 0, its own stack, state running) and becomes current[CPU], so prepareNext has a context to save instead of returning before it reads the queue",
+        "rescheduleCurrent: the handler of the reschedule IPI decides without counting a tick and without charging the slice (decideNext(forced)), so a timeout never depends on another CPU and a task's quantum never shrinks because somebody asked a question",
+        "migrateTo: moves a task to the queue of another CPU (refusing a running task, a terminated one, an id above max_cpus and a move to the current owner), which is the only way a task reaches a processor other than the one that created it",
+        "wakeTask queues the awakened task on the CPU that owns it and requests a reschedule of that CPU when it is another one, instead of silently migrating it to the waker's queue"
       ],
       "limitations": [
-        "effectively BSP-centric",
-        "no migration or fairness policy",
-        "no SMP safety proof"
+        "effectively BSP-centric: no AP has ever run, so the lock is never contended in the kernel (it is contended on the host by four threads)",
+        "the idle task is created and reported at boot, but no hlt of this tree has executed here",
+        "an AP has no clock of its own: the reschedule IPI is the only thing that can make it look at its queue, and no IPI has ever been delivered here",
+        "fairness across CPUs: nothing balances the queues, and a running task cannot be migrated",
+        "the switch to the idle task has never crossed a real context switch (the host tests stop at the decision)",
+        "the mutex has no user in the kernel yet; the end-to-end test is the proof of the chain",
+        "statisticsOf reads the state without the lock, by design (diagnostics)",
+        "no reader/writer lock, no condition variable, no futex-like primitive",
+        "no migration or fairness policy, no SMP safety proof",
+        "the assembly of the switch still does not save FPU/SSE state (audit defect 8)"
       ],
       "pending_work": [
-        "per-CPU run queues",
-        "migration protocol",
-        "fairness/latency metrics"
+        "trampoline below 1 MiB, so that an AP can run and contend the lock",
+        "a machine to observe the halt and an IPI being delivered",
+        "a user of the mutex in the kernel",
+        "reader/writer lock and condition variable on the same queue",
+        "per-CPU run queues with a migration protocol"
       ],
       "tests": [
+        "task-tests (72)",
         "arch-tests (task/context pure parts)",
-        "ipc-tests (blocking wakeups)"
+        "ipc-tests (8 channel tests)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
+          "task-tests (72, including a four-thread lock contention test, an end-to-end mutex/scheduler test, the idle-task choice, the ownership of a task by a CPU, the reschedule that is not a tick and the migration)",
           "arch-tests (task/context pure parts)",
-          "ipc-tests (blocking wakeups)"
+          "ipc-tests (8 channel tests)"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "the policy, the lock, the queue, the mutex and the scheduler state machine are executed on the host; the context switch itself has never run here, no two processors ever contend in the kernel, and the halt of the idle task has never executed"
       }
     },
     {
@@ -545,13 +632,15 @@
       "implemented": [
         "user-mode tasks with separate address spaces",
         "two embedded native applications exercised by the boot script",
-        "lifecycle probe (normal exit and user fault)"
+        "lifecycle probe (normal exit and user fault)",
+        "the reap of a process releases its address space, its frames and its capability set"
       ],
       "limitations": [
         "no general process creation/teardown API",
         "no resource limits",
         "no isolation stress test",
-        "execution unverified here"
+        "execution unverified here",
+        "24 KiB window per process, no general process API, no threads"
       ],
       "pending_work": [
         "process lifecycle API",
@@ -570,9 +659,9 @@
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -640,7 +729,8 @@
       "implemented": [
         "bounded channels with send/receive",
         "blocking receive and receive with timeout",
-        "wait/wakeup integrated with the scheduler"
+        "wait/wakeup integrated with the scheduler",
+        "the waiters of a channel live in the shared wait queue (task/wait.zig), in FIFO order, with a deadline and with the expiry hook that writes the result before the wake"
       ],
       "limitations": [
         "no shared-memory IPC",
@@ -652,19 +742,19 @@
         "service registry"
       ],
       "tests": [
-        "ipc-tests (6)"
+        "ipc-tests (8 channel tests)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "ipc-tests (6)"
+          "ipc-tests (8 channel tests)"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "the channel registers waiters in the shared wait queue; the delivery path itself has never run, because no VM is available"
       }
     },
     {
@@ -679,12 +769,17 @@
         "typed capability kinds",
         "per-holder rights",
         "delegation and revocation",
-        "enforcement in syscall paths (send/receive/display/input)"
+        "enforcement in syscall paths (send/receive/display/input)",
+        "destroy(handle) frees a table entry and removes the handle from every holder before the walk completes",
+        "destroySubject(kind, subject) and releaseProcess(process) implement the object lifecycle",
+        "process.reapFull releases the capability set and destroys the capabilities that named the dead process; the no-op security.revokeCapabilities stub is removed"
       ],
       "limitations": [
         "incomplete object coverage",
         "no auditing",
-        "no adversarial tests"
+        "no adversarial tests",
+        "handles still have no generation and no per-process namespace",
+        "quotas and audit trail do not exist"
       ],
       "pending_work": [
         "cover every kernel object",
@@ -692,7 +787,8 @@
       ],
       "tests": [
         "security-tests (18)",
-        "ipc-tests"
+        "ipc-tests",
+        "security-tests: destroy/destroySubject/releaseProcess lifetime suite (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
@@ -703,9 +799,9 @@
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "compiles; runtime behaviour requires the QEMU suite, which was not executed"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -1078,13 +1174,16 @@
         "kernel/drivers/kvdi/"
       ],
       "implemented": [
-        "VirtIO network identifiers/features and module scaffolding only"
+        "VirtIO network identifiers/features and module scaffolding only",
+        "net_transmit returns error.NotImplemented instead of reporting a delivery that never happened",
+        "virtio_net.zig is part of a test root, so its ten header-layout tests run"
       ],
       "limitations": [
         "no working driver",
         "no Ethernet/ARP/IP/UDP/TCP",
         "no sockets",
-        "no network service"
+        "no network service",
+        "no device, no queues, no frames, no stack"
       ],
       "pending_work": [
         "implement the VirtIO-net driver over KVDI",
@@ -1094,16 +1193,16 @@
         "none"
       ],
       "validation": {
-        "status": "not_executed",
+        "status": "host_tests_passed",
         "host_tests": [
           "none"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "groundwork only; no functional network path"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -1398,16 +1497,21 @@
         "kernel/"
       ],
       "implemented": [
-        "21 host test artifacts, 661 tests, in zig build test",
+        "24 host test artifacts, 828 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
-        "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)"
+        "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
+        "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
+        "828 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration)",
+        "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 63 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
+        "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 67 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
         "no recorded QEMU result in the repository",
-        "eight files unreachable from any target",
+        "six files unreachable from any target",
         "no fuzzing",
         "no hardware matrix"
       ],
@@ -1418,19 +1522,19 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 43/43 steps, 661/661 tests"
+        "zig build test: 52/52 steps, 828/828 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "all 19 host artifacts"
+          "all 24 host artifacts"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "615/615 passed on 2026-10-31; QEMU suites not executed (no QEMU/OVMF)"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -1445,12 +1549,15 @@
         "scheduler/syscall/graphics counters",
         "TSC-based cycle conversion",
         "framebuffer write benchmark at boot",
-        "serial diagnostics"
+        "serial diagnostics",
+        "per-interrupt-line counters and unhandled-interrupt accounting, readable from the serial log"
       ],
       "limitations": [
         "benchmark sources are not in the build graph (tools/benchmarks/syscall_bench.zig unreachable)",
         "no baselines, percentiles or thresholds",
-        "no cross-hardware data"
+        "no cross-hardware data",
+        "no baselines or percentiles",
+        "the benchmark source is still outside the build graph"
       ],
       "pending_work": [
         "wire benchmarks into a target",
@@ -1460,16 +1567,16 @@
         "none"
       ],
       "validation": {
-        "status": "not_executed",
+        "status": "host_tests_passed",
         "host_tests": [
           "none"
         ],
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-10-31",
+        "last_run": "2026-11-01",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "no measurement claim is made"
+        "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
     },
     {
@@ -1576,6 +1683,78 @@
       "severity": "P3",
       "summary": "no recorded QEMU result anywhere in the repository",
       "status": "open"
+    },
+    {
+      "id": "K-04",
+      "severity": "P1",
+      "summary": "unmap never freed a frame; closed: software ownership bit + release callback + host tests (no runtime evidence)",
+      "status": "closed"
+    },
+    {
+      "id": "K-05",
+      "severity": "P1",
+      "summary": "capability table could not be freed; closed: destroy/destroySubject/releaseProcess with host tests",
+      "status": "closed"
+    },
+    {
+      "id": "K-06",
+      "severity": "P1",
+      "summary": "no interrupt registration API; closed in code (interrupt_registry.zig + boot registration + host tests); the dispatch path has never run",
+      "status": "partially_closed"
+    },
+    {
+      "id": "K-07",
+      "severity": "P2",
+      "summary": "apic <-> timer import cycle; closed: the unused import was removed",
+      "status": "closed"
+    },
+    {
+      "id": "K-11",
+      "severity": "P2",
+      "summary": "net_transmit returned success without transmitting; closed: error.NotImplemented plus a test",
+      "status": "closed"
+    },
+    {
+      "id": "K-15",
+      "severity": "P3",
+      "summary": "dead files and a dead constant; closed: elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig deleted, paging.window_pages removed",
+      "status": "closed"
+    },
+    {
+      "id": "K-C6",
+      "severity": "P1",
+      "summary": "two tick sources counted and preempted; closed in code: timer.TickSource policy, the local APIC timer stays disarmed, host tests",
+      "status": "partially_closed"
+    },
+    {
+      "id": "K-ARCH-TESTS",
+      "severity": "P1",
+      "summary": "the arch-tests artifact did not compile, so the reported 716 tests excluded the architecture suite; closed: fpu.zig operand names and the paging import; 736 tests measured",
+      "status": "closed"
+    },
+    {
+      "id": "K-01",
+      "severity": "P1",
+      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, blockCurrentOn gives the mutex its blocking primitive, the idle task is created at boot and chosen only when nothing else can run, and the segment of the CPU (rsp0, ist1, its own table) is installed by the entry of an AP. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the trampoline is now published below 1 MiB, INIT/SIPI are sent, the AP enters the scheduler with a task of its own and a reschedule IPI can wake it with work, but no AP has answered, no IPI has been delivered and the idle task has never halted here",
+      "status": "partially_closed"
+    },
+    {
+      "id": "K-02",
+      "severity": "P2",
+      "summary": "the synchronisation primitives the kernel needs did not exist: no mutex with an owner, no wait queue, and a wait-queue stub whose dequeue returned a field that nothing set. A mutex (owner, recursion, direct handoff) and a wait queue (FIFO, deadlines, remembered wake) now exist with 21 host tests; no kernel path calls them yet",
+      "status": "partially_closed"
+    },
+    {
+      "id": "K-16",
+      "severity": "P3",
+      "summary": "kernel/task/runqueue.zig was a stub that dequeued without shifting and was imported by nothing; deleted. The per-CPU ready queue of the scheduler is the real one, and it is still not safe under SMP because there is no lock",
+      "status": "closed"
+    },
+    {
+      "id": "K-17",
+      "severity": "P3",
+      "summary": "the scheduler called itself inside one decision (tick -> expiry -> wake -> enqueue) with no way to say so, which is why a plain spinlock would have deadlocked on the first tick that expired a wait; the state lock now knows its CPU and counts the re-entries instead. The counters are reported at boot",
+      "status": "closed"
     }
   ],
   "known_documentation_mismatches": [
@@ -1583,6 +1762,8 @@
     "The SDK previously documented ABI level 9 and \"no new syscall numbers\". Both the SDK and the kernel now alias shared/syscall_abi.zig (revision 1); docs/specs/syscall-abi.md is the reference.",
     "kernel/arch/x86_64/virtio.zig duplicates the split virtqueue that KVDI actually programs, and the boot marker virtio: split queue layout ok currently proves the duplicate (ADR-0002).",
     "kernel/arch/x86_64/virtio_blk.zig used to reference a non-existent docs/adr/ADR-F04-block-driver-proposta.md; corrected. ADRs live in docs/decisions/ per strategy.md.",
-    "No CI result or QEMU transcript has ever been recorded in the repository; README and release notes state only executed results. The 2026-10-31 attempts are recorded as failures in docs/validation/qemu.md."
+    "No CI result or QEMU transcript has ever been recorded in the repository; README and release notes state only executed results. The 2026-10-31 attempts are recorded as failures in docs/validation/qemu.md.",
+    "docs/PROJECT_STATUS.md reported 716 host tests for a tree whose arch-tests artifact did not compile; corrected to the measured 736 on 2026-11-01, and to 748 when the scheduler policy tests were added the same day.",
+    "docs/architecture/k4-process-model.md and docs/decisions/ADR-K4-001 still list kernel/task/wait.zig and kernel/task/runqueue.zig as missing: wait.zig exists since 2026-11-01 (rewritten, not a stub) and runqueue.zig was deleted as dead code. The two documents are dated planning records and keep their wording; the status files carry the current state."
   ]
 }

@@ -184,18 +184,97 @@ const entry_count = 7;
 /// Type of a present and available 64 bit task state segment.
 const task_type: u32 = 0x89;
 
-/// The table itself, aligned as the architecture requires.
-var table: [entry_count]Entry align(16) = @splat(.{ .low = 0, .high = 0 });
+/// The number of processors that may hold a task state segment.
+///
+/// It repeats `smp.max_cpus` so that this module does not import the SMP table
+/// for one number; `smp.zig` and the scheduler check the two at comptime. Eight
+/// segments cost 8 x 104 bytes, and each one has a stack of its own for the
+/// double fault.
+pub const max_cpus = 8;
 
-/// The pointer loaded into the `GDTR` register.
-var table_pointer: GdtPointer align(8) = .{ .limit = 0, .base = 0 };
+/// The task state segment of each processor.
+///
+/// The audit of 2026-10-31 listed a single global segment as defect 2: "a single
+/// global TSS with one `rsp0` means that ring 3 on an AP is impossible, and a
+/// second processor would overwrite the stack of the first". The structure is
+/// now one per CPU, and so is the table that describes it: a descriptor is
+/// bound to a base address, so a second CPU needs a second descriptor in a
+/// second table. `tss` (the segment of the BSP) is kept as the name the rest of
+/// the kernel used, and `tssFor` is the per-CPU accessor.
+pub var tss_per_cpu: [max_cpus]TaskStateSegment align(16) = @splat(.{});
 
-/// The task state segment of the kernel.
-pub var tss: TaskStateSegment align(16) = .{};
+/// The segment of the boot processor.
+///
+/// Kept for the code that runs before the table of the processors is known; the
+/// scheduler uses `tssFor(cpuId())`, which is the same object for the BSP.
+pub const tss: *TaskStateSegment = &tss_per_cpu[0];
 
-/// Stack used by the double fault handler, the only interrupt that may
-/// arrive while another one is being handled.
-var double_fault_stack: [16 * 1024]u8 align(16) = undefined;
+/// The stack of the double fault handler of each processor.
+///
+/// The double fault is the only interrupt that may arrive while another one is
+/// being handled, so its stack cannot be the one of the interrupt that faulted.
+/// One stack per CPU, because two processors that shared it would overwrite each
+/// other's frame.
+var double_fault_stacks: [max_cpus][16 * 1024]u8 align(16) = @splat(@splat(0));
+
+/// The tables that describe the segments of each processor.
+var tables: [max_cpus][entry_count]Entry align(16) = @splat(@splat(.{ .low = 0, .high = 0 }));
+
+/// The pointers of the tables of each processor.
+var table_pointers: [max_cpus]GdtPointer align(8) = @splat(.{ .limit = 0, .base = 0 });
+
+/// The segment of a processor.
+///
+/// A CPU number above the limit is clamped to the last segment instead of
+/// indexing outside the array: the caller is a scheduler that already clamps its
+/// own tables, and a segment that is wrong is better than a corrupt read.
+pub fn tssFor(cpu: u8) *TaskStateSegment {
+    return &tss_per_cpu[@min(cpu, max_cpus - 1)];
+}
+
+/// The top of the double fault stack of a processor.
+pub fn doubleFaultStackTop(cpu: u8) u64 {
+    const stack = &double_fault_stacks[@min(cpu, max_cpus - 1)];
+    return @intFromPtr(stack) + stack.len;
+}
+
+/// The bytes of the table of a processor, as the processor reads them.
+///
+/// The result is a copy: a test can inspect the descriptors without loading
+/// them, and `installForCpu` copies the same bytes into the table that the CPU
+/// uses.
+pub fn buildTable(tss_address: u64) [entry_count]Entry {
+    var table: [entry_count]Entry = undefined;
+
+    // The null descriptor, the code and data segments of both privilege levels
+    // and the task state segment, which occupies two entries.
+    table[0] = .{ .low = 0, .high = 0 };
+    table[1] = codeSegment(0x9A, 0x0A); // ring 0 code, long mode
+    table[2] = dataSegment(0x92, 0x0C); // ring 0 data
+    table[3] = codeSegment(0xFA, 0x0A); // ring 3 code, long mode
+    table[4] = dataSegment(0xF2, 0x0C); // ring 3 data
+    const task = taskSegment(tss_address, @intCast(tss_size - 1));
+    table[5] = task[0];
+    table[6] = task[1];
+
+    return table;
+}
+
+/// The base address that the task descriptor of a table describes.
+///
+/// The reverse of `taskSegment`, and the check that the two halves of the
+/// descriptor carry the address the caller asked for.
+pub fn taskSegmentBase(table: *const [entry_count]Entry) u64 {
+    const low = table[5];
+    const high = table[6];
+
+    const base_low: u64 = @as(u64, low.low >> 16);
+    const base_mid: u64 = @as(u64, (low.high >> 0) & 0xFF);
+    const base_high: u64 = @as(u64, (low.high >> 24) & 0xFF);
+    const base_top: u64 = @as(u64, high.low);
+
+    return base_low | (base_mid << 16) | (base_high << 24) | (base_top << 32);
+}
 
 /// Builds a flat code segment descriptor.
 fn codeSegment(access: u8, flags: u8) Entry {
@@ -237,29 +316,32 @@ fn taskSegment(base: u64, limit: u16) [2]Entry {
 /// `kernel_stack_top` is the top of the stack the kernel uses, it becomes
 /// the stack of ring 0 when an interrupt arrives from user mode.
 pub fn install(kernel_stack_top: u64) void {
-    // The null descriptor, the code and data segments of both privilege
-    // levels and the task state segment.
-    table[0] = .{ .low = 0, .high = 0 };
-    table[1] = codeSegment(0x9A, 0x0A); // ring 0 code, long mode
-    table[2] = dataSegment(0x92, 0x0C); // ring 0 data
-    table[3] = codeSegment(0xFA, 0x0A); // ring 3 code, long mode
-    table[4] = dataSegment(0xF2, 0x0C); // ring 3 data
+    installForCpu(0, kernel_stack_top);
+}
 
-    tss.rsp0 = kernel_stack_top;
-    tss.ist1 = @intFromPtr(&double_fault_stack) + double_fault_stack.len;
+/// Installs the segments and the task state segment of one processor.
+///
+/// Every processor builds its own table, because the descriptor of the task
+/// state segment holds the address of the segment: two processors that shared a
+/// table would share one `rsp0`, which is exactly the defect that the audit
+/// named. The BSP calls this with CPU 0 at boot; an AP calls it with its own
+/// number when it starts, and until it does, its segment exists but nothing
+/// loads it.
+pub fn installForCpu(cpu: u8, kernel_stack_top: u64) void {
+    const index = @min(cpu, max_cpus - 1);
+    const segment_of_cpu = &tss_per_cpu[index];
 
-    // The limit of the segment is the offset of its last byte.
-    const task = taskSegment(@intFromPtr(&tss), @intCast(tss_size - 1));
-    table[5] = task[0];
-    table[6] = task[1];
+    segment_of_cpu.rsp0 = kernel_stack_top;
+    segment_of_cpu.ist1 = doubleFaultStackTop(@intCast(index));
 
-    table_pointer = .{
+    tables[index] = buildTable(@intFromPtr(segment_of_cpu));
+    table_pointers[index] = .{
         .limit = @intCast(entry_count * @sizeOf(Entry) - 1),
-        .base = @intFromPtr(&table),
+        .base = @intFromPtr(&tables[index]),
     };
 
     // The instruction has no register form, the accessors are in assembly.
-    kynox_load_gdt(&table_pointer);
+    kynox_load_gdt(&table_pointers[index]);
 
     // The data segments are reloaded first, the code segment follows with a
     // far jump.
@@ -284,8 +366,14 @@ pub fn readTablePointer() GdtPointer {
 
 /// Verifies that the table that is active is the one the kernel installed.
 pub fn verify() bool {
+    return verifyForCpu(0);
+}
+
+/// Verifies that the table that is active is the one of a processor.
+pub fn verifyForCpu(cpu: u8) bool {
+    const index = @min(cpu, max_cpus - 1);
     const pointer = readTablePointer();
-    return pointer.base == @intFromPtr(&table) and
+    return pointer.base == @intFromPtr(&tables[index]) and
         pointer.limit == entry_count * @sizeOf(Entry) - 1;
 }
 
@@ -361,4 +449,52 @@ test "TSS descriptor stores the upper half of the TSS base" {
     try testing.expectEqual(@as(u32, 0xdef0), entries[0].low >> 16);
     try testing.expectEqual(@as(u32, 0xbc), entries[0].high & 0xff);
     try testing.expectEqual(@as(u32, 0x9a), entries[0].high >> 24);
+}
+
+test "each processor has its own task state segment and its own stack of ring 3" {
+    // Defect 2 of the audit: a single global segment with one `rsp0`. The
+    // structures are now per CPU, and the two can hold different stacks at the
+    // same time — which is the whole point.
+    const first = tssFor(0);
+    const second = tssFor(1);
+
+    try testing.expect(first != second);
+
+    first.rsp0 = 0x8000_1000;
+    second.rsp0 = 0x9000_2000;
+    try testing.expectEqual(@as(u64, 0x8000_1000), first.rsp0);
+    // Writing the segment of one CPU did not touch the segment of the other.
+    try testing.expectEqual(@as(u64, 0x8000_1000), tssFor(0).rsp0);
+    try testing.expectEqual(@as(u64, 0x9000_2000), second.rsp0);
+
+    // The stack of the double fault is per CPU as well, and a CPU number above
+    // the limit is clamped instead of reading outside the table.
+    try testing.expect(doubleFaultStackTop(0) != doubleFaultStackTop(1));
+    try testing.expect(doubleFaultStackTop(0) > @intFromPtr(first));
+    try testing.expectEqual(&tss_per_cpu[max_cpus - 1], tssFor(200));
+
+    // The name that the rest of the kernel used is the segment of the BSP.
+    try testing.expectEqual(tssFor(0), tss);
+}
+
+test "the table of a processor names the task state segment of that processor" {
+    const first_address: u64 = 0x1234_5678_9abc_def0;
+    const second_address: u64 = 0x0000_0000_8000_0100;
+
+    const first = buildTable(first_address);
+    const second = buildTable(second_address);
+
+    // The descriptor carries the whole 64-bit address, and the two tables
+    // therefore differ: a CPU cannot share a table with another CPU.
+    try testing.expectEqual(first_address, taskSegmentBase(&first));
+    try testing.expectEqual(second_address, taskSegmentBase(&second));
+    try testing.expect(first[5].low != second[5].low or first[6].low != second[6].low);
+
+    // The rest of the table is the same for every processor: the null
+    // descriptor, the two rings and the limit of the segment.
+    try testing.expectEqual(first[0].low, second[0].low);
+    try testing.expectEqual(first[1].low, second[1].low);
+    try testing.expectEqual(first[3].high, second[3].high);
+    try testing.expectEqual(@as(u32, 0x89), (first[5].high >> 8) & 0xFF);
+    try testing.expectEqual(@as(u32, tss_size - 1), first[5].low & 0xFFFF);
 }

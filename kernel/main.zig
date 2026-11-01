@@ -48,6 +48,7 @@ const segment = @import("arch/x86_64/segment.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
 const timer = @import("arch/x86_64/timer.zig");
 const smp = @import("arch/x86_64/smp.zig");
+const ap_trampoline = @import("arch/x86_64/ap_trampoline.zig");
 const acpi = @import("arch/x86_64/acpi.zig");
 const apic = @import("arch/x86_64/apic.zig");
 const ioapic = @import("arch/x86_64/ioapic.zig");
@@ -793,6 +794,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     installSmp();
     installIoApic();
     smp.startAps();
+    distributeWorkToAps();
 
     // The main task waits until the workers have been scheduled a few
     // times, which proves that the scheduler works.
@@ -950,7 +952,44 @@ fn installSegments() void {
     serial.printLine("[KNK] segments: gdt installed and verified", .{});
 }
 
-/// Installs the interrupt descriptor table of the kernel.
+/// The handler of the line of the 8254.
+///
+/// It lives in the kernel, and not in `interrupt.zig`, because it is policy: the
+/// driver of the interrupt controller must not know the scheduler. The work of
+/// one tick is the clock of the timer, the expiry of the waits of the input, and
+/// the decision of the scheduler; the registry only knows that somebody owns the
+/// line.
+fn pitTick(vector: u64) bool {
+    _ = vector;
+
+    const owns_tick = timer.drivesScheduler(.pit);
+    timer.onTick(.pit);
+    if (!owns_tick) return false;
+
+    syscall.inputWaitTick();
+
+    return scheduler.scheduler.tick(syscall.failure(syscall.Error.timeout));
+}
+
+/// The handler of the line of the PS/2 controller.
+///
+/// The controller delivers one byte per interrupt; the decoder of the keyboard
+/// turns the bytes into events and hands them to the queue of the interrupt
+/// context.
+fn ps2Interrupt(vector: u64) bool {
+    _ = vector;
+    ps2.onInterrupt();
+    return false;
+}
+
+/// Installs the interrupt descriptor table of the kernel and the owners of the
+/// lines that the platform delivers.
+///
+/// The registration happens before any interrupt can arrive: the timer enables
+/// the interrupts later, and a line that fires before its owner exists is
+/// counted as unhandled instead of being dispatched to a guess. The two lines
+/// below are the only ones that the 8259 forwards today; a driver that comes
+/// next registers its own line and does not edit the dispatcher.
 fn installInterrupts() void {
     interrupt.install();
 
@@ -959,13 +998,51 @@ fn installInterrupts() void {
         port.haltForever();
     }
 
-    serial.printLine("[KNK] interrupts: idt installed and verified", .{});
+    const timer_line: u64 = interrupt.first_hardware_vector;
+    const keyboard_line: u64 = interrupt.first_hardware_vector + 1;
+
+    interrupt.register(timer_line, "8254", pitTick) catch |err| {
+        serial.printLine("[KNK] FATAL: the timer line could not be registered ({s})", .{@errorName(err)});
+        port.haltForever();
+    };
+    interrupt.register(keyboard_line, "ps2", ps2Interrupt) catch |err| {
+        serial.printLine("[KNK] FATAL: the keyboard line could not be registered ({s})", .{@errorName(err)});
+        port.haltForever();
+    };
+
+    serial.printLine("[KNK] interrupts: idt installed and verified, lines {d} ({s}) and {d} ({s}) registered", .{
+        timer_line,
+        interrupt.registeredName(timer_line) orelse "none",
+        keyboard_line,
+        interrupt.registeredName(keyboard_line) orelse "none",
+    });
 }
 
 /// Loads the task state segment of the kernel.
 fn installTaskState() void {
     segment.loadTaskState();
     serial.printLine("[KNK] segments: task state segment loaded", .{});
+    // Defect 2 of the audit of 2026-10-31: a single global segment with a single
+    // `rsp0` made ring 3 on an AP impossible. The segment is now per CPU, and
+    // this line reports the one of the BSP and the stack of its double fault.
+    serial.printLine("[KNK] segments: {d} task state segments, ist1 of the BSP at 0x{x}, table verified {s}", .{
+        segment.max_cpus,
+        segment.doubleFaultStackTop(0),
+        if (segment.verifyForCpu(0)) "yes" else "no",
+    });
+}
+
+/// Returns a page of a process window to the physical memory manager.
+///
+/// The page tables describe physical addresses; they do not know whether an
+/// address came from the manager. The callback is the only place that can
+/// answer that, so the tables ask it instead of importing the manager, and the
+/// checks below refuse the addresses that the manager never handed out.
+fn releasePhysicalPage(address: u64) void {
+    if (address < physical.minimum_address) return;
+    if (address >= physical.managed_address_space) return;
+    if (address % paging.page_size != 0) return;
+    physical.manager.free(address);
 }
 
 /// Prepares the physical memory manager.
@@ -978,6 +1055,11 @@ fn installMemoryManager() void {
     physical.manager.reserve(@intFromPtr(&memory_map), @sizeOf(@TypeOf(memory_map)));
     physical.manager.reserve(@intFromPtr(&heap_region), heap_region.len);
     physical.manager.reserve(@intFromPtr(&physical.manager.bitmap), physical.manager.bitmap.len);
+
+    // The page tables release the pages of a reaped process through this
+    // callback. It is installed here, after the manager exists, and the
+    // tables never see the manager itself.
+    paging.installPageReleaseHook(&releasePhysicalPage);
 
     const statistics = physical.manager.statistics;
     serial.printLine("[KNK] memory: {d} pages, {d} used, {d} free", .{
@@ -2634,10 +2716,19 @@ fn installSmp() void {
     // Inicializa as pilhas dos APs (estrutura de dados de SMP).
     smp.initAps();
 
+    // O trampolim vai para a pagina que a SIPI nomeia. Antes disso `startAps`
+    // recusa enviar IPIs: um AP iniciado numa pagina sem o bloco executa o que
+    // estiver la.
+    installApTrampoline();
+
     const apic_id = apic.readApicId();
     serial.printLine("[KNK] smp: APIC local id={d}, base=0x{x}", .{
         apic_id, lapic_base,
     });
+
+    // O que um AP faz quando chega ao kernel: uma tarefa propria, a tarefa
+    // ociosa da CPU e o retorno ao laco de espera com interrupcoes ligadas.
+    smp.installCpuEntryHook(&enterCpuScheduler);
 
     // A tabela de CPUs vem da MADT. Antes este passo assumia ids sequenciais
     // (BSP=0, APs=1..n); agora cada processador habilitado vira uma entrada
@@ -2647,6 +2738,137 @@ fn installSmp() void {
         known, smp.bspCpuIndex(), smp.apCount(),
     });
     serial.printLine("[KNK] smp: AP stacks initialized (max_cpus={d})", .{smp.max_cpus});
+}
+
+/// Gives the first online application processor something to run.
+///
+/// A processor with an empty queue halts, and the tasks of the boot are created
+/// by the BSP: without a migration an AP would have an idle task and nothing
+/// else, whatever the reschedule IPI could do for it. The worker that is moved
+/// is one of the two of the boot, and the migration would be pointless on a
+/// machine with one processor, so the reason is logged instead of a silent
+/// success.
+fn distributeWorkToAps() void {
+    const ap = smp.firstOnlineAp() orelse {
+        serial.printLine("[KNK] smp: no AP online; the workers stay on the BSP", .{});
+        return;
+    };
+
+    const task = ap_worker orelse {
+        serial.printLine("[KNK] smp: cpu={d} online, but no worker to migrate", .{ap});
+        return;
+    };
+
+    if (scheduler.scheduler.migrateTo(task, ap)) {
+        serial.printLine("[KNK] smp: worker task {d} moved to cpu={d}", .{ task.id, ap });
+    } else {
+        serial.printLine("[KNK] smp: worker task {d} stayed on the BSP (migration refused)", .{task.id});
+    }
+}
+
+/// Puts an application processor into the scheduler.
+///
+/// Called by `kynox_ap_entry` on the processor itself, after it installed its
+/// own segment. Two things happen, and each one is a precondition of the next:
+///
+///   1. the CPU gets a **task of its own** (`adoptKernelTask`). A switch saves
+///      the context of the task that leaves, and the only thing an AP has to
+///      save at this point is itself. Without the task, `current[cpu]` is null,
+///      `prepareNext` returns before it looks at the queue, and the processor
+///      waits with work ready beside it;
+///   2. the CPU gets its **idle task** (`ensureIdle`), which is the last resort
+///      of that queue and belongs to that CPU only.
+///
+/// Then the AP returns to its loop, which waits with `sti; hlt`: interrupts are
+/// enabled by the loop, not here, and an interrupt that arrives before it is
+/// simply pending.
+///
+/// What this does **not** do: it does not arm a clock for the AP. The kernel has
+/// one tick source by policy (`timer.TickSource`), and the local timer of the
+/// BSP is calibrated and left disarmed while the 8254 owns the tick. An AP wakes
+/// only on an interrupt addressed to it, and nothing sends one yet — the
+/// reschedule IPI is the next step. The AP enters the scheduler and sleeps; it
+/// does not yet take a task.
+fn enterCpuScheduler(cpu_index: u8, kernel_stack: []u8) void {
+    const top = @intFromPtr(kernel_stack.ptr) + kernel_stack.len;
+    const task = scheduler.scheduler.adoptKernelTask(cpu_index, top & ~@as(u64, 0xF), kernel_stack) orelse {
+        serial.printLine("[KNK] smp: cpu={d} arrived with no room for its task; it waits without a queue", .{cpu_index});
+        return;
+    };
+
+    const idle = scheduler.scheduler.ensureIdle(cpu_index);
+    serial.printLine("[KNK] smp: cpu={d} entered the scheduler as task {d}, idle task {d}", .{
+        cpu_index,
+        task.id,
+        if (idle) |value| @as(i64, @intCast(value.id)) else @as(i64, -1),
+    });
+}
+
+/// Publishes the trampoline of the APs in the low page that a startup IPI names.
+///
+/// Three things have to be true before an AP can be started, and each one is a
+/// separate refusal instead of a silent failure:
+///
+///   * the page must be usable RAM according to the map the firmware handed
+///     over — the physical manager reserves everything below 1 MiB, so nothing
+///     else in the kernel owns it, but "nobody owns it" is not the same as
+///     "the firmware said it is memory";
+///   * the page must be mapped in the tables of the kernel by identity, because
+///     the AP keeps executing at the physical address after it enables paging;
+///   * the copy itself must fit and every field must land inside the block
+///     (`smp.prepareTrampoline` returns which precondition failed).
+///
+/// A failure does not stop the boot: the BSP keeps running alone, and
+/// `startAps` reports that no AP was started and why.
+/// The worker that the boot migrates to an application processor.
+///
+/// It is null when the spawn failed, and it stays on the BSP when no AP answers:
+/// a migration to a processor that is not online would take the task out of the
+/// only queue that has a processor.
+var ap_worker: ?*scheduler.Task = null;
+
+fn installApTrampoline() void {
+    const address = ap_trampoline.base_address;
+    const count = @min(boot_info.memory_map_entries, max_memory_descriptors);
+
+    if (!memmap.isUsableRange(memory_map[0..count], address, ap_trampoline.page_size)) {
+        serial.printLine(
+            "[KNK] ap trampoline: page 0x{x} is not usable RAM in the map; no AP will be started",
+            .{address},
+        );
+        return;
+    }
+
+    paging.mapKernelPage(address, address) catch |err| switch (err) {
+        // The page was already mapped by identity: that is the state we want.
+        error.AlreadyMapped => {},
+        else => {
+            serial.printLine("[KNK] ap trampoline: page 0x{x} could not be mapped ({s}); no AP will be started", .{
+                address, @errorName(err),
+            });
+            return;
+        },
+    };
+
+    // The AP starts with the reset state of EFER. It needs the bits the BSP
+    // uses, read now and not hard-coded: on a processor without the
+    // no-execute feature the write would fault.
+    const efer_bits = cpu.modeBits();
+
+    if (smp.prepareTrampoline(address, paging.rootAddress(), efer_bits)) |err| {
+        serial.printLine("[KNK] ap trampoline: copy at 0x{x} refused ({s}); no AP will be started", .{
+            address, @errorName(err),
+        });
+        return;
+    }
+
+    serial.printLine("[KNK] ap trampoline: {d} bytes at 0x{x} (vector 0x{x}), entry 0x{x}, EFER bits 0x{x}", .{
+        ap_trampoline.kernelLayout().size,
+        address,
+        ap_trampoline.vector,
+        @intFromPtr(&smp.kynox_ap_entry),
+        efer_bits,
+    });
 }
 
 /// Programas the redirection entries of the I/O APIC discovered in the MADT.
@@ -2772,7 +2994,19 @@ fn installTimer() void {
         perf_tsc_hz = @intCast(@as(u128, elapsed_tsc) * timer.ticksPerSecond() / elapsed_ticks);
     }
 
-    serial.printLine("[KNK] timer: {d} Hz, {d} ticks", .{ timer.ticksPerSecond(), timer.ticks() });
+    // Only one clock may drive the scheduler and the system clock. The 8254 is
+    // the source that this boot path programs first, and its delivery through
+    // the 8259 is the only one that the boot sequence exercises; the local
+    // APIC timer stays calibrated and disarmed until the periodic delivery of
+    // its vector has a recorded run. The choice lives in the timer module, and
+    // the two interrupt paths ask it before they preempt.
+    timer.selectTickSource(.pit);
+
+    serial.printLine("[KNK] timer: {d} Hz, {d} ticks, source={s}", .{
+        timer.ticksPerSecond(),
+        timer.ticks(),
+        @tagName(timer.tickSource()),
+    });
     serial.printLine("[KNK] perf: timestamp counter {d} Hz", .{perf_tsc_hz});
 
     // F15.3: reserve two seconds for repeated PS/2 redraw measurements.\n    // Event consumption remains interrupt-driven, not a busy polling loop.\n    // F6.9: event pump por 50 ticks, em vez de consumir toda a fila
@@ -3807,8 +4041,25 @@ fn installSystemCall() void {
 fn installScheduler() void {
     scheduler.scheduler.init(@intFromPtr(&kynox_boot_stack_end), &kernel_stacks[0]);
 
+    // The idle task comes first: it is the last resort of the processor, and a
+    // task that blocks must never find an empty queue. Before it existed, a
+    // blocking call on a processor with no other ready task returned without
+    // switching, and the processor carried on with whatever the interrupt
+    // interrupted.
+    const idle = scheduler.scheduler.ensureIdle(smp.cpuId()) orelse return reportOutOfMemory();
+    serial.printLine("[KNK] idle: task {d} cs=0x{x} ss=0x{x} rip=0x{x} rsp=0x{x}", .{
+        idle.id,
+        idle.context.cs,
+        idle.context.ss,
+        idle.context.rip,
+        idle.context.rsp,
+    });
+
     _ = scheduler.scheduler.spawn(&workerOne, &task_stacks[1], &kernel_stacks[1], 0);
-    _ = scheduler.scheduler.spawn(&workerTwo, &task_stacks[2], &kernel_stacks[2], 0);
+    // The second worker is the one that can be moved to an application
+    // processor: the pointer is kept so that the boot has something to migrate
+    // once an AP is online.
+    ap_worker = scheduler.scheduler.spawn(&workerTwo, &task_stacks[2], &kernel_stacks[2], 0);
 
     // The tasks of the user mode have a stack of their own for the user and
     // another for the kernel, where the handlers run. Each process runs in
@@ -4861,6 +5112,25 @@ fn reportScheduler() void {
     else
         0;
 
+    // The idle task is reported because it is the answer to "what runs when
+    // nothing runs": if the line says -1, a blocking call on an empty queue
+    // would have no processor to hand over.
+    serial.printLine("[KNK] idle: task {d} of the processor, the last resort of the queue", .{
+        statistics.idle,
+    });
+    // How many processors entered the scheduler with a task of their own. One
+    // on a machine with a single processor, and one per AP that answered.
+    serial.printLine("[KNK] tasks: {d} CPU(s) entered the scheduler", .{
+        statistics.entered_cpus,
+    });
+    // The reschedule path: how often a wake landed on another CPU and asked it
+    // to look at its own queue, how many IPIs were delivered, and how many
+    // decisions the IPI handler took.
+    serial.printLine("[KNK] tasks: {d} reschedules served, {d} asked by a wake, {d} IPIs delivered", .{
+        statistics.reschedules,
+        statistics.wake_reschedules,
+        smp.rescheduleRequests(),
+    });
     serial.printLine("[KNK] tasks: {d} ready, {d} blocked, {d} ticks, {d} switches", .{
         statistics.ready,
         statistics.blocked,
@@ -4873,6 +5143,17 @@ fn reportScheduler() void {
         average,
         statistics.minimum_switch_cycles,
         statistics.last_switch_cycles,
+    });
+    // The state lock of the scheduler: how often it was needed, and how deep
+    // the nested calls of one decision went. A contention of zero on a
+    // single-CPU boot is the expected reading and not a defect; a refused
+    // release is always a defect, because a release without an acquisition
+    // means that some path left the lock behind.
+    serial.printLine("[KNK] sched lock: {d} contentions, {d} reentries, max depth {d}, {d} refused releases", .{
+        statistics.lock_contentions,
+        statistics.lock_reentries,
+        statistics.lock_max_depth,
+        statistics.lock_refused_releases,
     });
 }
 

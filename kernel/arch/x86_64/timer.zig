@@ -98,8 +98,56 @@ pub fn init(ticks_per_second: u32) void {
     writePort(pit.channel0, @truncate((divisor >> 8) & 0xFF));
 }
 
+/// A source of ticks of the system.
+///
+/// The machine has two clocks that can interrupt the processor: the 8254
+/// (through the 8259, or through the I/O APIC once that path delivers) and the
+/// local APIC timer of each CPU. Only one of them may drive the scheduler and
+/// the clock of the system, otherwise every interval is counted twice: the
+/// quantum of a task halves, and every timeout of IPC and input expires twice as
+/// fast as its contract says. The audit of 2026-10-31 records exactly this
+/// defect (C.6), because both sources were armed on the BSP.
+pub const TickSource = enum {
+    /// The 8254 programmable interval timer, delivered by the 8259.
+    pit,
+    /// The local timer of the local APIC of the CPU.
+    apic,
+};
+
+/// The source that counts the time and drives the scheduler.
+///
+/// The default is the 8254 because it is the source that the boot path programs
+/// first and the only one whose delivery has a recorded path in QEMU. The local
+/// APIC timer is calibrated at boot, but until its periodic delivery is
+/// validated it stays a measurement, not the clock.
+var tick_source: TickSource = .pit;
+
+/// Chooses the source that owns the tick.
+///
+/// The choice is per system today, and per CPU when the APs run: a CPU that
+/// receives an interrupt from the source that does not own the tick does not
+/// count it and does not preempt on it.
+pub fn selectTickSource(source: TickSource) void {
+    tick_source = source;
+}
+
+/// The source that owns the tick.
+pub fn tickSource() TickSource {
+    return tick_source;
+}
+
+/// True when an interrupt of `source` is the one that owns the tick.
+pub fn drivesScheduler(source: TickSource) bool {
+    return tick_source == source;
+}
+
 /// Counts one tick of the timer.
-pub fn onTick() void {
+///
+/// The tick is counted only when it comes from the source that owns it. A
+/// counter that adds every interrupt of both clocks is not a clock: it is the
+/// sum of two clocks, and nothing can convert it to seconds.
+pub fn onTick(source: TickSource) void {
+    if (!drivesScheduler(source)) return;
     tick_count += 1;
 }
 
@@ -225,9 +273,76 @@ pub fn initApicTimer(ticks_per_second: u32) void {
     // Garante divisor >= 1 para evitar timerPeriodic(0), a qual nao dispara o timer.
     const safe_divisor: u32 = if (divisor < 1) 1 else divisor;
 
+    // A política de fonte de tick decide se este relógio pode ser armado.
+    //
+    // Armar o timer local enquanto o 8254 também entrega produz duas
+    // interrupções por período. A calibração acima continua útil — ela mede a
+    // frequência do barramento do APIC — mas o modo periódico só é ligado
+    // quando o vetor do APIC é o dono do tick nesta CPU.
+    if (!drivesScheduler(.apic)) {
+        apic.timerStop();
+        serial.printLine(
+            "[KNK] apic-timer: calibrated, left disarmed (the tick source is {s})",
+            .{@tagName(tick_source)},
+        );
+        return;
+    }
+
     // Configura o divisor e arma o modo periodico diretamente.
     // timerPeriodic() ja define periodico + vetor; nao precisa de timerStop/timerDivide separados.
     apic.timerPeriodic(safe_divisor);
 
     frequency = ticks_per_second;
+}
+
+// The tests of the tick policy.
+//
+// The policy is the only part of this module that a host can test: the rest
+// writes ports and MMIO. That is the reason the policy lives here, apart from
+// the programming of the two clocks.
+
+test "only the selected source counts the tick and drives the scheduler" {
+    const start = tick_count;
+
+    selectTickSource(.pit);
+    try std.testing.expect(drivesScheduler(.pit));
+    try std.testing.expect(!drivesScheduler(.apic));
+
+    // The interrupt of the source that does not own the tick neither counts
+    // time nor preempts.
+    onTick(.apic);
+    try std.testing.expectEqual(start, tick_count);
+
+    onTick(.pit);
+    onTick(.pit);
+    try std.testing.expectEqual(start + 2, tick_count);
+
+    // Choosing the other source swaps the owner and does not reset the clock:
+    // the time that passed did pass.
+    selectTickSource(.apic);
+    try std.testing.expect(drivesScheduler(.apic));
+    try std.testing.expect(!drivesScheduler(.pit));
+    onTick(.pit);
+    try std.testing.expectEqual(start + 2, tick_count);
+    onTick(.apic);
+    try std.testing.expectEqual(start + 3, tick_count);
+
+    selectTickSource(.pit);
+    try std.testing.expectEqual(TickSource.pit, tickSource());
+}
+
+test "the two clocks together never count twice for one period" {
+    // This is the defect of the audit (C.6) as a test: with both clocks armed
+    // and no policy, five periods become ten ticks. With the policy, five
+    // periods are five ticks whatever the other clock does.
+    selectTickSource(.pit);
+    defer selectTickSource(.pit);
+
+    const start = tick_count;
+    var period: usize = 0;
+    while (period < 5) : (period += 1) {
+        onTick(.pit);
+        onTick(.apic); // the calibrated local timer of the BSP
+    }
+    try std.testing.expectEqual(start + 5, tick_count);
 }

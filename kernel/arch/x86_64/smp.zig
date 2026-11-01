@@ -23,10 +23,12 @@
 //!   * um ponteiro para a tarefa que está executando;
 //!   * um ponteiro para o escalonador da CPU.
 //!
-//! O kernel ja prepara pilhas e trampoline, envia INIT/SIPI e recebe os APs
-//! em `kynox_ap_entry`. Nesta etapa os APs ficam em espera e ainda nao
-//! participam do escalonamento normal. Filas per-CPU, migracao de tarefas,
-//! coordenacao por IPI e integracao SMP do scheduler continuam pendentes.
+//! O kernel prepara as pilhas, **copia e preenche o trampoline abaixo de 1 MiB**
+//! (`ap_trampoline.zig` + `prepareTrampoline`), envia INIT/SIPI por AP e recebe
+//! cada um em `kynox_ap_entry`. Nesta etapa o AP instala o proprio segmento e
+//! fica em espera com interrupcoes ligadas; ainda nao participa do
+//! escalonamento. Filas per-CPU, migracao de tarefas, coordenacao por IPI e
+//! integracao SMP do scheduler continuam pendentes.
 
 const std = @import("std");
 const spinlock = @import("spinlock.zig");
@@ -34,6 +36,8 @@ const apic = @import("apic.zig");
 const kynox = @import("kynox_shared");
 const x86_cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
+const segment = @import("segment.zig");
+const trampoline = @import("ap_trampoline.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -78,26 +82,91 @@ var discovered_cpu_count: u8 = 1;
 /// Índice do BSP na tabela.
 var bsp_index: u8 = 0;
 
-/// O trampolim dos APs foi publicado abaixo de 1 MiB.
+/// O trampolim dos APs foi copiado e preenchido abaixo de 1 MiB.
 ///
-/// O kernel ainda não copia o trampolim (`ap_trampoline.s`) para a memória
-/// baixa nem preenche os campos que ele espera; por isso a flag começa falsa
-/// e `startAps` recusa enviar IPIs. Um AP iniciado em um endereço que não
-/// contém o trampolim executa o que estiver lá.
+/// A flag começa falsa e `startAps` recusa enviar IPIs enquanto ela for falsa:
+/// um AP iniciado numa pagina que nao contem o bloco executa o que estiver la.
+/// `prepareTrampoline` e a unica coisa que a torna verdadeira, e ela so
+/// completa quando a copia, os campos e a colocacao passaram.
 var trampoline_ready: bool = false;
 
 /// Endereço físico onde o trampolim foi publicado.
 var trampoline_base: u64 = 0;
 
-/// Publica o trampolim para os APs.
+/// Os deslocamentos dos campos do trampolim, lidos dos símbolos do Assembly.
 ///
-/// Chamado pelo BSP depois de copiar o bloco para uma página abaixo de 1 MiB
-/// e de preencher CR3, pilha, GDT e o campo `ready`. **Nenhum chamador existe
-/// hoje**: a cópia é o próximo incremento do SMP, e até lá `startAps` registra
-/// o bloqueio em vez de enviar SIPI para memória indefinida.
+/// Ficam guardados porque `armTrampolineFor` precisa deles no laço de SIPI, e
+/// porque a preparação valida o layout uma vez em vez de a cada AP.
+var trampoline_layout: trampoline.Layout = .{};
+
+/// Marca o trampolim como publicado, no endereco dado.
+///
+/// Nao deve ser chamada para "anunciar" uma copia que nao aconteceu: quem copia
+/// e preenche os campos e `prepareTrampoline`, que valida a colocacao e o
+/// layout antes de chamar esta funcao.
 pub fn publishTrampoline(base: u64) void {
     trampoline_base = base;
     trampoline_ready = base != 0;
+}
+
+/// Copia e preenche o trampolim na pagina baixa que a SIPI nomeia.
+///
+/// A pagina tem de estar **abaixo de 1 MiB** — o vetor da SIPI tem oito bits, e
+/// o processador comeca em modo real em `vetor * 4096` — e o kernel nao precisa
+/// procura-la: `physical.minimum_address` reserva toda a memoria baixa, entao o
+/// gerenciador de paginas fisicas nunca a entrega. O chamador ainda confere no
+/// mapa de memoria que a pagina e RAM utilizavel; esta funcao confere a
+/// colocacao e os campos.
+///
+/// Devolve o erro quando a copia nao aconteceu: um booleano aqui esconderia
+/// **qual** pre-condicao falhou, e um AP iniciado sem trampolim executa o que
+/// estiver naquela pagina.
+pub fn prepareTrampoline(address: u64, cr3: u64, efer_bits: u32) ?trampoline.Error {
+    const layout = trampoline.kernelLayout();
+    trampoline.validatePlacement(address, layout.size) catch |err| return err;
+
+    const destination = @as([*]u8, @ptrFromInt(address))[0..@intCast(trampoline.page_size)];
+    const source = trampoline.imageAddress()[0..layout.size];
+
+    trampoline.install(destination, source, layout, .{
+        .block_base = address,
+        .cr3 = cr3,
+        .efer = efer_bits,
+        .far32_target = address + trampoline.protectedModeOffset(),
+        .entry = @intFromPtr(&kynox_ap_entry),
+    }) catch |err| return err;
+
+    trampoline_layout = layout;
+    publishTrampoline(address);
+    return null;
+}
+
+/// Preenche os campos que mudam por AP e libera aquele AP.
+///
+/// Chamada para **um** AP de cada vez, imediatamente antes do INIT/SIPI dele:
+/// o bloco e um so e todos os APs o leem. A ordem dos campos esta no modulo do
+/// trampolim (`ready` por ultimo), e e a razao de a funcao existir separada da
+/// copia.
+pub fn armTrampolineFor(cpu_index: u8, stack_top: u64) bool {
+    if (!trampoline_ready) return false;
+    if (cpu_index >= max_cpus) return false;
+
+    const destination = @as([*]u8, @ptrFromInt(trampoline_base))[0..@intCast(trampoline.page_size)];
+    trampoline.arm(destination, trampoline_layout, .{
+        .stack_top = stack_top,
+        .cpu_id = cpu_index,
+    }) catch return false;
+    return true;
+}
+
+/// Endereco do trampolim publicado, ou zero enquanto ele nao foi publicado.
+pub fn trampolineAddress() u64 {
+    return trampoline_base;
+}
+
+/// O trampolim esta pronto para iniciar APs?
+pub fn trampolinePublished() bool {
+    return trampoline_ready;
 }
 
 /// Número de CPUs descobertas na MADT, incluindo o BSP.
@@ -144,6 +213,93 @@ pub fn currentCpu() *Cpu {
 /// Retorna o número de CPUs online.
 pub fn cpuCount() u8 {
     return online_cpu_count;
+}
+
+/// O resultado de um pedido de reschedule.
+///
+/// Nao e um booleano porque cada recusa e um motivo diferente, e o boot diz
+/// qual: a CPU errada, uma CPU que nao esta online, ou um APIC local que nao
+/// foi mapeado (o que, no host, e o caso normal).
+pub const RescheduleOutcome = enum {
+    /// A IPI foi entregue ao controlador.
+    sent,
+    /// O destino e a CPU que fez o pedido: nao ha o que acordar.
+    same_cpu,
+    /// O numero nao existe na tabela de CPUs.
+    unknown_cpu,
+    /// A CPU existe e nao esta online: ela nao pode receber a IPI.
+    not_online,
+    /// O APIC local nao esta mapeado, entao o controlador nao pode ser escrito.
+    no_apic,
+};
+
+var reschedule_requests: u64 = 0;
+
+/// Acorda uma CPU para ela reavaliar a propria fila.
+///
+/// A fila de uma CPU pertence a ela (`scheduler.Task.cpu`), e uma CPU sem relogio
+/// proprio dorme em `sti; hlt`. Quando uma tarefa dessa CPU fica pronta por causa
+/// de outra CPU, alguem tem de acordar a dona: e esta funcao.
+///
+/// Os tres destinos que nao podem receber a IPI sao recusados **antes** de
+/// escrever no controlador: a CPU que pergunta por si mesma (a IPI para o
+/// proprio APIC id pode ser recusada pelo hardware, e o pedido seria uma
+/// interrupcao para nada), um numero que a tabela nao tem, e uma CPU que existe
+/// mas ainda nao esta `online` — mandar uma IPI fixa para um processador em modo
+/// real ou desligado e entregar um vetor a quem nao tem IDT.
+pub fn reschedule(cpu_index: u8) RescheduleOutcome {
+    if (cpu_index >= max_cpus or cpu_index >= discovered_cpu_count) return .unknown_cpu;
+    if (cpu_index == cpuId()) return .same_cpu;
+    if (cpus[cpu_index].state != .online) return .not_online;
+    if (!apic.isMapped()) return .no_apic;
+
+    apic.sendReschedule(cpus[cpu_index].apic_id);
+    reschedule_requests += 1;
+    return .sent;
+}
+
+/// The first application processor that is online, or null.
+///
+/// It is the destination of the first migration: an AP with an empty queue and
+/// no work is a processor that halts, and the tasks of the boot are created by
+/// the BSP.
+pub fn firstOnlineAp() ?u8 {
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == bsp_index) continue;
+        if (cpus[index].state == .online) return index;
+    }
+    return null;
+}
+
+/// Quantas IPIs de reschedule foram realmente entregues.
+pub fn rescheduleRequests() u64 {
+    return reschedule_requests;
+}
+
+/// O que o kernel faz quando uma CPU chega em `kynox_ap_entry`.
+///
+/// Esta tabela existe para o `smp.zig` nao importar o escalonador: o
+/// escalonador ja importa `smp` (para `cpuId` e `max_cpus`), e um import
+/// circular entre os dois modulos amarraria a arquitetura ao escalonador. O
+/// kernel instala a funcao no boot, e o AP a chama depois de instalar o proprio
+/// segmento.
+pub const CpuEntryHook = *const fn (cpu_index: u8, kernel_stack: []u8) void;
+
+var cpu_entry_hook: ?CpuEntryHook = null;
+
+/// Instala a funcao que poe uma CPU no escalonador.
+///
+/// Uma funcao nula e o estado de quem nao quer APs no escalonador: o AP instala
+/// o segmento, marca-se online e espera.
+pub fn installCpuEntryHook(hook: ?CpuEntryHook) void {
+    cpu_entry_hook = hook;
+}
+
+/// A pilha de kernel de uma CPU logica, ou nula quando o numero nao existe.
+pub fn stackOf(cpu_index: u8) ?[]u8 {
+    if (cpu_index >= max_cpus) return null;
+    return ap_stacks[cpu_index][0..];
 }
 
 /// Registra uma CPU na tabela. Chamado durante a inicialização do BSP
@@ -202,11 +358,17 @@ test "offlineCpu reduces the online count but keeps at least one" {
 ///
 /// Cada pilha tem 16 KiB e esta alinhada a 16 bytes. O topo da pilha
 /// (`_end`) e usado pelo trampoline como ponteiro inicial de pilha.
-var ap_stacks: [max_cpus - 1][16 * 1024]u8 align(16) = undefined;
+var ap_stacks: [max_cpus][16 * 1024]u8 align(16) = undefined;
 
-/// Endereco do topo da pilha de cada AP (indexado por cpu_id - 1).
-/// Exportado para o trampoline em Assembly.
-pub export var ap_stack_top: [max_cpus - 1]u64 = undefined;
+/// Endereco do topo da pilha de cada CPU, indexado pelo **indice da tabela de
+/// CPUs** (o mesmo numero que `cpuId()` devolve e que o trampoline passa em
+/// RDI). O slot do BSP fica sem uso: o BSP tem a pilha de boot.
+///
+/// O indice era `cpu_id - 1`, que so vale quando o BSP e a entrada zero da
+/// tabela — e a tabela vem da MADT, onde o BSP pode ser qualquer entrada. Com
+/// o BSP na entrada 1, o AP que recebesse `cpu_id = 1` escreveria na pilha
+/// errada e registraria a CPU errada.
+pub export var ap_stack_top: [max_cpus]u64 = @splat(0);
 
 /// Ponto de entrada de um AP, chamado pelo trampoline em modo longo.
 ///
@@ -214,10 +376,16 @@ pub export var ap_stack_top: [max_cpus - 1]u64 = undefined;
 /// A funcao registra a CPU na tabela, configura sua pilha e entra no
 /// escalonador. Nunca retorna.
 pub export fn kynox_ap_entry(cpu_id: u8) void {
-    const ap_index = @as(usize, cpu_id) - 1;
+    // `cpu_id` e o indice da tabela de CPUs, nao `indice + 1`: a tabela vem da
+    // MADT e o BSP pode ocupar qualquer entrada. Tudo o que e por CPU usa o
+    // mesmo numero, para nao haver duas numeracoes.
+    if (cpu_id >= max_cpus) {
+        while (true) x86_cpu.waitForInterrupt();
+    }
+    const cpu_index: usize = cpu_id;
 
     // Estabelece a pilha do kernel desta CPU.
-    const stack = &ap_stacks[ap_index];
+    const stack = &ap_stacks[cpu_index];
     const stack_top = @intFromPtr(stack.ptr) + stack.len;
     const aligned_top = stack_top & ~@as(u64, 0xF);
 
@@ -230,16 +398,32 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
     cpu.current_task = null;
 
     // Marca a pilha como disponivel para o escalonador.
-    ap_stack_top[ap_index] = aligned_top;
+    ap_stack_top[cpu_index] = aligned_top;
+
+    // A CPU recebe a propria tabela de segmentos e o proprio segmento de
+    // estado da tarefa: um `rsp0` global seria a pilha de kernel da CPU que o
+    // escreveu por ultimo. `ist1` aponta para a pilha de double fault desta
+    // CPU, que o gate do vetor 8 ja usa.
+    segment.installForCpu(cpu_id, aligned_top);
 
     // Sinaliza que esta CPU esta online.
     cpu.state = .online;
 
+    // A CPU entra no escalonador com uma tarefa propria, se o kernel instalou a
+    // funcao. Sem ela, `current` desta CPU fica nulo, `prepareNext` retorna
+    // antes de olhar a fila, e o AP espera para sempre com trabalho pronto ao
+    // lado.
+    if (cpu_entry_hook) |hook| hook(cpu_id, stack[0..]);
+
     // Entra no loop da CPU: aguarda por trabalho do escalonador.
     // O escalonador ainda e monoprocessador; quando o suporte a multiprocessador
     // estiver completo, esta funcao escolhera tarefas da fila desta CPU.
+    //
+    // `sti; hlt` e nao `hlt`: um AP que chega aqui com interrupcoes desligadas
+    // e um `hlt` fica parado para sempre, sem nem receber a IPI que o
+    // acordaria. Assim ele dorme e volta a cada interrupcao.
     while (true) {
-        x86_cpu.halt();
+        x86_cpu.waitForInterrupt();
     }
 }
 
@@ -249,7 +433,7 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
 /// os enderecos de pilha dos APs e prepara o trampoline para copia.
 pub fn initAps() void {
     var i: usize = 0;
-    while (i < max_cpus - 1) : (i += 1) {
+    while (i < max_cpus) : (i += 1) {
         const stack = &ap_stacks[i];
         const stack_top = @intFromPtr(stack.ptr) + stack.len;
         ap_stack_top[i] = stack_top & ~@as(u64, 0xF);
@@ -323,9 +507,9 @@ fn waitForOnline(cpu_index: u8, spins: u64) bool {
 /// before sending any IPI:
 ///
 ///   * at least one AP was discovered — a single-CPU machine sends nothing;
-///   * the trampoline has been published below 1 MiB — the kernel does not
-///     copy it yet, and an AP started without it executes whatever is at the
-///     SIPI vector.
+///   * the trampoline has been published below 1 MiB — copied and filled by
+///     `prepareTrampoline`, and an AP started without it executes whatever is
+///     at the SIPI vector.
 ///
 /// When a precondition fails, the reason is logged and no IPI is sent. When
 /// both hold, each discovered AP receives INIT-SIPI-SIPI and the BSP waits for
@@ -355,13 +539,24 @@ pub fn startAps() void {
         if (index == bsp_index) continue;
         const apic_id = cpus[index].apic_id;
 
+        // O bloco e um so, compartilhado por todos os APs: os campos deste AP
+        // (pilha, numero da CPU) sao escritos imediatamente antes da SIPI dele,
+        // e `ready` e a ultima escrita. Sem isso o AP leria a pilha do AP
+        // anterior.
+        if (!armTrampolineFor(index, ap_stack_top[index])) {
+            kynox.serial.printLine("[KNK] smp: AP cpu={d} not started: the trampoline refused the fields", .{index});
+            continue;
+        }
+
         // INIT, then two STARTUP IPIs, as the processor specification
         // requires. The vector is the page of the trampoline.
         apic.sendInit(apic_id);
         apic.sendSipiTwice(apic_id, @intCast(trampoline_base >> 12));
 
         if (waitForOnline(index, 50_000_000)) {
-            online_cpu_count = @min(online_cpu_count + 1, max_cpus);
+            // The counter is not incremented here: the AP incremented it when it
+            // registered itself (`registerCpu`), and a second increment would
+            // report one more processor than the machine has.
             kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} online", .{ index, apic_id });
         } else {
             kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} did not answer before the deadline", .{
@@ -371,20 +566,138 @@ pub fn startAps() void {
     }
 }
 
-/// Retorna o ponteiro para o trampoline de AP e seu tamanho.
+/// O ponteiro para o bloco do trampoline como ele esta ligado no kernel.
 ///
-/// Usado pelo BSP para copiar o trampoline para memoria abaixo de 1 MiB
-/// e enviar SIPI para cada AP.
-pub fn apTrampolineInfo() [*]u8 {
-    return @ptrFromInt(@intFromPtr(&kynox_ap_trampoline_start));
+/// O bloco e copiado dessa imagem para a pagina baixa por `prepareTrampoline`;
+/// nada executa esta copia no lugar em que ela foi ligada.
+pub fn apTrampolineInfo() [*]const u8 {
+    return trampoline.imageAddress();
 }
 
-/// Simbolo do inicio do trampoline (definido em ap_trampoline.s).
-/// O BSP usa seu endereco para copiar o trampoline para memoria abaixo de 1 MiB.
-pub extern const kynox_ap_trampoline_start: u8;
+test "the first online AP is the one that is not the BSP" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+        .{ .apic_id = 9, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
 
-/// Simbolo do tamanho do trampoline (definido em ap_trampoline.s).
-pub extern const kynox_ap_trampoline_size: u64;
+    // No AP has registered: there is nobody to migrate to.
+    try std.testing.expectEqual(@as(?u8, null), firstOnlineAp());
+
+    _ = registerCpu(2, 9);
+    try std.testing.expectEqual(@as(u8, 2), firstOnlineAp().?);
+
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 1), firstOnlineAp().?);
+}
+
+test "an AP that registers itself is counted once" {
+    // `configureFromMadt` leaves the APs `initializing`, and the counter of
+    // online processors starts at one (the BSP). The AP increments it when it
+    // registers, and nothing else may: a second increment reports one more
+    // processor than the machine has.
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(@as(u8, 1), cpuCount());
+    try std.testing.expectEqual(CpuState.initializing, cpus[1].state);
+
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 2), cpuCount());
+
+    // A second registration of the same CPU changes nothing.
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 2), cpuCount());
+}
+
+test "a reschedule asks for the CPU that can receive it, and refuses the others" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = rescheduleRequests();
+
+    // The CPU that asks is not woken by an IPI to itself.
+    try std.testing.expectEqual(RescheduleOutcome.same_cpu, reschedule(0));
+    // A number that the table does not have.
+    try std.testing.expectEqual(RescheduleOutcome.unknown_cpu, reschedule(2));
+    try std.testing.expectEqual(RescheduleOutcome.unknown_cpu, reschedule(max_cpus));
+    // The AP exists and has not registered: an IPI to a processor that is not in
+    // long mode delivers a vector to a processor with no table of vectors.
+    try std.testing.expectEqual(RescheduleOutcome.not_online, reschedule(1));
+
+    // Online, but the local APIC is not mapped on this host: the controller
+    // cannot be written, and the request is refused instead of faulting.
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(RescheduleOutcome.no_apic, reschedule(1));
+
+    // Nothing was delivered, so the counter that reports delivery did not move.
+    try std.testing.expectEqual(before, rescheduleRequests());
+}
+
+test "the stack of a CPU is handed out for the numbers the table has" {
+    // The entry of an AP gives its stack to the scheduler, which needs a slice
+    // and not a pointer: the number it receives is the index of the CPU table,
+    // and a number above the limit has no stack at all.
+    const first = stackOf(0).?;
+    const second = stackOf(1).?;
+
+    try std.testing.expectEqual(@as(usize, 16 * 1024), first.len);
+    try std.testing.expectEqual(@as(usize, 16 * 1024), second.len);
+    try std.testing.expect(first.ptr != second.ptr);
+    try std.testing.expectEqual(@as(?[]u8, null), stackOf(max_cpus));
+}
+
+test "the trampoline is not published until the block is copied into the page" {
+    defer publishTrampoline(0);
+
+    // The kernel starts with no trampoline, and `startAps` refuses to send an
+    // IPI in that state: an AP started on a page without the block executes
+    // whatever is there.
+    publishTrampoline(0);
+    try std.testing.expect(!trampolinePublished());
+    try std.testing.expectEqual(@as(u64, 0), trampolineAddress());
+    try std.testing.expect(!armTrampolineFor(1, 0x10_0000));
+}
+
+test "publishing an address does not arm an AP when the fields were never laid out" {
+    // `publishTrampoline` only announces an address. Arming an AP needs the
+    // layout of the block, which only `prepareTrampoline` fills after the copy:
+    // an announcement on its own must not become a running processor.
+    publishTrampoline(trampoline.base_address);
+    defer publishTrampoline(0);
+
+    try std.testing.expect(trampolinePublished());
+    try std.testing.expect(!armTrampolineFor(1, 0x10_0000));
+    // A CPU number that the table does not have is refused as well.
+    try std.testing.expect(!armTrampolineFor(max_cpus, 0x10_0000));
+}
+
+test "the stack of an AP is indexed by the number of the CPU in the table" {
+    // The table comes from the MADT and the BSP can be any entry, so the stack
+    // of an AP cannot be indexed by `cpu - 1`. `initAps` fills one entry per
+    // logical CPU, and the entry of a CPU is the one its trampoline receives.
+    initAps();
+
+    var index: usize = 0;
+    while (index < max_cpus) : (index += 1) {
+        try std.testing.expectEqual(@as(u64, 0) & 0xF, ap_stack_top[index] & 0xF);
+        try std.testing.expect(ap_stack_top[index] != 0);
+        try std.testing.expectEqual(
+            @intFromPtr(&ap_stacks[index]) + ap_stacks[index].len,
+            ap_stack_top[index],
+        );
+    }
+}
 
 test "the CPU table follows the MADT order and skips disabled processors" {
     const processors = [_]acpi.Processor{

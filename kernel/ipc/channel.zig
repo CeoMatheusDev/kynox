@@ -35,6 +35,7 @@
 const std = @import("std");
 
 const context = @import("../task/context.zig");
+const wait_queue = @import("../task/wait.zig");
 
 /// A message of a channel.
 ///
@@ -87,6 +88,12 @@ pub const Waiter = struct {
     /// Zero means that the wait does not expire: the task waits until the
     /// message arrives, or until the wait is cancelled.
     deadline: u64 = 0,
+    /// The link of the queue of waiters.
+    ///
+    /// The queue fills it when the waiter is registered, and it points back to
+    /// the copy of the waiter that the queue holds. The field is not part of the
+    /// contract of the caller, which only hands the value in.
+    node: wait_queue.Node = undefined,
 };
 
 /// The number of tasks that can wait in the same queue.
@@ -112,8 +119,18 @@ pub const Queue = struct {
     /// delivery: the interval between the message leaving and the message
     /// arriving.
     sent_at: u64 = 0,
-    /// The tasks that wait for a message of this queue.
-    waiters: [waiter_capacity]?Waiter = @splat(null),
+    /// The storage of the waiters of this queue.
+    ///
+    /// The queue holds **copies**: the caller builds a `Waiter` on its own
+    /// stack, and the copy has to outlive the call. The slots are the storage,
+    /// and `order` is the FIFO order over the nodes that live inside them.
+    slots: [waiter_capacity]?Waiter = @splat(null),
+    /// The waiters of this queue, in the order they arrived.
+    ///
+    /// The list is the tested queue of `task/wait.zig`, and not a second
+    /// implementation of the same thing: the search for a free slot is the only
+    /// part that belongs to the channel.
+    order: wait_queue.WaitQueue = .{},
     /// The number of messages that were delivered to a task that was
     /// waiting.
     delivered: u64 = 0,
@@ -150,26 +167,67 @@ pub const Queue = struct {
     /// message does not stay in the queue: it is delivered straight to the
     /// context of the task.
     ///
-    /// The function returns false when the queue already holds the
-    /// maximum number of
-    /// tasks waiting.
+    /// The function returns false when the queue already holds the maximum
+    /// number of tasks waiting, and when a wake had arrived before the waiter
+    /// did (`wait_queue.AddResult.already_woken`): in that case a message may already
+    /// be waiting in the queue, and the caller has to try to receive it instead
+    /// of going to sleep.
     pub fn wait(self: *Queue, waiter: Waiter) bool {
-        for (&self.waiters) |*entry| {
-            if (entry.* != null) continue;
-            entry.* = waiter;
-            return true;
+        const slot = self.freeSlot() orelse return false;
+
+        slot.* = waiter;
+        const registered: *Waiter = &slot.*.?;
+        registered.node = wait_queue.Node.init(slot, wakeSlot);
+        registered.node.deadline = waiter.deadline;
+
+        switch (self.order.add(&registered.node)) {
+            .queued => return true,
+            // The waiter is not registered: the answer says that the caller has
+            // to look at the queue of messages again.
+            .already_woken, .already_queued => {
+                slot.* = null;
+                return false;
+            },
         }
-        return false;
+    }
+
+    /// The first free slot of the queue of waiters.
+    fn freeSlot(self: *Queue) ?*?Waiter {
+        for (&self.slots) |*slot| {
+            if (slot.* == null) return slot;
+        }
+        return null;
+    }
+
+    /// Releases the slots of the waiters that are no longer waiting.
+    ///
+    /// A waiter leaves its node unqueued when it is delivered or expired, and
+    /// the slot that held the copy is free again at that point.
+    fn releaseFinishedSlots(self: *Queue) void {
+        for (&self.slots) |*slot| {
+            const waiter = slot.* orelse continue;
+            if (!waiter.node.queued) slot.* = null;
+        }
+    }
+
+    /// The number of tasks that wait in the queue.
+    pub fn waiters(self: *const Queue) u32 {
+        return self.order.length();
     }
 
     /// Removes a wait of a task, without delivering any message.
     ///
     /// The function returns true when the wait existed.
     pub fn cancelWait(self: *Queue, waiter: Waiter) bool {
-        for (&self.waiters) |*entry| {
-            const value = entry.* orelse continue;
-            if (value.task != waiter.task) continue;
-            entry.* = null;
+        for (&self.slots) |*slot| {
+            const registered = &(slot.* orelse continue);
+            if (registered.task != waiter.task) continue;
+
+            // A registration that a wake has already taken is not a wait any
+            // more, and removing it would count as a cancellation that did not
+            // happen.
+            if (!self.order.remove(&registered.node)) return false;
+            slot.* = null;
             return true;
         }
         return false;
@@ -181,26 +239,24 @@ pub const Queue = struct {
     /// when there was no task waiting, and the message has to go to the
     /// queue.
     pub fn deliver(self: *Queue, message: Message) bool {
-        for (&self.waiters) |*entry| {
-            const waiter = entry.* orelse continue;
+        // The first waiter of the queue is the one that arrived first, and the
+        // node leaves the queue before the result is written: a second producer
+        // cannot take the same waiter.
+        const node = self.order.detachHead() orelse return false;
 
-            // The result of the call is written straight into the context
-            // saved of the
-            // task, and the task continues after the call, as if the call
-            // had answered at once.
-            waiter.kind.* = message.kind;
-            waiter.value.* = message.value;
-            entry.* = null;
+        const waiter = waiterOf(node);
+        waiter.kind.* = message.kind;
+        waiter.value.* = message.value;
+        node.woken = true;
 
-            // The task that was woken is chosen by the scheduler, and the
-            // delivery
-            // records the moment the message arrived.
-            self.delivered += 1;
-            self.delivered_at = context.timestamp();
-            waiter.wake(waiter.task);
-            return true;
-        }
-        return false;
+        // The task that was woken is chosen by the scheduler, and the delivery
+        // records the moment the message arrived.
+        self.delivered += 1;
+        self.delivered_at = context.timestamp();
+        waiter.wake(waiter.task);
+
+        self.releaseFinishedSlots();
+        return true;
     }
 
     /// Expires the waits whose deadline has passed.
@@ -213,22 +269,10 @@ pub const Queue = struct {
     /// A wait without a deadline never expires. The function returns the
     /// number of waits that expired.
     pub fn expire(self: *Queue, now: u64, result: u64) u32 {
-        var expired_waits: u32 = 0;
-
-        for (&self.waiters) |*entry| {
-            const waiter = entry.* orelse continue;
-            if (waiter.deadline == 0) continue;
-            if (now < waiter.deadline) continue;
-
-            waiter.kind.* = result;
-            waiter.value.* = 0;
-            entry.* = null;
-
-            self.expired += 1;
-            expired_waits += 1;
-            waiter.wake(waiter.task);
-        }
-
+        const ctx = TimeoutContext{ .result = result };
+        const expired_waits = self.order.expireWith(now, @constCast(&ctx), writeTimeout);
+        self.expired += expired_waits;
+        self.releaseFinishedSlots();
         return expired_waits;
     }
 
@@ -269,6 +313,41 @@ pub const Queue = struct {
         return context.timestamp() - self.sent_at;
     }
 };
+
+/// What the expiry of a wait writes into the caller before it wakes it.
+const TimeoutContext = struct {
+    /// The result of the call that timed out.
+    result: u64,
+};
+
+/// The waiter that a node of the queue belongs to.
+fn waiterOf(node: *wait_queue.Node) *Waiter {
+    const slot: *?Waiter = @ptrCast(@alignCast(node.task));
+    return &slot.*.?;
+}
+
+/// Wakes the task of a node.
+///
+/// The context of the node is the slot that holds the copy of the waiter, and
+/// not the task itself: the slot is what the queue owns, and the waiter is what
+/// names the task and its wake routine.
+fn wakeSlot(slot_pointer: *anyopaque) void {
+    const slot: *?Waiter = @ptrCast(@alignCast(slot_pointer));
+    const waiter = slot.* orelse return;
+    waiter.wake(waiter.task);
+}
+
+/// Writes the result of a timeout into the saved context of the task.
+///
+/// The hook runs inside the expiry of the queue, before the wake, which is the
+/// only order in which the task resumes with the result of the call and not
+/// with the neutral value that it had before.
+fn writeTimeout(node: *wait_queue.Node, ctx: ?*anyopaque) void {
+    const timeout: *const TimeoutContext = @ptrCast(@alignCast(ctx.?));
+    const waiter = waiterOf(node);
+    waiter.kind.* = timeout.result;
+    waiter.value.* = 0;
+}
 
 /// A channel of messages between two tasks.
 pub const Channel = struct {
@@ -539,4 +618,157 @@ test "a wait that was delivered does not expire" {
     try std.testing.expectEqual(@as(u32, 1), wakes);
     try std.testing.expectEqual(@as(u64, 3), kind);
     try std.testing.expectEqual(@as(u64, 9), value);
+}
+
+test "the waiters are served in the order they arrived" {
+    var queue: Queue = .{};
+    var first_kind: u64 = 0;
+    var first_value: u64 = 0;
+    var second_kind: u64 = 0;
+    var second_value: u64 = 0;
+    var first_wakes: u32 = 0;
+    var second_wakes: u32 = 0;
+
+    try std.testing.expect(queue.wait(.{
+        .kind = &first_kind,
+        .value = &first_value,
+        .task = &first_wakes,
+        .wake = wakeForTest,
+    }));
+    try std.testing.expect(queue.wait(.{
+        .kind = &second_kind,
+        .value = &second_value,
+        .task = &second_wakes,
+        .wake = wakeForTest,
+    }));
+    try std.testing.expectEqual(@as(u32, 2), queue.waiters());
+
+    // The first message goes to the task that waited first, whatever the order
+    // of the slots: the queue is FIFO and the array of storage is not.
+    try std.testing.expect(queue.deliver(.{ .kind = 1, .value = 11 }));
+    try std.testing.expectEqual(@as(u64, 1), first_kind);
+    try std.testing.expectEqual(@as(u64, 11), first_value);
+    try std.testing.expectEqual(@as(u32, 1), first_wakes);
+    try std.testing.expectEqual(@as(u32, 0), second_wakes);
+    try std.testing.expectEqual(@as(u32, 1), queue.waiters());
+
+    try std.testing.expect(queue.deliver(.{ .kind = 2, .value = 22 }));
+    try std.testing.expectEqual(@as(u64, 2), second_kind);
+    try std.testing.expectEqual(@as(u64, 22), second_value);
+    try std.testing.expectEqual(@as(u32, 1), second_wakes);
+    try std.testing.expectEqual(@as(u32, 0), queue.waiters());
+    try std.testing.expectEqual(@as(u64, 2), queue.delivered);
+}
+
+test "a waiter that gave up leaves its place to the next one" {
+    var queue: Queue = .{};
+    var quitter_kind: u64 = 0;
+    var quitter_value: u64 = 0;
+    var patient_kind: u64 = 0;
+    var patient_value: u64 = 0;
+    var quitter_wakes: u32 = 0;
+    var patient_wakes: u32 = 0;
+
+    const quitter = Waiter{
+        .kind = &quitter_kind,
+        .value = &quitter_value,
+        .task = &quitter_wakes,
+        .wake = wakeForTest,
+    };
+
+    try std.testing.expect(queue.wait(quitter));
+    try std.testing.expect(queue.wait(.{
+        .kind = &patient_kind,
+        .value = &patient_value,
+        .task = &patient_wakes,
+        .wake = wakeForTest,
+    }));
+
+    try std.testing.expect(queue.cancelWait(quitter));
+    try std.testing.expectEqual(@as(u32, 1), queue.waiters());
+
+    // The cancellation is not a delivery and not a timeout: the task is not
+    // woken and no result is written for it.
+    try std.testing.expectEqual(@as(u32, 0), quitter_wakes);
+    try std.testing.expect(queue.deliver(.{ .kind = 5, .value = 6 }));
+    try std.testing.expectEqual(@as(u64, 5), patient_kind);
+    try std.testing.expectEqual(@as(u64, 6), patient_value);
+    try std.testing.expectEqual(@as(u32, 0), quitter_wakes);
+
+    // A second cancellation of the same task finds nothing.
+    try std.testing.expect(!queue.cancelWait(quitter));
+}
+
+test "the queue of waiters is bounded and frees its slots" {
+    var queue: Queue = .{};
+    var kinds: [waiter_capacity + 1]u64 = @splat(0);
+    var wakes: [waiter_capacity + 1]u32 = @splat(0);
+
+    for (0..waiter_capacity) |index| {
+        try std.testing.expect(queue.wait(.{
+            .kind = &kinds[index],
+            .value = &kinds[index],
+            .task = &wakes[index],
+            .wake = wakeForTest,
+        }));
+    }
+    try std.testing.expectEqual(@as(u32, waiter_capacity), queue.waiters());
+
+    // The last one does not fit: the queue refuses it instead of overwriting a
+    // waiter that is already registered.
+    try std.testing.expect(!queue.wait(.{
+        .kind = &kinds[waiter_capacity],
+        .value = &kinds[waiter_capacity],
+        .task = &wakes[waiter_capacity],
+        .wake = wakeForTest,
+    }));
+    try std.testing.expectEqual(@as(u32, waiter_capacity), queue.waiters());
+
+    // A delivery frees the slot of the waiter it served, and a new wait fits.
+    try std.testing.expect(queue.deliver(.{ .kind = 9, .value = 9 }));
+    try std.testing.expectEqual(@as(u32, waiter_capacity - 1), queue.waiters());
+    try std.testing.expect(queue.wait(.{
+        .kind = &kinds[waiter_capacity],
+        .value = &kinds[waiter_capacity],
+        .task = &wakes[waiter_capacity],
+        .wake = wakeForTest,
+    }));
+    try std.testing.expectEqual(@as(u32, waiter_capacity), queue.waiters());
+}
+
+test "a message posted before the waiter waits in the queue instead of waking nobody" {
+    var channel: Channel = .{};
+    var kind: u64 = 0;
+    var value: u64 = 0;
+    var wakes: u32 = 0;
+
+    // The producer runs first: nobody waits, so the message is stored in the
+    // queue of the side. This, and not a remembered wake, is what closes the
+    // gap for the channel: the message is the state that the waiter checks.
+    try std.testing.expect(channel.post(0, .{ .kind = 1, .value = 2 }));
+    try std.testing.expect(!channel.isEmpty(0));
+    try std.testing.expectEqual(@as(u64, 0), channel.deliveries(0));
+
+    // The waiter arrives afterwards. It is registered, and it is **not** woken
+    // by the message that was already there: the caller reads the queue first,
+    // which is the predicate loop of the channel.
+    try std.testing.expect(channel.wait(0, .{
+        .kind = &kind,
+        .value = &value,
+        .task = &wakes,
+        .wake = wakeForTest,
+    }));
+    const first = channel.receiveFrom(0).?;
+    try std.testing.expectEqual(@as(u64, 1), first.kind);
+    try std.testing.expectEqual(@as(u64, 2), first.value);
+    try std.testing.expectEqual(@as(u32, 0), wakes);
+
+    // The message that arrives while the task waits is delivered straight to
+    // its context, and does not enter the queue.
+    try std.testing.expect(channel.post(0, .{ .kind = 3, .value = 4 }));
+    try std.testing.expectEqual(@as(u32, 1), wakes);
+    try std.testing.expectEqual(@as(u64, 3), kind);
+    try std.testing.expectEqual(@as(u64, 4), value);
+    try std.testing.expect(channel.isEmpty(0));
+    try std.testing.expectEqual(@as(u64, 1), channel.deliveries(0));
 }

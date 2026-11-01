@@ -38,7 +38,7 @@ Where the two overlap — S0 runtime evidence, S1 interrupts/SMP, S2 memory/IOMM
 S3 processes/ABI — the kernel roadmap is the authority on ordering and this one
 remains the authority on what the product needs from the kernel.
 
-1. **Runtime evidence is the critical path.** The tree compiles and passes 716
+1. **Runtime evidence is the critical path.** The tree compiles and passes 748
    host tests, but no QEMU/OVMF run has ever been recorded. Every subsystem's
    maturity is capped by that, and no graphics work can be validated without a
    running system. This is stage 0 — an infrastructure prerequisite, not a

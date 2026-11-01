@@ -2,6 +2,15 @@
 
 > Este arquivo é o contrato de trabalho para agentes de código, automações e colaboradores que implementam ou modificam o Kynox. Leia também `strategy.md` antes de propor mudanças arquiteturais.
 
+> **Mapa da documentação.** O ponto de entrada é [`docs/ai/README.md`](docs/ai/README.md):
+> ordem de leitura, o que cada documento pode ser citado como, e as regras duras.
+> O estado atual em uma página está em [`docs/ai/context-pack.md`](docs/ai/context-pack.md)
+> e o índice máquina-legível de todos os documentos (com `authority` por documento)
+> em [`docs/ai/doc-index.json`](docs/ai/doc-index.json), gerado por
+> `tools/scripts/gen-doc-index.py` e verificado por `zig build test`. Este arquivo
+> continua sendo a autoridade sobre **como** o trabalho é feito; os arquivos de
+> status são a autoridade sobre **o que existe** hoje.
+
 ## 1. Identidade e objetivo
 
 Kynox é um sistema operacional experimental nativo para **x86_64**, escrito principalmente em **Zig 0.17.0** e Assembly x86-64.

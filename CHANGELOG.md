@@ -21,6 +21,295 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Fixed (2026-11-01) — the version of the image builder goes to stdout
+
+- `kynox-fsimg --version` printed the banner with `std.debug.print`, which
+  writes to **stderr**: `kynox-fsimg --version | grep ...` saw an empty stream,
+  and the CI step that checks the version of the generated artifact failed on
+  the last commit of the branch while the build and 828 tests passed. The
+  banner is data, not a diagnostic, and now goes through a stdout writer with
+  an explicit flush. The exact CI snippet was re-run here and exits 0.
+
+### Added (2026-11-01) — a reschedule IPI, so another CPU can hand over a task
+
+- **The IPI**: `apic.reschedule_vector` (65), `apic.sendReschedule`, the stub of
+  the vector in `interrupt.s`, its gate, and a handler that ends the interrupt
+  and asks the scheduler. It is the answer to the gap of the previous round — a
+  queue belongs to one CPU and the only clock of the system reaches one
+  processor.
+- **A reschedule is not a tick**: `decideNext(forced)` — the IPI handler
+  (`scheduler.rescheduleCurrent`) decides without counting a tick and without
+  charging the slice, so a timeout never depends on another CPU and a quantum
+  never shrinks because somebody asked a question.
+- **`migrateTo(task, cpu)`**: the way a task reaches a processor other than the
+  one that created it, refusing a running task, a terminated one, an id above
+  `max_cpus` and a move to the current owner. At boot, `distributeWorkToAps()`
+  migrates the second worker to the first online AP, and says why when no AP is
+  online.
+- **`smp.reschedule`** returns why it refused: `.same_cpu`, `.unknown_cpu`,
+  `.not_online`, `.no_apic`, or `.sent` (counted); every refusal happens before
+  the controller is written.
+- **A wake that lands on another CPU** now queues the task on the CPU that owns
+  it and requests a reschedule of that CPU, instead of silently migrating the
+  task to the queue of the waker.
+- **A counter defect fixed**: `startAps` and `registerCpu` both incremented the
+  online count, so two processors were reported as three. The AP counts itself
+  once, and a host test asserts it.
+- **Seven new host tests** (828 in total, `task-tests` 72, `arch-tests` 159): the
+  reschedule that switches without moving the quantum or the clock, the
+  reschedule with nothing to run, the migration with its four refusals, the wake
+  of a task of another CPU, one count per registered AP, the refusals of
+  `smp.reschedule` and the first online AP.
+- Documentation: `docs/audits/2026-11-01-reschedule-ipi.md`,
+  `docs/PROJECT_STATUS.{md,json}` (scheduler 79% → 83%, SMP 52% → 60%), the
+  counts, `README.md`, `docs/ai/context-pack.md`,
+  `docs/architecture/execution-model.md` and the K2 annotation of the roadmap.
+
+### Added (2026-11-01) — every task names the CPU that owns it
+
+- **`Task.cpu`**: the ownership the scheduler only pretended to have. The choice
+  of a CPU used to scan **every** ready task in the pool, so a second processor
+  would have taken a task of the BSP — its idle task included — and the two would
+  have shared one stack and one saved context. `describeQueue` now skips every
+  task of another CPU, and `enqueueReady` records the CPU that queues a task, so
+  ownership travels with the queueing.
+- **One idle task per CPU** (`ensureIdle(cpu)`), each with its own 8 KiB user
+  stack and 8 KiB kernel stack, clamped above `max_cpus` before anything is
+  created.
+- **`adoptKernelTask(cpu, stack_top, stack)`**: an AP arrives from the trampoline
+  in ring 0 with no task, and `prepareNext` starts with `current[cpu] orelse
+  return false`. The processor now gets a kernel task of its own (state
+  `running`, its own stack, not queued), so a switch has a context to save.
+  `smp.installCpuEntryHook` is how it does that without `smp.zig` importing the
+  scheduler (which imports `smp`), and the boot prints
+  `[KNK] smp: cpu=N entered the scheduler as task X, idle task Y` plus
+  `[KNK] tasks: N CPU(s) entered the scheduler`.
+- **Six new host tests** (821 in total, `task-tests` 68, `arch-tests` 156): a
+  task of another CPU is never chosen, the idle task of a CPU is not the last
+  resort of another, one idle task per CPU and idempotent per CPU, the task an AP
+  adopts, ownership following `enqueueReady`, and the stack accessor of a CPU.
+- **Correction**: `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` claimed
+  that every task of the kernel is ring 3. It is not: `spawn` creates ring 0
+  kernel threads. The record carries the correction.
+- Documentation: `docs/audits/2026-11-01-cpu-affinity.md`,
+  `docs/PROJECT_STATUS.{md,json}` (scheduler 74% → 79%, SMP 44% → 52%), the
+  counts, `README.md`, `docs/ai/context-pack.md`,
+  `docs/architecture/execution-model.md` and the K3 annotations.
+
+### Added (2026-11-01) — the trampoline of the APs is published below 1 MiB
+
+- **`kernel/arch/x86_64/ap_trampoline.zig`**: the block of `ap_trampoline.s` as
+  data. The offsets of the fields come from the symbols the assembly exports
+  (`kernelLayout()`), `install` copies the block into the low page and writes
+  what is the same for every AP (GDT base, far pointer, CR3, EFER bits, entry),
+  and `arm` writes one AP (stack, CPU number) clearing `ready` first and writing
+  it **last**. Every refusal has its own error: field outside the block, block
+  larger than a page, placement beyond the reach of a startup IPI, destination
+  too small, source that is not the block, value that does not fit in a 32-bit
+  field.
+- **`smp.prepareTrampoline(address, cr3, efer_bits)`** is the caller the
+  `ap_trampoline.s` never had, and `installApTrampoline()` at boot does the three
+  checks that make it safe: the page is usable RAM in the firmware map, it is
+  mapped by identity in the kernel tables, and the copy was validated. A refusal
+  is a boot line, not a silent "no AP".
+- **The AP sets the EFER bits of the BSP** (`LME` and, when the kernel enabled
+  it, `NXE`) before it loads the kernel CR3: an NX entry with `NXE` clear is a
+  reserved bit, and the general protection fault would happen inside the
+  trampoline, where there is no IDT — a triple fault with no message.
+- **One numbering for the CPUs**: the stack, the CPU number passed in RDI and the
+  table index are the same number (the MADT index), instead of `cpu_id - 1`, which
+  only held when the BSP was entry 0. The AP waits with `sti; hlt` instead of a
+  bare `hlt`, which froze it for ever with interrupts disabled.
+- **Nine new host tests** (815 in total, `arch-tests` 155): the vector and its
+  page, refused placements, the copy with every field and `ready` cleared,
+  arming two APs in a row, refused layouts and truncated 32-bit values, the
+  unpublished trampoline, an announcement without a copy, and one stack per
+  logical CPU.
+- Documentation: `docs/audits/2026-11-01-ap-trampoline.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 30% → 44%, the measured counts, `K-01`),
+  `README.md`, `docs/ai/context-pack.md`, the roadmap annotations of K0/K2.
+
+### Added (2026-11-01) — a segment per processor and an idle task that halts
+
+- **Audit defect 2 closed in code: one TSS per CPU.** `segment.zig` had one
+  `TaskStateSegment`, one GDT table and one `GdtPointer`; it now has eight of
+  each (with eight 16 KiB double-fault stacks), `tssFor(cpu)` clamps instead of
+  indexing outside the table, `installForCpu(cpu, stack_top)` writes `rsp0` and
+  `ist1`, builds the table, loads the GDT and reloads the data and code
+  segments, and `kynox_ap_entry` calls it before an AP enters its loop. The
+  scheduler writes `rsp0` through `segment.tssFor(smp.cpuId())`, and the boot log
+  states the shape (`[KNK] segments: 8 task state segments, …`).
+- **An idle task, and the policy that makes it the last resort.**
+  `Scheduler.ensureIdle()` creates it once — a ring 3 task whose body halts the
+  processor with `sti; hlt` — and `Statistics.idle` reports its id at boot. The
+  policy gained `Entry.idle`: the choice returns the smallest-runtime **real**
+  task whenever one is eligible, whatever the runtime of the idle task is, so an
+  idle task can never displace a task that could run. `policy.idleVruntime` is
+  where its accounting starts.
+- **`cpu.waitForInterrupt()`**: `sti; hlt` as one instruction pair, because `hlt`
+  with interrupts disabled never returns and `sti` only takes effect after the
+  next instruction, which closes the window between the two.
+- **Six new host tests** (806 in total, task 63, arch 146): the `rsp0` of one
+  CPU does not touch the other, the descriptor of a CPU parses back to the base
+  of its own segment, the idle task loses to any real task, two idle tasks are
+  decided by the ring, `ensureIdle` is idempotent over the real queue, and a
+  blocking call on a queue whose only candidate is the idle task succeeds and
+  switches to it.
+- Documentation: `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` (the
+  record), `docs/PROJECT_STATUS.{md,json}` (scheduler 68% → 74%, CPU/interrupts
+  60% → 66%, the measured counts, `K-01`), `README.md`,
+  `docs/architecture/execution-model.md` and `docs/ai/context-pack.md`.
+
+### Added (2026-11-01) — the scheduler has a state lock with per-CPU ownership
+
+- **`kernel/task/lock.zig`.** The audit's defect 1 was "no lock at all" over state
+  that interrupt context and thread context both write. A plain spinlock would
+  have deadlocked, because the scheduler calls itself inside one decision
+  (`tick → prepareNext → expiry → wake → enqueue`): the new lock knows which CPU
+  holds it and counts the nested acquisitions instead of spinning. It also counts
+  contentions, wait iterations and refused releases, and those four numbers are
+  reported at boot.
+- **Every entry point takes it** — `tick`, `prepareNext`, `spawn`, `spawnUser`,
+  `blockCurrent`, `blockCurrentForInput`, `killCurrent`, `terminateCurrent`,
+  `wakeTask`, `enqueueReady`, `dequeueReady`, `init` — and every path releases it;
+  a test asserts that after `tick`, `spawn`, `wakeTask` and `terminateCurrent` the
+  lock is free and no release was refused. `statisticsOf` is the documented
+  exception: it reads without the lock, because a diagnostic is worth more than a
+  deadlock.
+- **`blockCurrentOn`**: the generic blocking primitive over any wait queue, with
+  the deadline written before the node is queued and the wait undone when there
+  is nobody to switch to. It is what a mutex needs, and the new end-to-end test
+  drives the whole chain: the holder takes the mutex, the waiter blocks on
+  `mutex.waiters`, the release transfers the ownership, `wakeTask` makes the
+  waiter ready, and the waiter releases.
+- Measured: **800 tests in 52/52 steps** (`task-tests` 59, six of them for the
+  lock, one of those a four-thread contention test), `zig build` writing the
+  image, `docs-check` green. No runtime evidence: no AP has ever run, so the lock
+  is never contended in the kernel.
+
+### Added (2026-11-01) — the channel waits in the shared queue, and the documentation has an index for agents
+
+- **The wait queue has its first caller in the kernel.** `kernel/ipc/channel.zig`
+  keeps a fixed array of registered waiters and orders them in
+  `task/wait.zig`: delivery is FIFO (it used to follow the order of the storage
+  array, which is not the order of arrival), the expiry writes the result
+  through the new `WaitQueue.expireWith` hook **before** it wakes the task, and
+  a delivered or expired waiter releases its slot. 4 new tests, 8 in total.
+- **`docs/ai/` is the entry point for an agent.** `docs/ai/README.md` gives the
+  reading order, the authority of each document and the hard rules;
+  `docs/ai/context-pack.md` is the state of the tree in one page;
+  `docs/ai/doc-index.json` is the generated map of all **62** documents with
+  `kind`, `authority`, date, summary and word count. `llms.txt` at the root is
+  the short manifest.
+- **The index is enforced, not decorative.**
+  `tools/scripts/gen-doc-index.py` holds the classification table and
+  `--check` fails when a Markdown file is not classified, when an entry points
+  at a file that does not exist, or when the index on disk differs from the
+  table. It runs inside `zig build test` and inside `docs-check`, and
+  `docs-conformance-tests` parses the index to assert the authorities, the
+  reading order and that the status files are indexed as `current`.
+- Measured: **788 tests in 52/52 steps** (task 47, ipc 9, docs-conformance 24),
+  `zig build` writing the image, `docs-check` resolving every link and every
+  classification. No runtime evidence: no QEMU, no OVMF.
+
+### Added (2026-11-01) — the task subsystem: pure policy, wait queue, mutex
+
+- **The scheduling policy left the scheduler.** `kernel/task/policy.zig` holds
+  the decisions as pure functions over a flat description of the queue
+  (`pickNext`, `shouldPreempt`, `quantumFor`, `budgetFor`, `deadlineFor`,
+  `minVruntime`), and `scheduler.zig` keeps the state, the counters and the
+  mechanism. It is step 2 of K3. 12 tests, including a property test over 200
+  random queues against a reference implementation.
+- **A wait queue that cannot lose a wakeup.** `kernel/task/wait.zig` was a
+  42-line stub whose `dequeueWaiter` returned a field that nothing set; it is now
+  a FIFO queue of caller-owned nodes with a deadline per wait, a remembered wake
+  for the producer that runs first (`AddResult.already_woken`), a detach
+  primitive for the direct handoff, and separate counters for a wake, a
+  cancellation and a timeout. 11 tests, including a 500-operation invariant run.
+- **A mutex with an owner.** `kernel/task/mutex.zig`: recursion up to 255, a
+  queue of waiters, and a release that **transfers the ownership before it wakes
+  the waiter**, so a third task cannot take the mutex in the interval. 10 tests,
+  one of which asserts the ownership from inside the wake callback.
+- **Deleted**: `kernel/task/runqueue.zig` (a stub whose dequeue did not shift and
+  which nothing imported; the scheduler's own per-CPU `ready_queue` is the real
+  one) and `tests/wait_lifecycle_regression.zig` (structural assertions, one of
+  them now false, reachable from no target). Unreachable files: seven → six.
+- Measured: **781 tests in 51/51 steps** (`task-tests` 46, `ipc-tests` filtered to
+  its own channel tests so the shared modules are not counted twice), with
+  `zig build` writing the image and no runtime evidence. The mutex and the queue
+  have **no caller in the kernel yet**, and the scheduler still has no lock.
+
+### Added (2026-11-01) — the scheduler policy is tested on the host
+
+- **`scheduler-tests`, 12 tests.** The scheduling policy of
+  `kernel/task/scheduler.zig` was executed by none of the 736 tests. The new
+  root `kernel/task_root.zig` (next to `host_root.zig`) defines the four
+  symbols that `arch/x86_64/task.s` provides for the real switch, so the policy
+  — the FIFO ready queue, the full-queue refusal, the EEVDF choice by virtual
+  runtime, the skip of blocked/terminated tasks and of threads of an
+  `exiting`/`reaped` process, the stack-size refusal, the inherited start, the
+  weight accounting, the pool limit, the tick and the blocked task — runs on
+  the host. The artifact runs with a test filter so the architecture tests it
+  imports are not counted twice.
+- **Three preemption defects closed, found by those tests.** A tick used to
+  switch to the next ready task whatever the quantum, so the slice decided
+  nothing; the entering task did not get a new quantum, so a task was
+  time-sliced exactly once in its life; and a preemption that found no other
+  ready task left the running task marked `ready` with a zero quantum. The
+  switch now happens at the end of the quantum (or as soon as the task
+  blocks), the quantum is refilled from the slice, and the fallback restores
+  the current task. Measured: **748 tests in 51/51 steps**
+  (`scheduler-tests` 12), with `zig build` writing the image and no runtime
+  evidence — no QEMU and no OVMF in this environment.
+
+### Fixed (2026-11-01) — host-verified, not runtime-verified
+
+- **The host suite was not running the architecture tests.** `fpu.zig` used
+  unnamed inline-assembly operands and `paging.zig` imported a file outside its
+  module path, so `arch-tests` did not compile and paging, ACPI, SMP and PCI
+  tests were missing from the suite that reported 716 tests. After the fix the
+  measured total was **736 tests in 49/49 steps** (`arch-tests` 144); the
+  scheduler tests of the same day take it to 748.
+- **Unmap now returns the frame it owns.** A software ownership bit
+  (`paging.Flags.owned`) records the frames the space obtained from the manager;
+  `takeOwnership` is applied when an image is fully materialised, and
+  `unmapUserPageIn` releases only those frames. A borrowed page stays allocated,
+  and without a release callback an owned entry is preserved with
+  `error.ReleaseUnavailable` instead of being lost.
+- **Address spaces are destroyed and their slots reused.**
+  `destroyAddressSpaceReal` releases the frames, clears the private chain,
+  forgets the active space and frees the slot; `createAddressSpace` reuses a free
+  slot with a new generation, and `spaceByIdentity(id, generation)` refuses a
+  stale identity. `spaces_created` and `liveSpaceCount` expose the state.
+- **Capabilities have a lifecycle.** `capability.destroy`, `destroySubject` and
+  `releaseProcess` free table entries and take the handle from every holder;
+  `process.reapFull` releases the set of a reaped process and destroys the
+  capabilities that named it. The no-op `security.revokeCapabilities` stub is
+  removed. The 16-entry table is now a pool instead of a lifetime limit.
+- **Interrupt lines have owners.** New `kernel/arch/x86_64/interrupt_registry.zig`
+  (one owner per line, refusal of a second registration, per-line counters,
+  unhandled-line accounting) with host tests. `interrupt.zig` dispatches through
+  it, and the kernel registers the 8254 and PS/2 lines before interrupts are
+  enabled. **The dispatch path itself has not run.**
+- **One tick source.** `timer.TickSource` and `selectTickSource` make one clock
+  the owner of the tick and of the preemption; the other is acknowledged and
+  ignored. The local APIC timer is still calibrated and is now left disarmed
+  while the 8254 owns the tick, so intervals are no longer counted twice.
+- **`net_transmit` fails explicitly** with `error.NotImplemented` instead of
+  reporting a transmission that never happened, and `virtio_net.zig` joined the
+  architecture test root (its ten header-layout tests had never been compiled).
+- **Dead files removed:** `kernel/arch/x86_64/elf_compat.zig`,
+  `kernel/fs/dir_entry.zig`, `kernel/fs/test_ramfs_runner.zig` (which did not
+  compile and had two tests in no test root) and the unused
+  `paging.window_pages`.
+- **Two module cycles closed:** `apic.zig` imported `timer.zig` without using a
+  symbol; the import is gone.
+- Documentation corrected in the same change:
+  `docs/PROJECT_STATUS.md`/`.json` (new snapshot, measured counts, closed and
+  open defects), `README.md`, `docs/architecture/memory-management.md`, and a new
+  implementation record `docs/audits/2026-11-01-kernel-core-fixes.md`.
+  `virtual_memory` moved from 45% to 50%; no other percentage moved.
+
 ### Added
 
 - `docs/strategy/market-landscape.md` — market structure, nine technology

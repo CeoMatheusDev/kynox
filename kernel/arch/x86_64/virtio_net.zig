@@ -18,13 +18,17 @@ const std = @import("std");
 
 
 
-// ---------- Convenientes (stub) ----------
-/// Stub verificado: o dispositivo nao esta programado; nao existe TX/RX.
-/// O incremento F8 confirma que a rede nao pode ser declarada funcional
-/// sem inicializacao VirtIO, virtqueues e frames Ethernet.
-pub fn net_transmit() !void {
-    // Stub: logs and returns; device not yet programmed.
-    
+// ---------- Contrato de indisponibilidade ----------
+/// Transmite um frame. Hoje **nao transmite nada**: a rede nao tem driver.
+///
+/// O contrato importa mais do que o corpo. Uma funcao que devolve sucesso sem
+/// enviar um byte e pior do que uma funcao que falha: o chamador nao tem como
+/// distinguir "enviado" de "descartado", e um protocolo construido sobre ela
+/// reportaria entregas que nunca aconteceram. O modulo devolve
+/// `error.NotImplemented` ate existir VirtIO-Net com filas, frames e o stack
+/// completo; a revisao do registro (AGENTS.md secao 8) exige exatamente isso.
+pub fn net_transmit() error{NotImplemented}!void {
+    return error.NotImplemented;
 }
 
 /// Verifica dispositivo VirtIO-Net existente por meio do mecanismo PCI.
@@ -235,4 +239,9 @@ test "icmpHeader is exactly 8 bytes (minimal ICMP structure)" {
 test "netFrame has a fixed layout" {
     const size = @sizeOf(NetFrame);
     try std.testing.expect(size > 0);
+}
+test "transmitting without a driver is an explicit error, never a success" {
+    // O retorno de sucesso sem transmissao e o anti-padrao que a auditoria de
+    // 2026-10-31 registra como defeito 11: um stub que publica sucesso.
+    try std.testing.expectError(error.NotImplemented, net_transmit());
 }
