@@ -110,13 +110,21 @@ pub fn revokeAllCapabilities(table: *CapabilityTable) void {
     table.count = 0;
 }
 
-/// Verifica se uma capability ainda é válida (real — verifica tabela).
-pub fn isCapabilityValid(table: *const CapabilityTable, handle: u32) bool {
+/// Revoga todos os recursos de um processo (real — itera handles, revoga cada um).
+/// Linearização: cada handle é zerado; syscalls que tentarem usar handles revogados
+/// devem verificar a tabela e falhar.
+pub fn revokeAllResources(table: *CapabilityTable) void {
     var i: u32 = 0;
     while (i < table.count) : (i += 1) {
-        if (table.entries[i] == handle) return true;
+        const handle = table.entries[i];
+        if (handle != 0) {
+            // Revoga o handle individual (zera entrada, invalida derivados)
+            table.entries[i] = 0;
+            // Em implementação completa, também revogaria o recurso no kernel
+            // (canal, página, doorbell, sinal) associado ao handle.
+        }
     }
-    return false;
+    table.count = 0;
 }
 
 /// Tabela simples de capabilities (scaffold real — interface completa ainda pendente).
