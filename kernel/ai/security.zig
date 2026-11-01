@@ -110,6 +110,15 @@ pub fn revokeAllCapabilities(table: *CapabilityTable) void {
     table.count = 0;
 }
 
+/// Verifica se uma capability ainda é válida (real — verifica tabela).
+pub fn isCapabilityValid(table: *const CapabilityTable, handle: u32) bool {
+    var i: u32 = 0;
+    while (i < table.count) : (i += 1) {
+        if (table.entries[i] == handle) return true;
+    }
+    return false;
+}
+
 /// Tabela simples de capabilities (scaffold real — interface completa ainda pendente).
 pub const CapabilityTable = extern struct {
     entries: [16]u32 = @splat(0),
