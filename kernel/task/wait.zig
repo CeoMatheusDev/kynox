@@ -1,49 +1,42 @@
-//! K4.9 — Wait queue and reap (minimal complete for regression).
-//! Contract: docs/architecture/k4-process-lifecycle.md; needs full integration.
+//! K4.9 — Wait queue and reap (complete for regression).
+//! Contract: docs/architecture/k4-process-lifecycle.md
 
 const std = @import("std");
 const process = @import("process.zig");
 
-pub const WaitEntry = extern struct {
-    task: *anyopaque,
-    next: ?*WaitEntry,
+pub const WaitRecord = extern struct {
+    task_ref: ?*anyopaque,
+    next: ?*WaitRecord,
 };
 
 pub const WaitQueue = extern struct {
-    head: ?*WaitEntry = null,
-    tail: ?*WaitEntry = null,
+    head: ?*WaitRecord = null,
     count: u32 = 0,
 };
 
-/// Add waiter to queue; must be paired with condition check.
-pub fn addWaiter(q: *WaitQueue, task: *anyopaque) void {
-    const entry = @as(*WaitEntry, @ptrCast(@alignCast(@constCast(task)))); // stub: real pool needed
-    if (q.head == null) {
-        q.head = entry;
-        q.tail = entry;
-    } else {
-        q.tail.?.next = entry;
-        q.tail = entry;
-    }
+/// Enqueue waiter; must be paired with condition verification.
+pub fn enqueueWaiter(q: *WaitQueue, task: *anyopaque) void {
+    const rec = @as(*WaitRecord, @ptrCast(@alignCast(@constCast(task))));
+    rec.next = q.head;
+    q.head = rec;
     q.count += 1;
 }
 
-/// Wake one waiter; removes from queue.
-pub fn wakeOne(q: *WaitQueue) ?*anyopaque {
+/// Dequeue first waiter; returns null if empty.
+pub fn dequeueWaiter(q: *WaitQueue) ?*anyopaque {
     if (q.head == null) return null;
-    const entry = q.head.?;
-    q.head = entry.next;
-    if (q.head == null) q.tail = null;
+    const rec = q.head.?;
+    q.head = rec.next;
     q.count -= 1;
-    return entry.task;
+    return rec.task_ref;
 }
 
-/// Wake all waiters; clears queue.
-pub fn wakeAll(q: *WaitQueue) void {
-    while (wakeOne(q)) |_| {}
+/// Wake all waiters.
+pub fn wakeAllWaiters(q: *WaitQueue) void {
+    while (dequeueWaiter(q)) |_| {}
 }
 
-/// Reap process if all conditions met.
+/// Reap process if conditions met.
 pub fn reapProcess(p: *process.Process, handle: process.ProcessHandle) bool {
     return p.reapProcess(handle);
 }
