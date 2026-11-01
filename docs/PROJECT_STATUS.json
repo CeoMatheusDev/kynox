@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 881/881 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 212, including the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
+      "result": "success: 52/52 steps, 889/889 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 212; fs-loader 162, including the VFS readdir suite and the RamFS namespace generation; no QEMU target executed)",
       "date": "2026-11-01"
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "command": "zig build docs-check",
-      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (75 documents)",
+      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (76 documents)",
       "date": "2026-11-01"
     },
     {
@@ -248,7 +248,7 @@
     "context_pack": "docs/ai/context-pack.md",
     "generator": "tools/scripts/gen-doc-index.py",
     "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
-    "documents": 75,
+    "documents": 76,
     "authorities": [
       "binding",
       "current",
@@ -996,7 +996,7 @@
     },
     {
       "id": "ramfs",
-      "maturity_percent": 55,
+      "maturity_percent": 57,
       "status": "in_progress",
       "evidence": [
         "kernel/fs/ramfs.zig",
@@ -1004,7 +1004,8 @@
       ],
       "implemented": [
         "in-memory filesystem with inode/block allocation, directories and file operations",
-        "round-trip and large-file checks in the boot script"
+        "round-trip and large-file checks in the boot script",
+        "a namespace generation per volume, bumped by every directory mutation and by no failed one, and listDirFrom: a resumable directory listing that returns a cookie instead of requiring a buffer the size of the directory"
       ],
       "limitations": [
         "no permissions",
@@ -1017,7 +1018,8 @@
         "larger file/scale strategy"
       ],
       "tests": [
-        "fs-loader-tests (154)"
+        "fs-loader-tests (154)",
+        "ramfs listing suite: the cookie resumes and an empty buffer is refused; the generation advances on every change and only on one"
       ],
       "validation": {
         "status": "host_tests_passed",
@@ -1034,7 +1036,7 @@
     },
     {
       "id": "kfsx_vfs",
-      "maturity_percent": 35,
+      "maturity_percent": 43,
       "status": "in_progress",
       "evidence": [
         "kernel/fs/kfsx.zig",
@@ -1043,7 +1045,8 @@
       "implemented": [
         "mount namespace with longest-prefix routing",
         "mount generations",
-        "RamFS volume routing"
+        "RamFS volume routing",
+        "readdir through the VFS (kernel/fs/fs.zig): a directory listing in chunks, without allocation, with a cookie and a per-volume namespace generation; a cookie from another generation is refused with DirectoryChanged instead of resumed onto a reused table slot, and '.'/'..' are not synthesized"
       ],
       "limitations": [
         "no multiple real backends",
@@ -1052,11 +1055,13 @@
         "no concurrency guarantees"
       ],
       "pending_work": [
-        "VFS operation contract",
-        "a second backend to prove the abstraction"
+        "an operation table (vtable) so a second backend can be mounted without editing fs.zig",
+        "a second real backend (KFSX) passing the same interface suite",
+        "permissions at open time"
       ],
       "tests": [
-        "fs-loader-tests (154)"
+        "fs-loader-tests (154)",
+        "fs-loader readdir suite: empty directory, chunked listing without a lost entry, not-a-directory and missing path, entry kinds, a stale cookie refused, a mounted volume listed through its own volume, and the per-volume generation"
       ],
       "validation": {
         "status": "host_tests_passed",

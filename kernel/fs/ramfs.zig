@@ -131,7 +131,35 @@ pub const State = struct {
     block_bitmap: [block_count / 8]u8 = undefined,
     inodes: [inode_count]inode.InodeOnDisk = undefined,
     dir_entries: [dir_entry_count]DirEntry = undefined,
+    /// Quantas vezes o namespace deste volume mudou.
+    ///
+    /// Uma listagem de diretório é feita em pedaços: quem chama guarda um
+    /// cookie e volta. Entre uma chamada e outra, o diretório pode ganhar,
+    /// perder ou renomear uma entrada, e a listagem seguinte descreveria outra
+    /// coisa — pulando ou repetindo nomes sem avisar. Este contador é o que
+    /// permite recusar o pedido em vez de mentir: ele só cresce, e quem lista
+    /// compara o valor que recebeu com o valor atual.
+    generation: u32 = 0,
 };
+
+/// Marca o namespace do volume como alterado.
+///
+/// `0` é reservado: um cookie zero significa "comece do inicio", e uma geração
+/// zero nunca aparece depois da primeira mutação.
+fn bumpGeneration(state: *State) void {
+    state.generation +%= 1;
+    if (state.generation == 0) state.generation = 1;
+}
+
+/// Geração atual do namespace de um volume.
+pub fn generationFor(state: *const State) u32 {
+    return state.generation;
+}
+
+/// Geração atual do namespace da instância padrão.
+pub fn generation() u32 {
+    return default_state.generation;
+}
 
 var default_state: State = .{};
 
@@ -153,6 +181,7 @@ pub fn defaultState() *State {
 pub fn initState(state: *State) void {
     @memset(state.memory[0..], 0);
     @memset(state.block_bitmap[0..], 0);
+    state.generation = 0;
 
     for (&state.inodes) |*entry| {
         entry.* = .{
@@ -580,6 +609,7 @@ pub fn addDirEntryFor(state: *State, parent: u32, name: []const u8, inode_num: u
         entry.name_len = @intCast(name.len);
         @memset(entry.name[0..], 0);
         @memcpy(entry.name[0..name.len], name);
+        bumpGeneration(state);
         return;
     }
     return error.DirectoryFull;
@@ -631,6 +661,7 @@ pub fn renameFileFor(state: *State, source_parent: u32, source_name: []const u8,
         entry.name_len = @intCast(target_name.len);
         @memset(entry.name[0..], 0);
         @memcpy(entry.name[0..target_name.len], target_name);
+        bumpGeneration(state);
         return;
     }
     return error.EntryNotFound;
@@ -647,6 +678,7 @@ pub fn unlinkFileFor(state: *State, parent: u32, name: []const u8) Error!u32 {
         if (!entry.used or entry.parent != parent or entry.inode != target) continue;
         if (!std.mem.eql(u8, entry.name[0..entry.name_len], name)) continue;
         entry.* = .{};
+        bumpGeneration(state);
         return target;
     }
     return error.EntryNotFound;
@@ -1076,6 +1108,67 @@ pub fn listDir(directory: u32, out: []DirEntryInfo) Error!usize {
     return listDirFor(&default_state, directory, out);
 }
 
+/// Pedaço de uma listagem: o que coube e onde a próxima começa.
+pub const DirListing = struct {
+    /// Quantas entradas foram escritas em `out`.
+    count: usize,
+    /// O cookie da próxima chamada; zero quando a listagem terminou.
+    next: u32,
+};
+
+/// Lista um diretório a partir de um cookie, sem alocar.
+///
+/// O cookie é o índice da entrada da tabela por onde continuar: `0` começa do
+/// início, e um valor igual a `dir_entry_count` significa que a listagem
+/// terminou. A tabela é a mesma para todos os diretórios, então o cookie é um
+/// índice global — e é por isso que ele vale apenas enquanto a geração do
+/// namespace não muda. Quem chama compara a geração antes de continuar
+/// (`fs.readdir` faz isso) e reinicia a listagem quando ela mudou.
+///
+/// A ordem é a da tabela, não a alfabética: ordenar exigiria uma cópia e a
+/// tabela não tem um índice ordenado. `.` e `..` não são sintetizados — o
+/// chamador os acrescenta se quiser, porque eles não são entradas do volume.
+pub fn listDirFrom(
+    state: *const State,
+    directory: u32,
+    cookie: u32,
+    out: []DirEntryInfo,
+) Error!DirListing {
+    if (out.len == 0) return error.BufferTooSmall;
+    if (inodeKindFor(state, directory) != .directory) return error.NotADirectory;
+    if (cookie > dir_entry_count) return error.InvalidDirectory;
+
+    var slot: usize = cookie;
+    var count: usize = 0;
+    while (slot < dir_entry_count) : (slot += 1) {
+        // Ponteiro, e nao copia: `DirEntry` guarda o nome num array, e uma copia
+        // local deixaria `name` apontando para a pilha desta funcao.
+        const entry = &state.dir_entries[slot];
+        if (!entry.used or entry.parent != directory) continue;
+        if (entry.name_len > max_name_len or !validName(entry.name[0..entry.name_len])) {
+            return error.InvalidDirectory;
+        }
+        const target = inodeKindFor(state, entry.inode) orelse return error.InvalidDirectory;
+        if (count == out.len) break;
+        out[count] = .{
+            .inode = entry.inode,
+            .kind = target,
+            .name = entry.name[0..entry.name_len],
+        };
+        count += 1;
+    }
+
+    return .{
+        .count = count,
+        .next = if (slot >= dir_entry_count) 0 else @intCast(slot),
+    };
+}
+
+/// Lista um diretório da instância padrão a partir de um cookie.
+pub fn listDirFromDefault(directory: u32, cookie: u32, out: []DirEntryInfo) Error!DirListing {
+    return listDirFrom(&default_state, directory, cookie, out);
+}
+
 pub fn sizeOfFor(state: *const State, inode_num: u32) ?u64 {
     if (inodeKindFor(state, inode_num) != .file) return null;
     return state.inodes[inode_num].i_size;
@@ -1262,6 +1355,71 @@ test "directory lookup, nesting and listing" {
     try testing.expectError(error.InvalidName, createFile(docs, ""));
     try testing.expectError(error.InvalidName, createFile(docs, "a/b"));
     try testing.expectError(error.InvalidName, createFile(docs, ".."));
+}
+
+test "a chunked listing resumes at the cookie and refuses an empty buffer" {
+    init();
+
+    const docs = try createDirectory(root_inode, "docs");
+    _ = try createFile(docs, "a.txt");
+    _ = try createFile(docs, "b.txt");
+    _ = try createFile(docs, "c.txt");
+
+    var one: [1]DirEntryInfo = undefined;
+    const first = try listDirFrom(&default_state, docs, 0, &one);
+    try testing.expectEqual(@as(usize, 1), first.count);
+    try testing.expectEqualStrings("a.txt", one[0].name);
+    try testing.expect(first.next != 0);
+
+    var rest: [4]DirEntryInfo = undefined;
+    const second = try listDirFrom(&default_state, docs, first.next, &rest);
+    try testing.expectEqual(@as(usize, 2), second.count);
+    try testing.expectEqualStrings("b.txt", rest[0].name);
+    try testing.expectEqualStrings("c.txt", rest[1].name);
+    try testing.expectEqual(@as(u32, 0), second.next);
+
+    // Um buffer que nao cabe uma entrada nao pode devolver `next` igual ao
+    // cookie: quem chama repetiria para sempre.
+    var none: [0]DirEntryInfo = undefined;
+    try testing.expectError(error.BufferTooSmall, listDirFrom(&default_state, docs, 0, &none));
+
+    // Um arquivo nao e um diretorio, e um cookie fora da tabela e um defeito.
+    const file = try resolvePath("/docs/a.txt");
+    try testing.expectError(error.NotADirectory, listDirFrom(&default_state, file, 0, &one));
+    try testing.expectError(
+        error.InvalidDirectory,
+        listDirFrom(&default_state, docs, dir_entry_count + 1, &one),
+    );
+}
+
+test "the namespace generation advances on every change, and only on one" {
+    init();
+    try testing.expectEqual(@as(u32, 0), generation());
+
+    const docs = try createDirectory(root_inode, "docs");
+    const after_mkdir = generation();
+    try testing.expectEqual(@as(u32, 1), after_mkdir);
+
+    const file = try createFile(docs, "note.txt");
+    const after_create = generation();
+    try testing.expect(after_create > after_mkdir);
+
+    // Uma operacao que falha nao muda o namespace, e nao pode invalidar a
+    // listagem de quem esta no meio dela.
+    try testing.expectError(error.NameExists, createFile(docs, "note.txt"));
+    try testing.expectError(error.EntryNotFound, unlinkFile(docs, "missing.txt"));
+    try testing.expectEqual(after_create, generation());
+
+    try renameFile(docs, "note.txt", docs, "renamed.txt");
+    const after_rename = generation();
+    try testing.expect(after_rename > after_create);
+
+    _ = try unlinkFile(docs, "renamed.txt");
+    try testing.expect(generation() > after_rename);
+
+    // A geracao nunca volta a zero: zero e o cookie de "comece do inicio".
+    releaseUnlinked(file);
+    try testing.expect(generation() != 0);
 }
 
 test "a file larger than the direct blocks uses the indirect table" {

@@ -958,6 +958,11 @@ capabilities).
    `readdir`, `unlink`, `mkdir`, `rename`, `sync`, with `Inode`/`File` operations
    and a mount table. RamFS, KNV and KFSX implement it; the syscall layer touches
    only the interface.
+   *(2026-11-01: `readdir` exists on the VFS path — a listing in chunks, with a
+   cookie and a per-volume namespace generation, so a cookie from another
+   generation is refused with `DirectoryChanged` instead of resumed onto a reused
+   table slot. The interface itself is still RamFS-shaped: no vtable, no second
+   backend. See `docs/audits/2026-11-01-vfs-readdir.md`.)*
 2. **Page cache** keyed by (filesystem id, inode, page index), with a bounded size,
    write-back for writable backends, and invalidation on truncate.
 3. **Permissions enforced** at open time (owner/mode and the process identity),

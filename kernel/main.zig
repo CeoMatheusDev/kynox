@@ -782,6 +782,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // loaded from `/apps/hello.elf`, and the file has to exist when the
     // materializer reads it.
     installFs();
+    reportRootListing();
 
     // The task of the user mode is prepared after the tables are active:
     // the program is copied through them, and the tables of the firmware
@@ -3553,6 +3554,47 @@ fn installFs() void {
         fatal.stopAfterReport();
     };
     serial.printLine("[KNK] fs: /apps/large.bin installed ({d} bytes, indirect blocks)", .{large_file_size});
+}
+
+/// Lista o diretorio raiz em pedacos, com a mesma API que o espaco de usuario
+/// usa.
+///
+/// O relatorio nao le a tabela do RamFS por fora: ele chama `fs.readdir` com o
+/// cookie e a geracao, exatamente como um processo chamaria. Se a listagem
+/// devolver um numero que nao fecha, o boot mostra o numero e nao um "ok".
+fn reportRootListing() void {
+    var entries: [4]fs.DirEntry = undefined;
+    var cookie: u32 = 0;
+    var generation: u32 = 0;
+    var total: usize = 0;
+    var directories: usize = 0;
+    var files: usize = 0;
+
+    // Um cookie que nao avanca seria um laco infinito no boot; o limite e o
+    // numero de entradas da tabela do RamFS dividido pelo pedaco minimo.
+    var rounds: usize = 0;
+    while (rounds < ramfs.dir_entry_count) : (rounds += 1) {
+        const listing = fs.readdir("/", cookie, generation, &entries) catch |err| {
+            serial.printLine("[KNK] vfs: the root directory could not be listed: {s}", .{@errorName(err)});
+            return;
+        };
+        generation = listing.generation;
+        for (entries[0..listing.count]) |entry| {
+            total += 1;
+            switch (entry.kind) {
+                .directory => directories += 1,
+                .file => files += 1,
+                .symlink => {},
+            }
+        }
+        cookie = listing.next;
+        if (cookie == 0) break;
+    }
+
+    serial.printLine(
+        "[KNK] vfs: / listed in chunks of {d}: {d} entries, {d} directories, {d} files (generation {d}, {d} call(s))",
+        .{ entries.len, total, directories, files, generation, rounds + 1 },
+    );
 }
 
 /// Creates the capability of the channel of the KNX and gives it to the

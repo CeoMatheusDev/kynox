@@ -193,6 +193,10 @@ pub const Error = ramfs.Error || kfsx.Error || error{
     UnknownProcess,
     /// A operação não pode atravessar montagens distintas.
     CrossMount,
+    /// A listagem de um diretório foi interrompida por uma mudança no
+    /// namespace: o cookie pertence a outra geração e os nomes já entregues
+    /// não descrevem mais o diretório.
+    DirectoryChanged,
 };
 
 /// Entrada da tabela de arquivos abertos.
@@ -639,6 +643,79 @@ pub fn freeInodeCount() usize {
     return ramfs.freeInodeCount();
 }
 
+/// Uma entrada de diretório, como o VFS a entrega.
+///
+/// `name` aponta para o nome guardado no volume: ele vale até a próxima
+/// mutação do namespace daquele volume, e não é uma cópia. Quem precisa do nome
+/// depois de uma mutação copia antes.
+pub const DirEntry = struct {
+    name: []const u8,
+    kind: inode.InodeType,
+    inode: u32,
+};
+
+/// Um pedaço de uma listagem de diretório.
+pub const Listing = struct {
+    /// Quantas entradas foram escritas no buffer do chamador.
+    count: usize,
+    /// O cookie da próxima chamada; zero quando a listagem terminou.
+    next: u32,
+    /// A geração do namespace a que esta listagem pertence.
+    generation: u32,
+};
+
+/// Lista um diretório em pedaços, sem alocar.
+///
+/// A primeira chamada usa `cookie = 0`; as seguintes repetem o `next` e a
+/// `generation` que a chamada anterior devolveu. `next == 0` marca o fim.
+///
+/// Uma listagem atravessa várias chamadas, e o diretório pode mudar entre elas.
+/// O RamFS mantém uma geração por volume, incrementada em toda mudança de
+/// namespace; um cookie de outra geração é recusado com `DirectoryChanged` em
+/// vez de devolvido como se a listagem continuasse. Continuar seria pior do que
+/// recusar: uma entrada que saiu libera uma posição da tabela, e a entrada
+/// seguinte ocuparia a mesma posição — o chamador pularia um nome e receberia
+/// outro sem qualquer sinal.
+///
+/// A ordem é a do volume, não a alfabética. `.` e `..` não são sintetizados: o
+/// chamador os acrescenta, porque eles não são entradas do volume.
+pub fn readdir(path: []const u8, cookie: u32, generation: u32, out: []DirEntry) Error!Listing {
+    if (path.len == 0 or path.len > max_path_len) return error.InvalidPath;
+
+    // A rota é a mesma das outras operações: caminho absoluto passa pelo
+    // namespace (maior prefixo), caminho relativo é da instância padrão.
+    var volume: ?*ramfs.State = null;
+    var relative = path;
+    if (path[0] == '/') {
+        const route = try namespace.route(path);
+        relative = route.relative_path;
+        if (route.volume_id != 0) {
+            volume = extraVolume(route.volume_id) orelse return error.UnsupportedVolume;
+        }
+    }
+
+    const directory = if (volume) |state|
+        try ramfs.resolvePathFor(state, relative)
+    else
+        try ramfs.resolvePath(relative);
+
+    const current = if (volume) |state| ramfs.generationFor(state) else ramfs.generation();
+    if (cookie != 0 and generation != current) return error.DirectoryChanged;
+
+    var infos: [ramfs.dir_entry_count]ramfs.DirEntryInfo = undefined;
+    const limit = @min(out.len, infos.len);
+    const listing = if (volume) |state|
+        try ramfs.listDirFrom(state, directory, cookie, infos[0..limit])
+    else
+        try ramfs.listDirFromDefault(directory, cookie, infos[0..limit]);
+
+    for (infos[0..listing.count], 0..) |info, index| {
+        out[index] = .{ .name = info.name, .kind = info.kind, .inode = info.inode };
+    }
+
+    return .{ .count = listing.count, .next = listing.next, .generation = current };
+}
+
 /// Tipo do inode de um caminho, ou `null` quando ele não existe.
 pub fn kindOf(path: []const u8) ?inode.InodeType {
     const target = ramfs.resolvePath(backendPath(path) catch return null) catch return null;
@@ -650,6 +727,190 @@ pub fn kindOf(path: []const u8) ?inode.InodeType {
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "an empty directory lists nothing and ends the listing" {
+    init();
+
+    _ = try mkdir("/empty");
+
+    var out: [4]DirEntry = undefined;
+    const listing = try readdir("/empty", 0, 0, &out);
+    try testing.expectEqual(@as(usize, 0), listing.count);
+    try testing.expectEqual(@as(u32, 0), listing.next);
+    try testing.expect(listing.generation != 0);
+}
+
+test "a directory is listed in chunks without losing an entry" {
+    init();
+
+    _ = try mkdir("/letters");
+    for ([_][]const u8{ "a.txt", "b.txt", "c.txt", "d.txt", "e.txt" }) |name| {
+        var path_buffer: [32]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buffer, "/letters/{s}", .{name}) catch unreachable;
+        const fd = try create(0, path, 0o644);
+        try close(0, fd);
+    }
+
+    // Two entries at a time: the cookie has to carry the position, and the
+    // five names have to come out exactly once each.
+    var out: [2]DirEntry = undefined;
+    var cookie: u32 = 0;
+    var generation: u32 = 0;
+    var seen: [5]bool = @splat(false);
+    var total: usize = 0;
+    var calls: usize = 0;
+
+    while (true) {
+        const listing = try readdir("/letters", cookie, generation, &out);
+        calls += 1;
+        if (calls == 1) try testing.expect(listing.generation != 0);
+        generation = listing.generation;
+        for (out[0..listing.count]) |entry| {
+            const name = entry.name;
+            const index: usize = switch (name[0]) {
+                'a' => 0,
+                'b' => 1,
+                'c' => 2,
+                'd' => 3,
+                'e' => 4,
+                else => unreachable,
+            };
+            try testing.expect(!seen[index]);
+            seen[index] = true;
+            total += 1;
+            try testing.expectEqual(inode.InodeType.file, entry.kind);
+            try testing.expectEqual(@as(usize, 5), name.len);
+        }
+        cookie = listing.next;
+        if (cookie == 0) break;
+        try testing.expect(calls < 8);
+    }
+
+    try testing.expectEqual(@as(usize, 5), total);
+    try testing.expectEqual(@as(usize, 3), calls);
+    for (seen) |hit| try testing.expect(hit);
+}
+
+test "a file is not a directory and a missing path is refused" {
+    init();
+
+    const fd = try create(0, "/plain.txt", 0o644);
+    try close(0, fd);
+
+    var out: [4]DirEntry = undefined;
+    try testing.expectError(error.NotADirectory, readdir("/plain.txt", 0, 0, &out));
+    try testing.expectError(error.EntryNotFound, readdir("/nothing-here", 0, 0, &out));
+    try testing.expectError(error.InvalidPath, readdir("", 0, 0, &out));
+
+    // A buffer that cannot hold one entry is a caller defect, not an empty
+    // directory: refusing is the only answer that cannot loop forever.
+    var none: [0]DirEntry = undefined;
+    try testing.expectError(error.BufferTooSmall, readdir("/", 0, 0, &none));
+}
+
+test "an entry carries its kind, and a subdirectory is listed on its own" {
+    init();
+
+    _ = try mkdir("/docs");
+    const fd = try create(0, "/readme.txt", 0o644);
+    try close(0, fd);
+
+    var out: [8]DirEntry = undefined;
+    const listing = try readdir("/", 0, 0, &out);
+    try testing.expectEqual(@as(usize, 2), listing.count);
+
+    var saw_directory = false;
+    var saw_file = false;
+    for (out[0..listing.count]) |entry| {
+        if (std.mem.eql(u8, entry.name, "docs")) {
+            try testing.expectEqual(inode.InodeType.directory, entry.kind);
+            saw_directory = true;
+        }
+        if (std.mem.eql(u8, entry.name, "readme.txt")) {
+            try testing.expectEqual(inode.InodeType.file, entry.kind);
+            saw_file = true;
+        }
+    }
+    try testing.expect(saw_directory and saw_file);
+
+    // The subdirectory holds nothing, and its listing is independent.
+    const inner = try readdir("/docs", 0, 0, &out);
+    try testing.expectEqual(@as(usize, 0), inner.count);
+}
+
+test "a change in the namespace invalidates the cookie" {
+    init();
+
+    _ = try mkdir("/changing");
+    for ([_][]const u8{ "first.txt", "second.txt" }) |name| {
+        var path_buffer: [32]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buffer, "/changing/{s}", .{name}) catch unreachable;
+        const fd = try create(0, path, 0o644);
+        try close(0, fd);
+    }
+
+    var out: [1]DirEntry = undefined;
+    const first = try readdir("/changing", 0, 0, &out);
+    try testing.expectEqual(@as(usize, 1), first.count);
+    try testing.expect(first.next != 0);
+
+    // A new entry between two chunks: the freed-and-reused slot would make the
+    // second chunk describe a different directory. The old cookie is refused.
+    const added = try create(0, "/changing/third.txt", 0o644);
+    try close(0, added);
+    try testing.expectError(
+        error.DirectoryChanged,
+        readdir("/changing", first.next, first.generation, &out),
+    );
+
+    // Restarting with the new generation lists all three.
+    var seen: usize = 0;
+    var cookie: u32 = 0;
+    var generation: u32 = 0;
+    var chunk: [2]DirEntry = undefined;
+    while (true) {
+        const listing = try readdir("/changing", cookie, generation, &chunk);
+        generation = listing.generation;
+        seen += listing.count;
+        cookie = listing.next;
+        if (cookie == 0) break;
+    }
+    try testing.expectEqual(@as(usize, 3), seen);
+}
+
+test "a mounted volume is listed through its own directory" {
+    init();
+
+    try registerRamfsVolume(7);
+    try mountRamfsVolume("/data", 7);
+    defer unmountRamfsVolume("/data") catch {};
+
+    _ = try createOnVolume(7, "/inside.txt");
+    _ = try createOnVolume(7, "/other.txt");
+    const fd = try create(0, "/outside.txt", 0o644);
+    try close(0, fd);
+
+    var out: [8]DirEntry = undefined;
+    const listing = try readdir("/data", 0, 0, &out);
+    try testing.expectEqual(@as(usize, 2), listing.count);
+
+    // The root volume is a different namespace, and it does not see them.
+    const root = try readdir("/", 0, 0, &out);
+    var saw_outside = false;
+    for (out[0..root.count]) |entry| {
+        try testing.expect(!std.mem.eql(u8, entry.name, "inside.txt"));
+        try testing.expect(!std.mem.eql(u8, entry.name, "other.txt"));
+        if (std.mem.eql(u8, entry.name, "outside.txt")) saw_outside = true;
+    }
+    try testing.expect(saw_outside);
+
+    // The generation is per volume: creating in the mounted volume does not
+    // invalidate a listing of the root.
+    const root_listing = try readdir("/", 0, 0, &out);
+    _ = try createOnVolume(7, "/later.txt");
+    const still_valid = try readdir("/", root_listing.next, root_listing.generation, &out);
+    try testing.expectEqual(root_listing.generation, still_valid.generation);
+}
 
 test "create, write, seek and read through a descriptor" {
     init();

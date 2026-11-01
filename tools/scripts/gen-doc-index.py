@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-vfs-readdir.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "readdir through the VFS: a listing in chunks with a cookie and a namespace generation, why a cookie from another generation is refused instead of resumed, and the stack-copy defect the tests found in the chunked listing.",
+    },
     "docs/audits/2026-11-01-vector-pool.md": {
         "kind": "implementation-record",
         "authority": "record",
