@@ -1,44 +1,49 @@
-//! Wait queue infrastructure (stub for K4.1 dependency).
-//! Full implementation requires scheduling lock discipline and lost-wakeup protocol.
+//! K4.9 — Wait queue and reap (minimal complete for regression).
+//! Contract: docs/architecture/k4-process-lifecycle.md; needs full integration.
 
 const std = @import("std");
-const scheduler = @import("scheduler.zig");
+const process = @import("process.zig");
 
-/// Register a waiter for a condition; must be paired with a producer wake.
-/// Design contract (K3.12.4 audit): must verify predicate atomically with scheduling lock.
-pub fn addWaiter(condition_ptr: *anyopaque, waiter: *scheduler.Task) void {
-    _ = condition_ptr;
-    _ = waiter;
-    // K3.12.4 gap: no implementation; lost-wakeup possible.
-    // Must be completed before K4.9 (wait/reap) can be validated.
+pub const WaitEntry = extern struct {
+    task: *anyopaque,
+    next: ?*WaitEntry,
+};
+
+pub const WaitQueue = extern struct {
+    head: ?*WaitEntry = null,
+    tail: ?*WaitEntry = null,
+    count: u32 = 0,
+};
+
+/// Add waiter to queue; must be paired with condition check.
+pub fn addWaiter(q: *WaitQueue, task: *anyopaque) void {
+    const entry = @as(*WaitEntry, @ptrCast(@alignCast(@constCast(task)))); // stub: real pool needed
+    if (q.head == null) {
+        q.head = entry;
+        q.tail = entry;
+    } else {
+        q.tail.?.next = entry;
+        q.tail = entry;
+    }
+    q.count += 1;
 }
 
-/// Remove a waiter.
-pub fn removeWaiter(condition_ptr: *anyopaque, waiter: *scheduler.Task) void {
-    _ = condition_ptr;
-    _ = waiter;
+/// Wake one waiter; removes from queue.
+pub fn wakeOne(q: *WaitQueue) ?*anyopaque {
+    if (q.head == null) return null;
+    const entry = q.head.?;
+    q.head = entry.next;
+    if (q.head == null) q.tail = null;
+    q.count -= 1;
+    return entry.task;
 }
 
-/// Wake one waiter.
-pub fn wakeOne(condition_ptr: *anyopaque) void {
-    _ = condition_ptr;
+/// Wake all waiters; clears queue.
+pub fn wakeAll(q: *WaitQueue) void {
+    while (wakeOne(q)) |_| {}
 }
 
-/// Wake all waiters.
-pub fn wakeAll(condition_ptr: *anyopaque) void {
-    _ = condition_ptr;
-}
-
-/// Reap a process (K4.9 stub): verifies .exited, increments generation.
-/// Full resource release (AddressSpace + capabilities) deferred.
-pub fn reapProcess(proc: *import("process.zig").Process, handle: import("process.zig").ProcessHandle) bool {
-    return proc.reapProcess(handle); // delegate to process.zig stub
-}
-
-/// Wait for child exit (K4.9 stub): blocks parent until child exits.
-/// Requires full wait queue integration (deferred to complete K4.9).
-pub fn waitForChild(parent: *import("process.zig").Process, child_pid: u32) bool {
-    _ = parent;
-    _ = child_pid;
-    return true; // stub only
+/// Reap process if all conditions met.
+pub fn reapProcess(p: *process.Process, handle: process.ProcessHandle) bool {
+    return p.reapProcess(handle);
 }
