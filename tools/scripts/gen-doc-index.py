@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-per-cpu-clock.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The clock of each processor: the per-CPU role of a clock (system or local), the ledger that counts ticks per CPU, the arming of an AP's local timer from the BSP's measurement, and the counter of ignored ticks.",
+    },
     "docs/audits/2026-11-01-tlb-shootdown.md": {
         "kind": "implementation-record",
         "authority": "record",

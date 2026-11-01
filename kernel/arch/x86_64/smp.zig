@@ -39,6 +39,7 @@ const acpi = @import("acpi.zig");
 const segment = @import("segment.zig");
 const trampoline = @import("ap_trampoline.zig");
 const tlb = @import("tlb.zig");
+const timer = @import("timer.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -561,7 +562,22 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
     // funcao. Sem ela, `current` desta CPU fica nulo, `prepareNext` retorna
     // antes de olhar a fila, e o AP espera para sempre com trabalho pronto ao
     // lado.
-    if (cpu_entry_hook) |hook| hook(cpu_id, stack[0..]);
+    if (cpu_entry_hook) |hook| {
+        hook(cpu_id, stack[0..]);
+
+        // O relogio desta CPU. O 8254 nao chega a uma AP, e sem um relogio
+        // proprio ela so seria preemptada quando outra CPU a cutucasse com um
+        // reschedule. A calibracao nao se repete: o BSP mediu o barramento da
+        // maquina, e a AP arma o proprio timer com essa medida.
+        apic.enable();
+        apic.setTpr(0);
+        _ = timer.armCpuClock(cpu_id, .local);
+        const armed = timer.armLocalApicTimer();
+        kynox.serial.printLine("[KNK] smp: cpu={d} clock {s}", .{
+            cpu_id,
+            if (armed) "armed (its own local APIC timer)" else "not armed (no calibration or no local APIC)",
+        });
+    }
 
     // Entra no loop da CPU: aguarda por trabalho do escalonador.
     // O escalonador ainda e monoprocessador; quando o suporte a multiprocessador

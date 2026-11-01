@@ -962,8 +962,11 @@ fn installSegments() void {
 fn pitTick(vector: u64) bool {
     _ = vector;
 
-    const owns_tick = timer.drivesScheduler(.pit);
-    timer.onTick(.pit);
+    // The ledger of the clocks decides, not this handler: the processor that
+    // owns the system clock counts it, and one that does not counts it as
+    // ignored. That is what keeps a tick of the 8254 from being time on an AP
+    // that the 8254 never reaches.
+    const owns_tick = timer.onCpuTick(smp.cpuId(), .pit);
     if (!owns_tick) return false;
 
     syscall.inputWaitTick();
@@ -2980,6 +2983,16 @@ fn installIoApic() void {
 /// Prepares the timer and enables the interrupts.
 fn installTimer() void {
     timer.init(timer_frequency);
+
+    // The processor that runs the boot counts the clock of the system. Without
+    // this line nobody owns it: every tick would be counted as ignored, and
+    // `pitTick` would refuse to preempt — the machine would run one task
+    // forever with the timer firing happily in the background.
+    if (!timer.armCpuClock(smp.bspCpuIndex(), .system)) {
+        serial.printLine("[KNK] FATAL: the clock of the system has no owner", .{});
+        port.haltForever();
+    }
+
     timer.enableInterrupts();
 
     // The kernel waits for a few ticks, which proves that the timer and the
@@ -3012,6 +3025,16 @@ fn installTimer() void {
         timer.ticksPerSecond(),
         timer.ticks(),
         @tagName(timer.tickSource()),
+    });
+    // Who owns a clock. The BSP counts the system clock; every AP counts its
+    // own local timer, and a tick that arrives on a processor whose clock is
+    // not the one that fired is counted as ignored — that number is how a
+    // wrong configuration shows up as a count instead of as a feeling.
+    serial.printLine("[KNK] timer: cpu={d} owns the clock of the system", .{
+        smp.bspCpuIndex(),
+    });
+    serial.printLine("[KNK] timer: {d} ignored ticks (a clock that fired on a processor that does not count it)", .{
+        timer.ignoredTicks(),
     });
     serial.printLine("[KNK] perf: timestamp counter {d} Hz", .{perf_tsc_hz});
 

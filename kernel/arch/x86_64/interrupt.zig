@@ -458,8 +458,11 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
     // interval twice, because both clocks are armed.
     if (vector == @as(u64, apic.timer_vector)) {
         const timer = @import("timer.zig");
-        const owns_tick = timer.drivesScheduler(.apic);
-        timer.onTick(.apic);
+        // The ownership of the tick is per processor now: on the BSP the 8254
+        // owns the time and this interrupt is ignored (counting both would count
+        // every period twice), but on an AP this local timer **is** its clock —
+        // the only one it has, because the 8254 does not reach it.
+        const owns_tick = timer.onCpuTick(smp.cpuId(), .apic);
         apic.eoi();
 
         if (!owns_tick) return 0;

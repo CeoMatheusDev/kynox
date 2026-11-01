@@ -383,6 +383,11 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    halt IPI does not, and no IPI of any kind has been delivered here. See
    `docs/audits/2026-11-01-reschedule-ipi.md` and
    `docs/audits/2026-11-01-tlb-shootdown.md`.)*
+   *(2026-11-01: the clock of each processor is separate from the clock of the
+   machine — `timer.armCpuClock` gives the BSP the `system` role and an AP the
+   `local` role, an AP arms its own local timer with the frequency the BSP
+   measured, and a tick that arrives where it is not the clock is counted as
+   ignored. See `docs/audits/2026-11-01-per-cpu-clock.md`.)*
 7. **Unhandled interrupts are counted and named**, not silently acknowledged. A
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);

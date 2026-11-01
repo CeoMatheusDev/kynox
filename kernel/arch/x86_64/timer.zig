@@ -57,6 +57,36 @@ pub const hardware_interrupt_count: u8 = 16;
 /// Number of ticks since the timer was started.
 var tick_count: u64 = 0;
 
+/// The frequency of the bus of the local APIC, measured by the calibration of
+/// the BSP. Zero means "not measured", and a clock that has no measurement is
+/// not armed at all: a divisor guessed wrong is a clock that runs at the wrong
+/// speed, and nothing in the log would say so.
+var calibrated_bus_frequency: u32 = 0;
+
+/// The frequency the calibration of the BSP measured.
+pub fn calibratedBusFrequency() u32 {
+    return calibrated_bus_frequency;
+}
+
+/// Arms the local timer of this processor with the frequency the BSP measured.
+///
+/// The calibration waits for a one-shot timer to run down, and it measures the
+/// bus of the machine: an AP would waste the same time to reach the same number.
+/// Two conditions are refused instead of guessed, and both return false:
+///
+///   * the local APIC is not mapped (the controller cannot be written);
+///   * there is no measurement, or the requested frequency does not fit in it.
+pub fn armLocalApicTimer() bool {
+    if (!apic.isMapped()) return false;
+    if (calibrated_bus_frequency == 0) return false;
+    if (frequency == 0 or frequency > calibrated_bus_frequency) return false;
+
+    const divisor: u32 = calibrated_bus_frequency / frequency;
+    apic.setTimerDivide(0);
+    apic.timerPeriodic(if (divisor < 1) 1 else divisor);
+    return true;
+}
+
 /// The frequency of the timer in interrupts per second.
 var frequency: u32 = 100;
 
@@ -154,6 +184,114 @@ pub fn onTick(source: TickSource) void {
 /// The number of ticks since the timer was started.
 pub fn ticks() u64 {
     return tick_count;
+}
+
+/// How many processors can have a clock of their own.
+///
+/// It matches the limit of the CPU table. The ledger is not the table: this
+/// module counts time and knows nothing about APIC ids, MADT entries or
+/// scheduling, and the caller passes the number it already uses for everything
+/// else (the index of the CPU table).
+pub const max_cpu_clocks: usize = 8;
+
+/// What the clock of one processor is.
+pub const CpuClock = enum {
+    /// This processor counts the clock of the system. There is one such
+    /// processor, and it is the one the 8254 interrupts.
+    system,
+    /// This processor counts its own local timer and never touches the counter
+    /// of the system: an AP has no connection to the 8254 at all, so a "system"
+    /// role there would be a processor counting a clock that does not reach it.
+    local,
+};
+
+var cpu_clocks: [max_cpu_clocks]?CpuClock = @splat(null);
+var cpu_ticks: [max_cpu_clocks]u64 = @splat(0);
+
+/// Ticks that arrived on a processor whose clock is not the one that fired.
+///
+/// It is the number that turns "the clock is wrong" from an opinion into a
+/// count: a processor armed as `local` that receives the 8254 is a processor
+/// counting somebody else's clock.
+var ignored_ticks: u64 = 0;
+
+/// Gives one processor a clock.
+///
+/// Arming twice with the same role is not an error and changes nothing: the boot
+/// arms the BSP, and a caller that runs again (a retry, a test) must not have to
+/// know whether it already happened. Arming with a **different** role is
+/// refused, because a processor that counted the system clock and then its own
+/// local timer would put two clocks into one machine — the defect C.6 of the
+/// audit of 2026-10-31, in a new place.
+pub fn armCpuClock(cpu_index: u8, role: CpuClock) bool {
+    if (cpu_index >= max_cpu_clocks) return false;
+    if (cpu_clocks[cpu_index]) |armed| return armed == role;
+    cpu_clocks[cpu_index] = role;
+    return true;
+}
+
+/// The role of the clock of one processor, or null when nobody armed it.
+pub fn cpuClockRole(cpu_index: u8) ?CpuClock {
+    if (cpu_index >= max_cpu_clocks) return null;
+    return cpu_clocks[cpu_index];
+}
+
+/// True when an interrupt of `source` on `cpu_index` is the clock of that
+/// processor.
+///
+/// The answer is not the same for every processor: the BSP counts the source
+/// that owns the tick of the system, and an AP counts its own local timer, which
+/// is the only clock it has. A processor nobody armed has no clock, and its
+/// interrupts are counted as ignored.
+pub fn drivesSchedulerOn(cpu_index: u8, source: TickSource) bool {
+    const role = cpuClockRole(cpu_index) orelse return false;
+    return switch (role) {
+        .system => drivesScheduler(source),
+        .local => source == .apic,
+    };
+}
+
+/// Counts one tick of the clock of one processor.
+///
+/// Returns true when the tick was the clock of that processor. Only the
+/// processor with the `system` role moves the counter of the machine: an AP
+/// counting its own ticks into the system clock would make every timeout depend
+/// on how many processors are online.
+pub fn onCpuTick(cpu_index: u8, source: TickSource) bool {
+    const role = cpuClockRole(cpu_index) orelse {
+        ignored_ticks += 1;
+        return false;
+    };
+
+    switch (role) {
+        .system => {
+            if (!drivesScheduler(source)) {
+                ignored_ticks += 1;
+                return false;
+            }
+            onTick(source);
+        },
+        .local => {
+            if (source != .apic) {
+                ignored_ticks += 1;
+                return false;
+            }
+        },
+    }
+
+    cpu_ticks[cpu_index] += 1;
+    return true;
+}
+
+/// The ticks counted by one processor, or null when the number is not a CPU.
+pub fn ticksOf(cpu_index: u8) ?u64 {
+    if (cpu_index >= max_cpu_clocks) return null;
+    return cpu_ticks[cpu_index];
+}
+
+/// Ticks that arrived on a processor whose clock is not the one that fired.
+pub fn ignoredTicks() u64 {
+    return ignored_ticks;
 }
 
 /// The frequency of the timer in interrupts per second.
@@ -260,6 +398,11 @@ pub fn initApicTimer(ticks_per_second: u32) void {
         serial.printLine("[KNK] APIC: bus freq calibrada: {d} Hz", .{bus_freq});
     }
 
+    // A medicao fica guardada: os APs armam o proprio timer com ela em vez de
+    // repetirem a calibracao, que mede uma propriedade da maquina e nao de um
+    // processador.
+    calibrated_bus_frequency = bus_freq;
+
     // Agora com a frequencia calibrada, configura o timer para o uso normal.
     // FASE 2 — Evita divisor zero (se ticks > bus, truncado seria zero).
     if (ticks_per_second > bus_freq) {
@@ -345,4 +488,90 @@ test "the two clocks together never count twice for one period" {
         onTick(.apic); // the calibrated local timer of the BSP
     }
     try std.testing.expectEqual(start + 5, tick_count);
+}
+
+test "a processor is armed once and with one role" {
+    // Idempotent for the same role: the boot arms the BSP, and a caller that
+    // runs again must not have to know whether it already happened.
+    try std.testing.expect(armCpuClock(0, .system));
+    try std.testing.expect(armCpuClock(0, .system));
+    try std.testing.expectEqual(CpuClock.system, cpuClockRole(0).?);
+
+    // A different role is refused: counting both clocks is the defect C.6 in a
+    // new place, and it is refused instead of silently overwritten.
+    try std.testing.expect(!armCpuClock(0, .local));
+    try std.testing.expectEqual(CpuClock.system, cpuClockRole(0).?);
+
+    try std.testing.expect(armCpuClock(1, .local));
+    try std.testing.expectEqual(CpuClock.local, cpuClockRole(1).?);
+
+    // A number that is not a processor has no clock at all.
+    try std.testing.expect(!armCpuClock(max_cpu_clocks, .local));
+    try std.testing.expectEqual(@as(?CpuClock, null), cpuClockRole(max_cpu_clocks));
+}
+
+test "the clock of the system is counted by the processor that owns it" {
+    selectTickSource(.pit);
+    defer selectTickSource(.pit);
+    _ = armCpuClock(0, .system);
+
+    const start = tick_count;
+    const cpu_start = ticksOf(0).?;
+
+    // The 8254 is the clock of this processor, so the tick is time and also a
+    // tick of this processor.
+    try std.testing.expect(onCpuTick(0, .pit));
+    try std.testing.expectEqual(start + 1, tick_count);
+    try std.testing.expectEqual(cpu_start + 1, ticksOf(0).?);
+
+    // The local timer of the BSP is calibrated and disarmed, and even if it
+    // fired it is not the clock of the machine: it counts as ignored, not as
+    // time.
+    const ignored_start = ignoredTicks();
+    try std.testing.expect(!onCpuTick(0, .apic));
+    try std.testing.expectEqual(start + 1, tick_count);
+    try std.testing.expectEqual(cpu_start + 1, ticksOf(0).?);
+    try std.testing.expectEqual(ignored_start + 1, ignoredTicks());
+}
+
+test "an AP counts its own timer and never moves the clock of the system" {
+    selectTickSource(.pit);
+    defer selectTickSource(.pit);
+    _ = armCpuClock(1, .local);
+
+    const system_start = tick_count;
+    const cpu_start = ticksOf(1).?;
+
+    // The local timer of the AP is its clock.
+    try std.testing.expect(onCpuTick(1, .apic));
+    try std.testing.expect(onCpuTick(1, .apic));
+    try std.testing.expectEqual(cpu_start + 2, ticksOf(1).?);
+
+    // ... and it is not the clock of the machine: a timeout measured in ticks
+    // must not depend on how many processors are online.
+    try std.testing.expectEqual(system_start, tick_count);
+
+    // The 8254 does not reach an AP, so a tick from it there is not time.
+    const ignored_start = ignoredTicks();
+    try std.testing.expect(!onCpuTick(1, .pit));
+    try std.testing.expectEqual(cpu_start + 2, ticksOf(1).?);
+    try std.testing.expectEqual(ignored_start + 1, ignoredTicks());
+}
+
+test "a processor nobody armed has no clock and its ticks are ignored" {
+    // Index 2 is never armed by any test; the role is what decides, not the
+    // existence of the processor in the table.
+    try std.testing.expectEqual(@as(?CpuClock, null), cpuClockRole(2));
+    try std.testing.expect(!drivesSchedulerOn(2, .pit));
+    try std.testing.expect(!drivesSchedulerOn(2, .apic));
+
+    const system_start = tick_count;
+    const ignored_start = ignoredTicks();
+    try std.testing.expect(!onCpuTick(2, .apic));
+    try std.testing.expectEqual(system_start, tick_count);
+    try std.testing.expectEqual(ignored_start + 1, ignoredTicks());
+
+    // A number that is not a processor counts nothing and has no ticks.
+    try std.testing.expect(!onCpuTick(max_cpu_clocks, .apic));
+    try std.testing.expectEqual(@as(?u64, null), ticksOf(max_cpu_clocks));
 }

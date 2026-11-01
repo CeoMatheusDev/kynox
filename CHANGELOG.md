@@ -21,6 +21,38 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — um relógio por processador, e um contador que sabe de quem é
+
+- **O defeito**: o handler do vetor 64 perguntava `timer.drivesScheduler(.apic)`,
+  uma política **por sistema**. Como o 8254 é o dono, um tick da APIC nunca era o
+  dono — então, numa AP (que só tem o próprio timer local), a interrupção era
+  reconhecida e **não preemptava**, sem nada no log dizendo isso.
+- **As duas perguntas separadas**: `timer.drivesScheduler(source)` continua
+  respondendo pelo **relógio da máquina**, e `timer.drivesSchedulerOn(cpu, source)`
+  responde pelo **relógio daquela CPU**.
+- **Um papel por CPU**: `timer.armCpuClock(cpu, role)` com `system` (o BSP conta a
+  fonte que `selectTickSource` escolheu) e `local` (a AP conta o próprio timer e
+  **nunca** move o relógio da máquina). Armar duas vezes com o mesmo papel não
+  muda nada; armar com papel diferente é recusado — contar os dois relógios é o
+  defeito C.6 da auditoria em outro lugar.
+- **O contador que torna o erro visível**: um tick que chega num processador cujo
+  relógio não é o que disparou é `timer.ignoredTicks()`, impresso no boot.
+- **A AP arma o próprio relógio**: depois do gancho que lhe dá uma tarefa, ela faz
+  `apic.enable()`, `apic.setTpr(0)`, `timer.armCpuClock(cpu, .local)` e
+  `timer.armLocalApicTimer()`, que usa a frequência de barramento que o BSP mediu
+  (`calibrated_bus_frequency`) e **recusa** quando não há medida em vez de
+  adivinhar o divisor.
+- **Quatro testes de host** (841 no total, `arch-tests` 172): a armação
+  idempotente e o papel contraditório recusado; o relógio do sistema contado só
+  por quem o possui (o tick da APIC no BSP é ignorado); a AP contando os próprios
+  ticks sem mover o tempo da máquina; e o processador que ninguém armou.
+- **Linhas de boot**: `[KNK] timer: cpu=N owns the clock of the system`,
+  `[KNK] timer: N ignored ticks` e `[KNK] smp: cpu=N clock armed (...)`.
+- Documentação: `docs/audits/2026-11-01-per-cpu-clock.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 68% → 73%, `kernel_cpu_interrupts`
+  70% → 73%), `README.md`, `docs/ai/context-pack.md` e a anotação do item 6 do
+  K2 no roadmap.
+
 ### Added (2026-11-01) — a TLB shootdown, so a page that leaves the tables leaves every TLB
 
 - **O vetor e o aviso**: `apic.shootdown_vector` (66) e `apic.sendShootdown`, com
