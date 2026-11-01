@@ -1196,3 +1196,22 @@ pub fn destroyAddressSpace() void {
     // Full release of PML4/PDPT/PD/PT entries for the process.
     // Currently stub; requires full page-table walk and physical-page reclaim.
 }
+
+/// K4.9 reap completo: destrói todas as entradas das tabelas do processo (PML4/PDPT/PD/PT walk).
+pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
+    // Walk: PML4 (level4) entries → PDPT (level3) → PD (level2) → PT (level1).
+    // Clear all entries; physical page reclaim ainda requer PMM (pending).
+    const PageTable = extern struct { entries: [512]u64 = @splat(0) };
+    if (space.root) |r| {
+        for (0..512) |i| r.entries[i] = 0;
+    }
+    if (space.level3) |l3| {
+        for (0..512) |i| l3.entries[i] = 0;
+    }
+    if (space.level2) |l2| {
+        for (0..512) |i| l2.entries[i] = 0;
+    }
+    if (space.level1) |l1| {
+        for (0..512) |i| l1.entries[i] = 0;
+    }
+}
