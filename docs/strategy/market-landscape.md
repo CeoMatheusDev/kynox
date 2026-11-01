@@ -414,6 +414,17 @@ marked as such in the text.
 | S13 | NVIDIA — open GPU kernel modules (R515 2022, R560 default) | https://github.com/NVIDIA/open-gpu-kernel-modules | n/a (living repo) | Primary vendor repository; release history corroborated by secondary reporting |
 | S14 | heise online — PipeWire 1.4 (MIDI 2.0, codecs) | https://www.heise.de/en/news/Linux-multimedia-framework-Pipewire-1-4-MIDI-2-and-new-audio-codecs-10314034.html | 2025-03-12 | Secondary reporting |
 | S15 | StatCounter desktop OS share, as summarised by Fosspost | https://fosspost.org/linux-market-share-statistics/ | 2026-05-22 | Secondary aggregation of StatCounter |
+| S16 | Khronos — Vulkan 1.4.365 specification (ratified) | https://registry.khronos.org/vulkan/specs/latest-ratified/html/ | 2026-10-02 | Primary specification |
+| S17 | LunarG — Vulkan SDK 1.4.363.0 release notes (SPIR-V 1.6 rev 7, GLSL 4.60) | https://vulkan.lunarg.com/doc/view/latest/windows/release_notes.html | 2026-09-29 | Primary vendor documentation |
+| S18 | Vulkan.org — "Khronos Streamlines Development … with Vulkan 1.4" | https://vulkan.org/news/auto-23155-a676f167a3982c6a4f6d36a46284cad8 | 2024-12-02 | Primary announcement |
+| S19 | Khronos OpenGL Registry — OpenGL 4.6 core and compatibility profiles (2022-05-05), GLSL 4.60 (2023-08-14) | https://registry.khronos.org/OpenGL/index_gl.php | 2022-11-30 (registry page) | Primary specification index |
+| S20 | Khronos — OpenGL conformant products list | https://www.khronos.org/conformance/adopters/conformant-products/opengl | 2026-10-30 | Primary conformance record |
+| S21 | System V AMD64 psABI, version 1.0 (x86-psABIs) | https://gitlab.com/x86-psABIs/x86-64-ABI | 2020-2021 revisions | Primary ABI specification |
+| S22 | Microsoft Learn — PE Format | https://learn.microsoft.com/en-us/windows/win32/debug/pe-format | 2026-09-10 | Primary vendor documentation |
+| S23 | Microsoft Learn — x64 calling convention | https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention | 2026-05-21 | Primary vendor documentation |
+| S24 | Microsoft Learn — x64 ABI conventions (syscall/sysret, unwind) | https://learn.microsoft.com/en-us/cpp/build/x64-software-conventions | 2025-06-24 | Primary vendor documentation |
+| S25 | Linux kernel — Documentation/ABI/README (syscall stability) | https://www.kernel.org/doc/Documentation/ABI/README | n/a (living doc) | Primary kernel documentation |
+| S26 | Linux man-pages — futex(2) | https://man7.org/linux/man-pages/man2/futex.2.html | n/a (living doc) | Primary interface documentation |
 
 ### Limits of this analysis
 
@@ -426,3 +437,7 @@ marked as such in the text.
   architectural reasoning, not measurements.
 - The analysis covers desktop and workstation use; server, mobile and embedded
   markets were not studied and Kynox makes no claim about them.
+- Sources S16–S26 were added for the compatibility architecture (OpenGL, Vulkan,
+  SPIR-V, System V ABI, PE/COFF, Win64 ABI, Linux syscall stability). They are
+  normative references for behaviour, not evidence that Kynox implements any of
+  it.

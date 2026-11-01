@@ -31,6 +31,10 @@ const graphics = @embedFile("docs/architecture/graphics-platform.md");
 const applications = @embedFile("docs/architecture/application-ecosystem.md");
 const security = @embedFile("docs/architecture/security-architecture.md");
 const experiences = @embedFile("docs/architecture/user-experiences.md");
+const graphics_compat = @embedFile("docs/architecture/graphics-compatibility.md");
+const linux_compat = @embedFile("docs/architecture/linux-compatibility.md");
+const windows_compat = @embedFile("docs/architecture/windows-compatibility.md");
+const compat_roadmap = @embedFile("docs/roadmap/COMPATIBILITY_ROADMAP.md");
 const roadmap = @embedFile("docs/roadmap/PRODUCT_ROADMAP.md");
 const status_json = @embedFile("docs/PROJECT_STATUS.json");
 const adr_index = @embedFile("docs/decisions/README.md");
@@ -42,6 +46,10 @@ const planning_documents = [_]struct { path: []const u8, text: []const u8 }{
     .{ .path = "docs/architecture/application-ecosystem.md", .text = applications },
     .{ .path = "docs/architecture/security-architecture.md", .text = security },
     .{ .path = "docs/architecture/user-experiences.md", .text = experiences },
+    .{ .path = "docs/architecture/graphics-compatibility.md", .text = graphics_compat },
+    .{ .path = "docs/architecture/linux-compatibility.md", .text = linux_compat },
+    .{ .path = "docs/architecture/windows-compatibility.md", .text = windows_compat },
+    .{ .path = "docs/roadmap/COMPATIBILITY_ROADMAP.md", .text = compat_roadmap },
     .{ .path = "docs/roadmap/PRODUCT_ROADMAP.md", .text = roadmap },
 };
 
@@ -132,6 +140,56 @@ test "the platform document separates public from internal interfaces" {
     try expectContains(platform, "Internal interface (private, changeable)");
     try expectContains(platform, "### 4.17 Updates and recovery");
     try expectContains(platform, "### 4.18 Virtualisation and enterprise resources");
+}
+
+test "the graphics compatibility document separates KGA, KGL and KVK over one core" {
+    try expectContains(graphics_compat, "## 2. KGA — the native API, formalised");
+    try expectContains(graphics_compat, "## 3. KGX — the shared execution core");
+    try expectContains(graphics_compat, "## 4. KGL — OpenGL compatibility");
+    try expectContains(graphics_compat, "## 5. KVK — Vulkan compatibility");
+    try expectContains(graphics_compat, "## 6. The shared core is not a lowest common denominator");
+    try expectContains(graphics_compat, "zero overhead");
+    // The document must not present any of this as implemented.
+    try expectContains(graphics_compat, "Nothing here is implemented");
+}
+
+test "the Linux document separates the seven contracts and refuses to be glibc" {
+    try expectContains(linux_compat, "## 2. The seven things that must be separated");
+    try expectContains(linux_compat, "## 5. Syscall interface: the translation problem");
+    try expectContains(linux_compat, "## 11. Security model");
+    try expectContains(linux_compat, "not a port of glibc");
+    try expectContains(linux_compat, "does **not** run Linux binaries today");
+    try expectContains(linux_compat, "## 13. Support matrix");
+}
+
+test "the Windows document separates format, ABI, NT and Win32" {
+    try expectContains(windows_compat, "## 3. The five separated contracts");
+    try expectContains(windows_compat, "## 4. PE32+ loader");
+    try expectContains(windows_compat, "## 6. Handles and objects (KOB)");
+    try expectContains(windows_compat, "## 14. Security model");
+    try expectContains(windows_compat, "does **not** run Windows binaries today");
+    try expectContains(windows_compat, "not Wine");
+}
+
+test "the compatibility roadmap keeps every phase and its non-promises" {
+    const phases = [_][]const u8{
+        "### C0", "### C1", "### C2", "### C3", "### C4",
+        "### C5", "### C6", "### C7", "### C8", "### C9", "### C10", "### C11",
+    };
+    for (phases) |phase| try expectContains(compat_roadmap, phase);
+    try expectContains(compat_roadmap, "## 2. Critical review of the proposed order");
+    try expectContains(compat_roadmap, "## 8. What this roadmap will never promise");
+    try expectContains(compat_roadmap, "No phase below is complete");
+}
+
+test "no compatibility document claims that a layer runs today" {
+    const docs = [_]struct { text: []const u8, claim: []const u8 }{
+        .{ .text = graphics_compat, .claim = "Nothing here is implemented" },
+        .{ .text = linux_compat, .claim = "KLC is 0%" },
+        .{ .text = windows_compat, .claim = "KWC is 0%" },
+        .{ .text = compat_roadmap, .claim = "No phase below is complete" },
+    };
+    for (docs) |doc| try expectContains(doc.text, doc.claim);
 }
 
 test "the security document refuses to claim unimplemented guarantees" {

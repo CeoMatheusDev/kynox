@@ -1,6 +1,8 @@
 # ADR-0004 · Graphics stack split: minimal kernel core, vendor drivers in user space
 
 - Status: **accepted for planning**. No code implements this split yet.
+  Updated 2026-10-31: the driver-facing contract is the KGX backend IR
+  (ADR-0008/0009), not KGA commands.
 - Date: 2026-10-31.
 - Related: [`graphics-platform.md`](../architecture/graphics-platform.md) §5–6,
   [`security-architecture.md`](../architecture/security-architecture.md) §6,
@@ -53,7 +55,8 @@ Adopt **C**.
 2. **KDS-K** implements display control: connectors, CRTCs, planes, modes,
    atomic commit, page flips with fences, VRR/HDR metadata, hotplug, DPMS.
 3. **Vendor drivers** implement register programming, command generation,
-   shader/pipeline translation and memory placement. They receive:
+   backend-IR to machine-ISA lowering and memory placement (ADR-0009).
+   They receive:
    - an MMIO window capability (never raw physical access),
    - an interrupt capability,
    - GPU object handles,

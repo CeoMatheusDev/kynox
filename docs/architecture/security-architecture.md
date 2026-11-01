@@ -173,6 +173,27 @@ tested, including a simulated TPM failure.
 - Screen capture, microphone, camera, input capture and accessibility are
   explicit, per-application grants with an indicator while active.
 
+### 8.1 Compatibility personalities
+
+A process running under KLC or KWC is an ordinary sandboxed process. The
+personality adds contracts, never authority:
+
+| Property | Mechanism | Proof (once built) |
+|---|---|---|
+| No privilege gain from a foreign ABI | capability set fixed at exec; the personality gate can only reach handlers that map to existing capabilities | syscall fuzzing + capability-invariant tests |
+| Foreign calls are bounded | per-persona number allow-list; unknown calls return an error and are counted | audit log of `ENOSYS`/denials |
+| Memory isolation | per-process address spaces; no physical memory mapping for personas | page-table ownership tests |
+| Filesystem containment | compatibility root namespace, synthetic `/proc`, no ambient `/` | escape-attempt test corpus |
+| Graphics containment | KGL/KVK are unprivileged user-space front-ends; GPU memory is per process | cross-process GPU access tests |
+| Resource limits | CPU time, memory, GPU memory, handles, processes | quota enforcement tests |
+| Auditability | every denied syscall, path escape and capability check is logged with the persona id | log schema + replay |
+
+The threat model additions are in
+[`linux-compatibility.md`](linux-compatibility.md) §11 and
+[`windows-compatibility.md`](windows-compatibility.md) §14. The kernel contains
+**no** foreign ABI: one ABI-agnostic gate exists, and it is reviewed as a
+security boundary (ADR-0010).
+
 ## 9. Updates and supply chain
 
 - Packages are signed; the repository index is signed; deltas are verified

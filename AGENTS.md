@@ -274,6 +274,8 @@ A plataforma deve manter três ambientes separados:
 - **Linux Compatibility:** executar binários Linux x86-64 originais, começando por ELF64 e evoluindo syscall ABI, processos, memória, sinais, threads, TLS e linking dinâmico.
 - **Windows Compatibility:** executar binários Windows x86-64 originais, começando por PE32+ e evoluindo Win64 ABI, loader, NT/Win32 APIs, DLLs, TLS e unwind/exceptions.
 
+Compatibilidade gráfica (KGL para OpenGL, KVK para Vulkan) segue a mesma regra: são camadas não privilegiadas em user space sobre um núcleo interno compartilhado (KGX), nunca o kernel contendo ABIs estrangeiras. Nenhuma versão de OpenGL, Vulkan ou API de sistema pode ser anunciada sem matriz de conformidade publicada e tabela de desvios. Ver `docs/architecture/graphics-compatibility.md` e ADR-0008/0009.
+
 ELF e PE são formatos, não compatibilidade completa de sistema operacional. Nunca declare suporte amplo por apenas carregar um arquivo. Mantenha as ABIs de compatibilidade isoladas da ABI nativa do kernel; processos compatíveis continuam sob isolamento e enforcement de capabilities do Kynox. Toda expansão exige matriz de suporte, testes de conformidade, fuzzing e critérios objetivos.
 
 

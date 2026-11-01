@@ -1,6 +1,10 @@
 # ADR-0005 · Native graphics API: one explicit core with optional higher layers
 
 - Status: **accepted for planning**; API revision 1 is not implemented.
+  One clause ("drivers see KGA") is **superseded in part** by
+  [ADR-0008](0008-shared-graphics-core.md) and
+  [ADR-0009](0009-spirv-ingestion.md): drivers see the KGX backend IR,
+  and KGA is one of three front-ends. Everything else stands.
 - Date: 2026-10-31.
 - Related: [`graphics-platform.md`](../architecture/graphics-platform.md) §7,
   [`market-landscape.md`](../strategy/market-landscape.md) §3.2.
@@ -54,11 +58,20 @@ Adopt **B**, with two layers delivered together but developed in order:
 The low-level API is the only contract that hardware drivers see. The higher
 layers are libraries on top and may change faster.
 
+> **Superseded in part (2026-10-31).** With the compatibility work, Kynox adopted
+> a shared execution core (KGX) behind three front-ends (ADR-0008) and SPIR-V
+> ingestion lowered to a backend IR (ADR-0009). Vendor drivers therefore see the
+> **backend IR**, not KGA commands. KGA remains the native API and the reference
+> for what the core must express; it is no longer the driver-facing contract.
+> The rest of this decision — one explicit low-level API plus optional higher
+> layers — is unchanged.
+
 Additionally:
 
 - **Shader input:** adopting SPIR-V as an *input* format is a separate decision
   (a follow-up ADR) because it affects tooling, validation and compiler scope;
-  KGA itself does not mandate a source language.
+  KGA itself does not mandate a source language. **Decided in ADR-0009:**
+  SPIR-V is the canonical ingestion format, lowered to a backend IR.
 - **Versioning:** KGA has a revision number; extensions are opt-in and
   enumerated; nothing is removed within a major revision without a deprecation
   window.

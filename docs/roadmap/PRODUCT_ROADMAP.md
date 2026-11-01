@@ -30,7 +30,7 @@ above P** — most are not even P. The kernel items that exist are at F/E-blocke
 
 ## 2. Ordering rationale (from the audit)
 
-1. **Runtime evidence is the critical path.** The tree compiles and passes 704
+1. **Runtime evidence is the critical path.** The tree compiles and passes 709
    host tests, but no QEMU/OVMF run has ever been recorded. Every subsystem's
    maturity is capped by that, and no graphics work can be validated without a
    running system. This is stage 0 — an infrastructure prerequisite, not a
@@ -337,8 +337,15 @@ S12 (apps) only after S10.
 
 - **Objective:** run foreign binaries and third-party drivers without compromising
   the native platform.
-- **Scope:** KLC (ELF64 → Linux ABI subset), KWC (PE32+ → Win64/NT subset),
-  third-party driver packages, conformance matrices.
+- **Scope:** the compatibility phases of
+  [`COMPATIBILITY_ROADMAP.md`](COMPATIBILITY_ROADMAP.md): KLC (ELF64 → Linux ABI
+  subset), KWC (PE32+ → Win64/NT subset), KGL/KVK, third-party driver packages,
+  conformance and deviation matrices.
+- **Ordering note:** compatibility does **not** wait for S15. The roadmap splits
+  it: the ELF loader and syscall gate begin after S3/S4, the PE parser is
+  host-only work that can start earlier, and the graphics front-ends follow S7
+  and S9. S15 is the *publication* stage: matrices, per-application status and
+  the first supported set.
 - **Prerequisites:** S3, S6, S11, security architecture.
 - **Deliverables:** published support matrices; conformance harness; per-title
   status.

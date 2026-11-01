@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test",
-      "result": "success: 49/49 steps, 704/704 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
+      "result": "success: 49/49 steps, 709/709 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
       "date": "2026-10-31"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "path": "docs/architecture/platform-architecture.md",
-      "title": "Target platform architecture: layer map, kernel/user-mode split, public/internal interface table, eighteen subsystem contracts, dependency graph",
+      "title": "Target platform architecture: layer map, kernel/user-mode split, public/internal interface table, twenty subsystem contracts, dependency graph",
       "status": "planned work only; current state mapped in the document",
       "date": "2026-10-31",
       "adrs": []
@@ -147,6 +147,45 @@
         "0005-native-graphics-api.md",
         "0006-userspace-compositor.md",
         "0007-packaging-sandbox-updates.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/graphics-compatibility.md",
+      "title": "Graphics compatibility: KGA formalised, shared execution core (KGX), KGL and KVK front-ends",
+      "status": "planned work only; no graphics API exists",
+      "date": "2026-10-31",
+      "adrs": [
+        "0008-shared-graphics-core.md",
+        "0009-spirv-ingestion.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/linux-compatibility.md",
+      "title": "Linux compatibility (KLC): ELF64, syscall translation, signals, libraries, namespace, security",
+      "status": "planned work only; nothing implemented",
+      "date": "2026-10-31",
+      "adrs": [
+        "0010-compatibility-execution-model.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/windows-compatibility.md",
+      "title": "Windows compatibility (KWC): PE32+, ntdll, handles, SEH, user32/GDI, D3D evaluation",
+      "status": "planned work only; nothing implemented",
+      "date": "2026-10-31",
+      "adrs": [
+        "0010-compatibility-execution-model.md"
+      ]
+    },
+    {
+      "path": "docs/roadmap/COMPATIBILITY_ROADMAP.md",
+      "title": "Compatibility phases C0-C11 with criteria, conformance and performance tests, evidence and promotion rules",
+      "status": "no phase complete",
+      "date": "2026-10-31",
+      "adrs": [
+        "0008-shared-graphics-core.md",
+        "0009-spirv-ingestion.md",
+        "0010-compatibility-execution-model.md"
       ]
     }
   ],
@@ -1069,6 +1108,40 @@
       }
     },
     {
+      "id": "graphics_api",
+      "maturity_percent": 0,
+      "status": "not_started",
+      "evidence": [],
+      "implemented": [],
+      "limitations": [
+        "no KGA native graphics API",
+        "no shared execution core (KGX)",
+        "no KGL OpenGL front-end",
+        "no KVK Vulkan front-end",
+        "no shader ingestion or validator"
+      ],
+      "pending_work": [
+        "KGX + KGA (compatibility roadmap C6)",
+        "KVK 1.0-1.3 (C7)",
+        "KGL 3.3/4.6 (C8)"
+      ],
+      "tests": [
+        "none"
+      ],
+      "validation": {
+        "status": "not_executed",
+        "host_tests": [
+          "none"
+        ],
+        "commands": [
+          "zig build test"
+        ],
+        "last_run": "2026-10-31",
+        "runtime_evidence": "none_in_this_environment",
+        "notes": "documentation only; must remain 0% until an API executes"
+      }
+    },
+    {
       "id": "input",
       "maturity_percent": 40,
       "status": "in_progress",
@@ -1160,13 +1233,16 @@
       "implemented": [],
       "limitations": [
         "no Linux personality",
-        "no syscall translation",
+        "no syscall gate or translation",
         "no signals/futex/TLS",
-        "no dynamic linker or libraries"
+        "no dynamic linker or KLIBC",
+        "no window-system bridge"
       ],
       "pending_work": [
-        "specify the minimal static ELF64 matrix",
-        "implement the isolated personality"
+        "kernel personality gate + wait-on-user-address (C0)",
+        "static ELF64 corpus (C1)",
+        "filesystem, /proc, epoll (C2)",
+        "KLD + KLIBC (C3)"
       ],
       "tests": [
         "none"
@@ -1192,13 +1268,15 @@
       "implemented": [],
       "limitations": [
         "no PE32+ loader",
-        "no Win64 ABI",
-        "no NT/Win32 services",
-        "no DLL/TLS/unwind"
+        "no TEB/PEB or KOB handle model",
+        "no ntdll/kernel32/CRT",
+        "no SEH/unwind",
+        "no user32/GDI"
       ],
       "pending_work": [
-        "specify the PE32+ console scope",
-        "implement the isolated personality"
+        "PE32+ parser/loader (C4)",
+        "console runtime (C5)",
+        "user32/GDI/COM (C10)"
       ],
       "tests": [
         "none"

@@ -237,16 +237,23 @@ architectural contract.
 | Aspect | KLC (Linux) | KWC (Windows) |
 |---|---|---|
 | Binary format | ELF64 x86-64 | PE32+ x86-64 |
-| First milestone | Static binaries, small syscall set | Console applications, small NT subset |
+| System boundary | `syscall` instruction → generic kernel gate | `ntdll` calls → Kynox user-space libraries |
+| First milestone | Static binaries, ~20 syscalls | Console applications, small NT/Win32 subset |
 | Process model | Linux process/thread semantics translated | Windows process/thread + TEB/PEB model |
-| Libraries | Own implementations of required contracts | Own implementations (no Wine code) |
-| Graphics | Later: Vulkan-on-KGA translation or native pass-through | Later: D3D translation or native pass-through |
+| Libraries | Own KLIBC (no glibc/musl) | Own ntdll/kernel32/CRT (no Wine code) |
+| Graphics | KGL/KVK through a window-system bridge | KGL/KVK, Direct3D only in a later phase |
 | Anti-cheat/DRM | Not guaranteed; documented per title | Not guaranteed; documented per title |
-| Status | 0% | 0% |
+| Status | 0% — architecture documented, nothing implemented | 0% — architecture documented, nothing implemented |
 
-Explicit non-claims: no Wine/WSL/Proton/glibc/musl as foundation, no claim of
-running arbitrary software, no Ring 0 compatibility shims, and a published
-support matrix per release.
+Architecture: [`linux-compatibility.md`](linux-compatibility.md) and
+[`windows-compatibility.md`](windows-compatibility.md). Phases and evidence
+rules: [`../roadmap/COMPATIBILITY_ROADMAP.md`](../roadmap/COMPATIBILITY_ROADMAP.md).
+
+Explicit non-claims: no Wine/WSL/Proton/glibc/musl as foundation, no foreign
+kernel or kernel driver, no claim of running arbitrary software, no Ring 0
+compatibility shims, and a published support matrix per release. Loading a file
+is not compatibility: the matrix is generated from test runs (compatibility
+roadmap §5).
 
 ## 9. Ecosystem economics
 

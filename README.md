@@ -31,8 +31,8 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Kernel CPU, exceptions and interrupts | **60%** | Core paths exist; hardening and hardware coverage remain |
 | Physical memory, heap and DMA | **60%** | Core allocators and DMA path exist; scalability/reclaim remain |
 | Virtual memory and address spaces | **45%** | User mappings and isolation foundations; advanced VM remains |
-| ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPICs and overrides are recorded, not programmed; PCI/APIC access paths exist |
-| SMP | **30%** | AP startup exists; normal per-CPU scheduling is incomplete |
+| ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPIC redirection entries are programmed **masked** and delivery still comes from the 8259; PCI/APIC access paths exist |
+| SMP | **30%** | CPU table and a gated AP startup path exist; **no AP has ever run** and per-CPU scheduling is incomplete |
 | Scheduler and task switching | **55%** | Preemptive task switching exists; SMP scheduling remains |
 | User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI revision 1 is contract-checked; the ABI is still small and never ran in a VM here |
 | IPC and capabilities | **60%** | Core mechanisms exist; broader service model remains |
@@ -42,12 +42,13 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | VirtIO Block / KVDI | **65%** | Real synchronous block I/O and QEMU persistence probe exist; async I/O remains |
 | Networking | **10%** | Early scaffolding only; no complete network stack |
 | Graphics and compositor | **60%** | Rasterization, windows and composition exist; full desktop remains |
+| Native graphics API and OpenGL/Vulkan compatibility | **0%** | Planned; KGA, KGL and KVK exist only as architecture |
 | Input | **40%** | Initial keyboard/pointer paths; HID and hotplug remain |
 | Desktop environment | **35%** | Managed windows and boot scene; shell and desktop applications remain |
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (704 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (709 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -74,7 +75,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - KNV commit/recovery and a QEMU two-boot block persistence probe exist. This does not yet provide journaled, power-loss-safe filesystem guarantees.
 - KFSX currently provides a mount namespace and RamFS routing, not a mature multi-filesystem VFS.
 - KEX is the Kynox executable container around an ELF64 payload. It is **not** Linux binary compatibility.
-- Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made.
+- Linux and Windows binary compatibility are both **0%** at this snapshot. No claim of running arbitrary Linux or Windows applications is made. The same applies to graphics: Kynox exposes **no** OpenGL and **no** Vulkan today; KGL and KVK exist only as architecture in `docs/architecture/graphics-compatibility.md`.
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
 - ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The I/O APIC redirection entries for IRQ0 (PIT) and IRQ1 (keyboard) are programmed **masked**, with the GSI/polarity/trigger taken from the interrupt source overrides; delivery still comes from the 8259, and the `-Dioapic-delivery=true` option that switches it has never been booted. No interrupt has been observed through the I/O APIC, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
 - The system version has a single source (`VERSION` → `version.zig`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM. The generation name is derived from the major, never typed by hand.
@@ -90,7 +91,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (704) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (709) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -138,7 +139,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — 14/14 steps; `kynox-boot.efi` 185,344 B, `kynox-kernel` 66,777,813 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 49/49 steps, **704/704 tests passed** (fresh cache) |
+| `zig build test` | success — 49/49 steps, **709/709 tests passed** (fresh cache) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
@@ -170,6 +171,10 @@ recorded attempt and the exact procedure are in
 - [docs/architecture/application-ecosystem.md](docs/architecture/application-ecosystem.md) — executable format, SDK, packaging, sandbox and compatibility (planning document).
 - [docs/architecture/security-architecture.md](docs/architecture/security-architecture.md) — threat model, capability proofs and explicit non-guarantees (planning document).
 - [docs/architecture/user-experiences.md](docs/architecture/user-experiences.md) — home, gaming, development, enterprise and professional profiles with measurable requirements (planning document).
+- [docs/architecture/graphics-compatibility.md](docs/architecture/graphics-compatibility.md) — KGA formalised, and KGL/KVK over a shared execution core (KGX) (planning document).
+- [docs/architecture/linux-compatibility.md](docs/architecture/linux-compatibility.md) — KLC: ELF64, syscall translation, signals, libraries, namespace (planning document).
+- [docs/architecture/windows-compatibility.md](docs/architecture/windows-compatibility.md) — KWC: PE32+, ntdll, handles, SEH, user32/GDI, D3D future (planning document).
+- [docs/roadmap/COMPATIBILITY_ROADMAP.md](docs/roadmap/COMPATIBILITY_ROADMAP.md) — compatibility phases C0–C11 with criteria, tests and evidence (planning document).
 - [docs/roadmap/PRODUCT_ROADMAP.md](docs/roadmap/PRODUCT_ROADMAP.md) — stages S0–S15 with an evidence ladder (planning document).
 - [docs/audits/2026-10-31-audit.md](docs/audits/2026-10-31-audit.md) — audit, findings and prioritized plan.
 - [CHANGELOG.md](CHANGELOG.md) — release history and unreleased changes.

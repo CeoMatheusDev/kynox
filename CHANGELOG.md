@@ -28,7 +28,7 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
   gaming, security, updates, tooling), ranked opportunities, risk register and
   fifteen dated sources. Planning document: it claims no feature.
 - `docs/architecture/platform-architecture.md` — layer map with a "today"
-  column, a sixteen-row kernel/user-mode table, eighteen subsystem contracts
+  column, a sixteen-row kernel/user-mode table, twenty subsystem contracts
   (responsibility, interfaces, dependencies, privilege bounds, concurrency,
   memory, failure, security, performance criteria, current state, next step),
   dependency graph, concurrency model, failure ladder and unmeasured budgets.
@@ -44,6 +44,38 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
   model, boot chain, hardening, capability proof obligations, device/IOMMU
   rules, sandbox, supply chain, audit and recovery, per-property evidence and
   explicit non-guarantees.
+- `docs/architecture/graphics-compatibility.md` — KGA formalised as a contract
+  (objects, commands, synchronisation, memory, pipelines, shaders, versioning,
+  capability tiers, public/internal split), plus KGL (OpenGL) and KVK (Vulkan)
+  as front-ends over one shared execution core (KGX). Includes semantic-gap
+  tables, the Linux/Windows graphics path matrix, a security table and a
+  performance-claim policy that forbids "zero overhead" language.
+- `docs/architecture/linux-compatibility.md` — KLC: the seven separated
+  contracts, ELF64 loading and initial process state, the three syscall
+  translation options and the chosen staged hybrid, signals, futex/TLS,
+  dynamic linking, KLIBC/KLD/KVD policy, namespace and permission model,
+  security threats, support matrix and phases C-L0…C-L5.
+- `docs/architecture/windows-compatibility.md` — KWC: why the ntdll boundary
+  differs from Linux's trap boundary, PE32+ loading, TEB/PEB, the KOB handle
+  model, kernel32/CRT, SEH/unwind, registry virtualisation, user32/GDI, COM,
+  Winsock, the D3D evaluation and explicit non-guarantees.
+- `docs/roadmap/COMPATIBILITY_ROADMAP.md` — phases C0–C11 with objective,
+  scope, dependencies, components, completion criteria, conformance and
+  performance tests, risks, evidence and promotion rules; a critical review
+  that reorders the proposed sequence (KWM before KGL/KVK, KLC/KWC in
+  parallel rather than last).
+- `docs/architecture/platform-architecture.md` §4.19–4.20 — compatibility
+  personalities (KLC/KWC) and graphics front-ends (KGL/KVK) contracts, plus
+  their rows in §4.0 and §10 and the dependency-graph entry.
+- `docs/architecture/application-ecosystem.md` §8, `security-architecture.md`
+  §8.1 and `PRODUCT_ROADMAP.md` S15 integrated with the new layers; no
+  maturity percentage changed and no compatibility claim added.
+- `docs/decisions/0008` shared graphics core, `0009` SPIR-V ingestion,
+  `0010` compatibility execution model — all accepted for planning with
+  reversal criteria.
+- `docs/strategy/market-landscape.md` sources S16–S26 (Vulkan 1.4.365 spec and
+  SDK, OpenGL 4.6, System V AMD64 psABI, PE format, x64 ABI, Linux ABI
+  stability, futex) and extended planning-document inventory.
 - `docs/architecture/user-experiences.md` — five profiles (home, gaming,
   development, enterprise, professional) with numbered, measurable
   requirements and the rule that a profile is policy, never a separate ABI,
@@ -229,7 +261,7 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success (14/14 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 704/704 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
+| `zig build test` | success — 709/709 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
 | `zig build docs-check` | success — every relative link resolves |
 | `zig build -Dioapic-delivery=true` | success (compiles; **never booted**, so no delivery is claimed) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |

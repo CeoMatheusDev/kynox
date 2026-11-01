@@ -112,7 +112,7 @@ Two interface classes exist and are never mixed. A **public interface** is a
 contract other components may depend on: it is versioned, documented and cannot
 change without an ABI/format decision. An **internal interface** is private to a
 component's implementation and may change at any commit. §4.0 lists both for
-every subsystem; the blocks in §4.1–4.18 describe what the component must
+every subsystem; the blocks in §4.1–4.20 describe what the component must
 guarantee.
 
 ### 4.0 Public and internal interfaces per subsystem
@@ -137,6 +137,8 @@ guarantee.
 | Diagnostics | Trace record format, counter schema, capture file format | Per-CPU ring buffers, symbolisation |
 | Updates | Package manifest, signature chain, image slots, rollback API | Downloader, delta engine, staging |
 | Virtualisation | Guest VM lifecycle, device model ABI, vCPU exit reasons | VMCS/VMCB handling, IOMMU domain tables |
+| Compatibility personalities | Persona manifest, executable-format contract, gated syscall numbers, library ABI | Personality runtime, handle broker, path namespace |
+| Graphics compatibility | Advertised GL/Vulkan/KGA version strings and entry points | State tracker, command encoder, feature table |
 
 The right-hand column may be rewritten by any implementation change; the
 left-hand column requires an ADR and, for the ABI and formats, a compatibility
@@ -483,6 +485,59 @@ applications, drivers and tools stay stable.
 - **N** VT-x/EPT enablement, a minimal hypervisor service, IOMMU domains, device
   assignment with a hostile-guest test.
 
+### 4.19 Compatibility personalities (KLC and KWC)
+
+- **R** Execute unmodified foreign binaries through their own contracts while
+  keeping the Kynox kernel free of foreign ABIs.
+- **I** Persona manifest (which system, which format, which version), the
+  executable-format contract, the gated syscall number set, the library ABI and
+  the published support matrix.
+- **D** Process model, address spaces, capabilities, VFS, the generic
+  personality gate, graphics (only for GUI applications).
+- **P** Ring 3. The personalities are libraries and services inside the
+  application's process; the kernel implements one ABI-agnostic gate.
+- **C** One personality runtime per process; shared services are stateless or
+  use explicit IPC. No shared mutable state between personalities.
+- **M** Loader allocations are accounted to the process; the image is mapped,
+  not copied; the runtime keeps no per-syscall heap allocation.
+- **F** A malformed image or a bad syscall terminates the process, never the
+  personality service or the system; the sandbox is the blast radius.
+- **S** The capability ceiling is fixed at exec: a foreign ABI grants nothing.
+  Every path, device and GPU object access is checked against the same
+  capabilities a native application would need.
+- **Pf** Translation cost measured per syscall family and per API call; no
+  performance claim without a scenario and a baseline.
+- **T** None. KLC and KWC are 0%; no ELF/PE personality, no syscall gate, no
+  library set.
+- **N** Generic gate + wait-on-user-address (C0), static ELF subset (C1), PE
+  parser (C4), console runtime (C5). See
+  [`../roadmap/COMPATIBILITY_ROADMAP.md`](../roadmap/COMPATIBILITY_ROADMAP.md).
+
+### 4.20 Graphics compatibility front-ends (KGL and KVK)
+
+- **R** Present OpenGL and Vulkan contracts to unmodified applications, with
+  fidelity to their semantics, over the Kynox execution core.
+- **I** Advertised version strings and entry points (`libGL`, `libEGL`,
+  `libvulkan` ICD), the ICD manifest, the deviation table, the conformance
+  matrix.
+- **D** KGX (shared execution core), KGC, KDS, KWM. KGA is a *sibling*
+  front-end, not a dependency: a Vulkan or OpenGL application never goes
+  through the native API.
+- **P** Ring 3, unprivileged, inside the application's process.
+- **C** Submission is externally synchronised per queue, as the APIs require;
+  recording is parallel across command pools.
+- **M** Front-ends do not own GPU memory: every allocation is a KGX object
+  charged to the process' quota.
+- **F** A driver hang resets the context; the front-end reports device loss as
+  the API specifies; the process survives where the API allows it.
+- **S** Structural validation in KGC, semantic validation in KGX (development
+  builds), per-process GPU address spaces, no cross-process handle sharing
+  without a capability.
+- **Pf** Submission CPU cost, draw-call cost, pipeline cache hit rate, frame time
+  versus KGA on the same scene.
+- **T** None. No KGA, no KGX, no KGL, no KVK.
+- **N** KGX + KGA (C6), KVK 1.0–1.3 (C7), KGL 3.3/4.6 (C8).
+
 ## 5. Cross-cutting contracts
 
 - **Object identity:** every kernel object is named by a 64-bit handle with a
@@ -513,7 +568,8 @@ boot ─▶ CPU/interrupts ─▶ time ─▶ scheduler ─▶ IPC ─▶ capabi
                     │                     ├─▶ GPU core ─▶ KGA ─▶ renderer
                     │                     ├─▶ network / audio devices
                     ├─▶ update service ─▶ recovery
-                    └─▶ hypervisor ─▶ IOMMU ─▶ device assignment
+                    ├─▶ hypervisor ─▶ IOMMU ─▶ device assignment
+                    └─▶ personality gate ─▶ KLC / KWC ─▶ libraries
                     └─▶ observability ◀── every subsystem
 ```
 
@@ -581,6 +637,9 @@ method.
 | Updates | KPK codec | Repository, signatures, atomic update |
 | Tooling | Serial logs, counters | Trace format, capture, profilers |
 | Virtualisation | None | VT-x/EPT, IOMMU domains, hypervisor service |
+| Linux compatibility | None | ELF loader, personality gate, libc, window bridge |
+| Windows compatibility | None | PE loader, ntdll/kernel32, CRT, SEH, user32 |
+| Graphics compatibility | None | KGX core, KVK, KGL, deviation tables |
 
 ## 11. Open questions
 

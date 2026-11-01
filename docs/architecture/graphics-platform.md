@@ -64,6 +64,11 @@ tools) are **proposals** and must be registered per
 ├────────────────────────────────────────────────────────────────────────┤
 │ KGA    native low-level API: devices, queues, command buffers,         │
 │        pipelines, descriptor sets, images, buffers, fences             │
+│ KGL    OpenGL compatibility front-end (planned, not implemented)       │
+│ KVK    Vulkan compatibility front-end (planned, not implemented)       │
+├────────────────────────────────────────────────────────────────────────┤
+│ KGX    shared execution core behind KGA/KGL/KVK: pipelines,           │
+│        descriptors, shader ingestion (SPIR-V → backend IR), caches     │
 ├────────────────────────────────────────────────────────────────────────┤
 │ KWM    compositor + window manager service (user space)                │
 │ DS     display settings/colour service (user space)                    │
@@ -79,6 +84,11 @@ tools) are **proposals** and must be registered per
 │ Hardware: display controllers, GPUs, firmware, IOMMU                   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+KGA is one front-end among three: KGL and KVK are compatibility surfaces built
+on the same execution core (KGX), so the system has one pipeline cache, one
+shader path and one validation layer instead of three. See
+[`graphics-compatibility.md`](graphics-compatibility.md).
 
 The vertical split matters: **KDS-K and KGC are mechanism; KWM, DS and the
 vendor drivers are policy and device-specific logic.** A change to window layout
@@ -190,7 +200,7 @@ Rules:
 |---|---|---|
 | **KGC** | Kernel | GPU memory objects, per-process GPU address spaces, rings/queues, submission, fences, hang detection, reset, power transitions |
 | **Transport driver** | Kernel | PCI BAR mapping, MSI/MSI-X, firmware loading, IOMMU attachment |
-| **Vendor driver (UMD)** | User space | Register programming, command generation, shader/pipeline translation, memory placement decisions |
+| **Vendor driver (UMD)** | User space | Register programming, command generation, lowering backend IR to machine ISA, memory placement decisions |
 | **Validation** | Kernel + user space | Structural validation in the kernel; detailed validation in development builds |
 
 The kernel interface to a user-space driver is deliberately narrow:
@@ -369,7 +379,7 @@ KGA-UI.
 
 | Reference | Borrowed | Not borrowed |
 |---|---|---|
-| Vulkan | Explicitness, pipelines, descriptor model, SPIR-V *input* consideration | Instance/extension sprawl, render-pass complexity, platform-specific WSI |
+| Vulkan | Explicitness, pipelines, descriptor model, SPIR-V as the shader input (ADR-0009) | Instance/extension sprawl, render-pass complexity, platform-specific WSI |
 | D3D12 | Descriptor heaps, root-signature-like binding, tooling expectations | COM object model, DXIL dependency, Windows-specific residency model |
 | Metal | Unified encoder model, argument buffers, tight integration with the OS | Objective-C/Swift-only tooling, Apple-specific memory model |
 
