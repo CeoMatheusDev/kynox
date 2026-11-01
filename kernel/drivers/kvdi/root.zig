@@ -61,6 +61,9 @@ pub const pci_transport = @import("pci_transport.zig");
 pub const virtqueue = @import("virtqueue.zig");
 pub const containment = @import("containment.zig");
 pub const block = @import("block.zig");
+/// Sonda de layout da fila exercitada no boot (ADR-0001, primeira sonda fora
+/// de `kernel/main.zig`).
+pub const virtqueue_probe = @import("virtqueue_probe.zig");
 
 // Os testes dos modulos vivem neles mesmos; este bloco e o que os traz para
 // o binario de teste. Sem ele o binario e construido com zero testes e passa
@@ -74,6 +77,7 @@ test {
     _ = transport;
     _ = pci_transport;
     _ = virtqueue;
+    _ = virtqueue_probe;
     _ = containment;
     _ = block;
     // Injecao de falhas do dispositivo: o simulador de VirtIO Block e os

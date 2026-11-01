@@ -28,6 +28,7 @@ const kynox = @import("kynox_shared");
 const serial = kynox.serial;
 const cpu = @import("cpu.zig");
 const apic = @import("apic.zig");
+const config = @import("kynox_config");
 const perf_tsc_hz: u32 = 2_800_000_000; // Valores de calibracao QEMU
 
 /// The frequency of the timer of the PC.
@@ -121,6 +122,29 @@ pub fn acknowledge(vector: u8) void {
         writePort(pic.slave_command, 0x20);
     }
     writePort(pic.master_command, 0x20);
+}
+
+/// Masks every line of the 8259.
+///
+/// Used when the I/O APIC takes over delivery: the two controllers must never
+/// forward the same line at the same time.
+pub fn disablePic() void {
+    writePort(pic.master_data, 0xFF);
+    writePort(pic.slave_data, 0xFF);
+}
+
+/// Ends a hardware interrupt at the controller that delivered it.
+///
+/// The EOI goes to the 8259 while it owns delivery and to the local APIC once
+/// the I/O APIC is in charge. Writing to the wrong one leaves the interrupt
+/// controller waiting and blocks every later interrupt of that priority, so
+/// the choice is made here, next to the delivery switch.
+pub fn endOfInterrupt(vector: u8) void {
+    if (config.ioapic_delivery) {
+        apic.eoi();
+        return;
+    }
+    acknowledge(vector);
 }
 
 /// Enables the interrupts of the processor.

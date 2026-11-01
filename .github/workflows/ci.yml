@@ -1,0 +1,126 @@
+# Continuous integration for Kynox.
+#
+# Three properties matter here, and each one is a job below:
+#
+#   1. the toolchain is the version the project declares (Zig 0.17.0), not
+#      whatever the runner happens to have;
+#   2. the tree builds and its host tests pass from a clean checkout;
+#   3. the documentation links resolve.
+#
+# A fourth job runs the QEMU boot suites. It is kept separate on purpose: the
+# suites need a hypervisor, OVMF firmware and the generated image, and the
+# repository has no recorded runtime evidence yet (see docs/validation/qemu.md).
+# The job installs the dependencies itself and **fails** when they cannot be
+# obtained: a runtime job that silently passes without booting anything would
+# be a false positive, which is exactly what this project forbids.
+name: ci
+
+on:
+  push:
+    branches: ["main", "arena/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: "0.17.0"
+
+jobs:
+  build:
+    name: build and host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check "ziglang==${ZIG_VERSION}"
+          ZIG_BIN="$(python3 -c 'import os, ziglang; print(os.path.dirname(ziglang.__file__))')"
+          echo "${ZIG_BIN}" >> "${GITHUB_PATH}"
+
+      - name: Report the toolchain
+        run: |
+          set -euo pipefail
+          zig version | tee /dev/stderr | grep -qx "${ZIG_VERSION}"
+
+      - name: Build the image
+        run: zig build
+
+      - name: Host unit tests and documentation links
+        run: zig build test --summary all
+
+      - name: Documentation link check (explicit step)
+        run: python3 scripts/check-docs-links.py .
+
+      - name: Check the generated artifacts
+        run: |
+          set -euo pipefail
+          test -f zig-out/bin/kynox.img
+          ./zig-out/bin/kynox-fsimg --version
+          # The version of the artifacts must be the one in the root VERSION
+          # file; the kernel's literal guard proves the same at test time.
+          grep -qF "$(cat VERSION)" <(./zig-out/bin/kynox-fsimg --version)
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kynox-image
+          path: zig-out/bin/kynox.img
+          retention-days: 7
+
+  runtime:
+    name: QEMU boot suites
+    runs-on: ubuntu-24.04
+    needs: build
+    # The suites boot the image with TCG, so they do not need KVM.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check "ziglang==${ZIG_VERSION}"
+          ZIG_BIN="$(python3 -c 'import os, ziglang; print(os.path.dirname(ziglang.__file__))')"
+          echo "${ZIG_BIN}" >> "${GITHUB_PATH}"
+
+      - name: Install QEMU and OVMF
+        id: dependencies
+        run: |
+          set -euo pipefail
+          if ! sudo apt-get update -qq || ! sudo apt-get install -y -qq \
+              qemu-system-x86 qemu-utils ovmf dosfstools mtools; then
+            echo "::error title=Runtime infrastructure unavailable::QEMU/OVMF could not be installed; the boot suites did not run."
+            exit 1
+          fi
+          # Fail here, before the suites, when the firmware is missing: the
+          # suites would otherwise report it again for every target.
+          if ! ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/edk2/ovmf/OVMF_CODE*.fd \
+              /usr/share/edk2/x64/OVMF_CODE*.fd >/dev/null 2>&1; then
+            echo "::error title=OVMF firmware missing::qemu-system-x86 is installed but no OVMF_CODE firmware was found; the boot suites did not run."
+            exit 1
+          fi
+          qemu-system-x86_64 --version
+
+      - name: Build the image
+        run: zig build
+
+      - name: Automated boot
+        run: zig build qemu-test
+
+      - name: VirtIO Block persistence across two boots
+        run: zig build qemu-storage-test
+
+      - name: Interactive PS/2 graphics input
+        run: zig build qemu-interactive-test
+
+      - name: Runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-logs
+          path: docs/validation/logs/
+          retention-days: 7
+          if-no-files-found: warn

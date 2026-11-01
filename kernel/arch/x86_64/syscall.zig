@@ -141,227 +141,31 @@ pub const SyscallFrame = extern struct {
     rax: u64 = 0,
 };
 
-/// The numbers of the calls of the kernel.
+/// The published numbers of the calls.
 ///
-/// The numbers are the ones of the first increment of the interface, and
-/// they are the ones that the program of the user mode uses.
-pub const Number = struct {
-    /// The call that answers with a known value, used to prove that the
-    /// path of the call works from the user mode and from the kernel.
-    pub const ping: u64 = 1;
-    /// The call that writes a buffer of the user mode in the console.
-    pub const write: u64 = 2;
-    /// The call that copies a block of memory of the user mode.
-    pub const memcpy: u64 = 3;
-    /// The call that ends the task of the user mode.
-    pub const exit: u64 = 4;
-    /// The call that puts a message in a channel.
-    ///
-    /// The arguments are the identifier of the channel, the side of the
-    /// channel that receives the message, the type of the message and the
-    /// value of the message. The value travels in the eighth register,
-    /// because the instruction of the call replaces the fourth register
-    /// with the address of return.
-    pub const send: u64 = 5;
-    /// The call that takes a message from a channel.
-    pub const receive: u64 = 6;
-    /// The call that takes a message from a channel and **blocks** the
-    /// caller until the message arrives.
-    ///
-    /// The arguments are the identifier of the channel and the side of the
-    /// channel that holds the message. The result is the type of the
-    /// message, and the value of the message comes back in the `RDX`.
-    ///
-    /// The call that blocks is different from the one that does not: the
-    /// task that waits **is not** kept awake, and the scheduler chooses
-    /// another one. The message delivers the result straight into the
-    /// context saved of the task, and the task continues after the call, as
-    /// if the call had answered at once.
-    pub const receive_blocking: u64 = 8;
-    /// The call that copies a block of memory from the process of the caller
-    /// into the space of another process.
-    ///
-    /// The arguments are the identifier of the target process, the address of
-    /// the destination in the space of the target, the address of the origin
-    /// in the space of the caller, and the length of the block.
-    ///
-    /// The length travels in the eighth register and not in the fourth one,
-    /// because the instruction of the call replaces the fourth register with
-    /// the address of return.
-    pub const copy_to: u64 = 7;
-    /// The call that gives a capability of the caller to another process.
-    ///
-    /// The arguments are the identifier of the target process, the kind of
-    /// the capability, the identifier of the subject — the channel or the
-    /// process — and the rights that the target receives.
-    ///
-    /// The caller has to hold the capability with the right of delegation,
-    /// and the rights that the target receives have to be a subset of the
-    /// rights that the caller holds. The right of delegation is not part of
-    /// what the target receives, unless the caller asks for it explicitly.
-    pub const grant: u64 = 9;
-    /// The call that takes a capability back from another process.
-    ///
-    /// The arguments are the identifier of the target process, the kind of
-    /// the capability and the identifier of the subject — the channel or the
-    /// process.
-    ///
-    /// The caller has to hold the capability with the right of delegation:
-    /// the owner of the capability takes it back from the process it gave it
-    /// to.
-    pub const revoke: u64 = 10;
-    /// The call that waits for a message **at most** the given number of
-    /// ticks.
-    ///
-    /// The arguments are the identifier of the channel, the side of the
-    /// channel that holds the message and the timeout, in ticks of the
-    /// timer. A timeout of zero means that the wait does not expire, and
-    /// the call is then the same as the blocking receive.
-    ///
-    /// When the deadline passes before the message arrives, the wait is
-    /// removed from the queue and the call answers with the error of the
-    /// timeout. The message that arrives later stays in the queue.
-    pub const receive_timeout: u64 = 11;
-    /// Open a file in the RAMFS filesystem.
-    pub const fs_open: u64 = 13;
-    /// Close a file in the RAMFS filesystem.
-    pub const fs_close: u64 = 14;
-    /// Read from a file in the RAMFS filesystem.
-    pub const fs_read: u64 = 15;
-    /// Write to a file in the RAMFS filesystem.
-    pub const fs_write: u64 = 16;
-    /// Create a file in the RAMFS filesystem.
-    pub const fs_create: u64 = 17;
-    /// Make a directory in the RAMFS filesystem.
-    pub const fs_mkdir: u64 = 18;
-    /// Shrink an open regular file to a specified byte length.
-    /// Arguments: RDI = descriptor, RSI = new size; result: 0 or negative error.
-    pub const fs_truncate: u64 = 22;
-    /// Read the display metadata into a structure of the user mode.
-    ///
-    /// The call is read-only and exposes no framebuffer address: the user
-    /// receives the geometry and the pixel layout, and the pixels are
-    /// written only by the presentation call 20.
-    pub const display_info: u64 = 19;
-    /// Present a rectangle of pixels from the user mode.
-    ///
-    /// The call copies the pixels into the framebuffer, and the caller has
-    /// to hold the display capability with the right of writing. The
-    /// framebuffer address is never exposed to the user mode.
-    pub const present: u64 = 20;
-    /// Take one input event from the queue of the graphics service.
-    ///
-    /// The caller has to hold the input capability with the right of
-    /// reading. The result is 1 when an event was written, 0 when the
-    /// queue is empty, or a negative error.
-    pub const input_poll: u64 = 21;
-    /// Block until an input event is available or a timeout expires.
-    ///
-    /// Same validation as `input_poll`; when the queue is empty, the task
-    /// blocks and the timer delivers the event (or the timeout error) in
-    /// the saved context of the task. The timeout is in timer ticks; zero
-    /// means the wait does not expire. The result is 1 when an event was
-    /// written, or a negative error (timeout = 13).
-    pub const input_wait: u64 = 23;
-};
+/// The kernel keeps no private copy: the table, the limits and the error
+/// codes are the normative contract in `shared/syscall_abi.zig`, which the
+/// SDK imports as well. A number that is in the table is a number the
+/// kernel dispatches.
+pub const Number = kynox.syscall_abi.Number;
 
-/// The result that the kernel answers to the call of the probe.
-pub const ping_result: u64 = 0x42;
+/// Result of the `ping` call.
+pub const ping_result = kynox.syscall_abi.ping_result;
 
-/// The errors of the calls.
-///
-/// A call that fails answers with the negative value of the error, and the
-/// result of a call that succeeds is never negative.
-pub const Error = struct {
-    /// The number of the call does not exist.
-    pub const unknown_call: u64 = 1;
-    /// An address of the call does not belong to the user mode.
-    pub const invalid_address: u64 = 2;
-    /// The length of the call is zero or larger than the limit.
-    pub const invalid_length: u64 = 3;
-    /// The call is not allowed for the privilege level of the caller.
-    pub const not_allowed: u64 = 4;
-    /// The queue of the channel is empty.
-    pub const empty_queue: u64 = 5;
-    /// The channel does not exist.
-    pub const unknown_channel: u64 = 6;
-    /// The queue of the channel is full.
-    pub const full_queue: u64 = 7;
-    /// The process does not exist.
-    pub const unknown_process: u64 = 8;
-    /// The wait is impossible.
-    ///
-    /// The task waited for a message and there was no other task to run,
-    /// and the wait would be a busy loop.
-    pub const wait_impossible: u64 = 9;
-    /// The process does not hold the capability that the call needs.
-    ///
-    /// The error says that the process does not hold the capability of the
-    /// subject that the call names. The process that does not hold it
-    /// cannot use the subject, and the capability is what the owner of the
-    /// subject gave to the processes that may use it.
-    pub const not_authorized: u64 = 10;
-    /// The kind of the capability does not exist.
-    pub const unknown_kind: u64 = 11;
-    /// The rights are empty, or they do not apply to the kind of the
-    /// capability.
-    pub const invalid_rights: u64 = 12;
-    /// The wait expired before the message arrived.
-    ///
-    /// The wait was removed from the queue, and the message that arrives
-    /// later stays in the queue for the next call.
-    pub const timeout: u64 = 13;
-    /// The path does not name an existing file or directory.
-    pub const no_such_file: u64 = 14;
-    /// The file system has no free block or no free inode.
-    pub const no_space: u64 = 15;
-    /// The descriptor is not open.
-    pub const bad_descriptor: u64 = 16;
-    /// The table of open files is full.
-    pub const too_many_open_files: u64 = 17;
-    /// A file or directory with the same name already exists.
-    pub const name_exists: u64 = 18;
-    /// The path or the name is not valid.
-    pub const invalid_name: u64 = 19;
-    /// The file exceeds the limit of the file system.
-    pub const file_too_large: u64 = 20;
-    /// The file system refused the operation for another reason.
-    pub const io_error: u64 = 21;
-    /// The firmware did not provide a usable display.
-    pub const no_display: u64 = 22;
-    /// The rectangle of the presentation is empty or leaves the display.
-    pub const invalid_geometry: u64 = 23;
-    /// The pixel format of the presentation is not supported.
-    pub const invalid_format: u64 = 24;
-    /// The kernel has no input queue for the user mode.
-    pub const no_input: u64 = 25;
-};
+/// The errors of the calls, as constants the handler compares.
+pub const Error = kynox.syscall_abi.Error;
 
-/// The largest block that a call copies in one go.
-///
-/// The limit keeps the kernel from spending an unbounded time inside a
-/// call, and it is the same for the copy and for the write.
-pub const max_block_length: u64 = 64 * 1024;
+/// Largest block that one call copies, in bytes.
+pub const max_block_length = kynox.syscall_abi.max_block_length;
 
-/// The largest path that a file system call accepts.
-pub const max_path_length: usize = 255;
+/// Largest path a filesystem call accepts, in bytes.
+pub const max_path_length = kynox.syscall_abi.max_path_length;
 
-/// The files that the call of write knows.
-pub const Descriptor = struct {
-    /// The console of the kernel.
-    pub const console: u64 = 1;
-};
+/// Descriptor values that are not file descriptors.
+pub const Descriptor = kynox.syscall_abi.Descriptor;
 
-/// The privilege level of the caller.
-///
-/// The entry point of the call always delivers the call of the user mode,
-/// and the kernel calls the handler directly.
-pub const Privilege = struct {
-    /// The caller runs in the kernel.
-    pub const kernel: u64 = 0;
-    /// The caller runs in the user mode.
-    pub const user: u64 = 3;
-};
+/// Privilege level of the caller, as the entry point reports it.
+pub const Privilege = kynox.syscall_abi.Privilege;
 
 /// The entry point of the call, provided by the assembly.
 extern var kynox_syscall_instruction_entry: u8;
@@ -713,9 +517,14 @@ pub export fn kynox_syscall_handler(frame: *SyscallFrame, privilege: u64) callco
 ///
 /// The value is a negative number, and its absolute value is the code of
 /// the error.
-pub fn failure(code: u64) u64 {
-    return -%code;
-}
+/// Encodes an error code as the negative value returned in `RAX`.
+pub const failure = kynox.syscall_abi.failure;
+
+/// Revision of the native ABI implemented by this kernel.
+///
+/// Reported at boot and used by the conformance evidence in
+/// `docs/specs/syscall-abi.md`.
+pub const abi_version = kynox.syscall_abi.version;
 
 /// Copies a path of the user mode into a buffer of the kernel.
 ///

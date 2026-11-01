@@ -24,6 +24,8 @@ pub const paging = @import("paging.zig");
 pub const spinlock = @import("spinlock.zig");
 pub const smp = @import("smp.zig");
 pub const apic = @import("apic.zig");
+pub const ioapic = @import("ioapic.zig");
+pub const acpi = @import("acpi.zig");
 pub const virtio = @import("virtio.zig");
 
 // The unit tests of the modules live in the modules themselves, and this
@@ -39,6 +41,8 @@ test {
     _ = @import("spinlock.zig");
     _ = @import("smp.zig");
     _ = @import("apic.zig");
+    _ = @import("ioapic.zig");
+    _ = @import("acpi.zig");
     _ = @import("pci.zig");
     _ = @import("virtio.zig");
     _ = @import("virtio_blk.zig");

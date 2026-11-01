@@ -20,10 +20,12 @@
 //! registradores de identificacao, tarefa de prioridade, registro de fim
 //! de interrupcao, timer local, erros e comandos inter-processador (ICR).
 //!
-//! O endereco base do APIC local vem da tabela MADT da ACPI quando
-//! disponivel; ate que a leitura da ACPI esteja integrada, usa-se o
-//! endereco padrao do QEMU/OVMF (0xFEE0000), que tambem e o endereco
-//! tipico de sistemas reais.
+//! O endereco base do APIC local **nao** e mais fixo. O kernel le a MADT
+//! da ACPI durante o boot (antes de trocar as tabelas de pagina) e chama
+//! `setBase` com o endereco que o firmware publicou; quando a tabela nao
+//! existe, esta corrompida ou traz um valor invalido, o kernel registra o
+//! motivo e usa `default_base`, que e o endereco tipico de sistemas
+//! reais e o que o QEMU/OVMF publica.
 //!
 //! O acesso ao APIC local e feito por memoria mapeada. Cada registro tem
 //! 4 bytes mas esta espacado a cada 16 bytes (espacamento 16 bytes entre
@@ -33,12 +35,62 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const timer = @import("timer.zig");
 
-/// Endereco base do APIC local (mapeamento de memoria).
+/// Endereco base padrao do APIC local (mapeamento de memoria).
 ///
-/// Valor padrao do QEMU/OVMF e de muitos sistemas reais. Quando a leitura
-/// da tabela MADT estiver integrada, este valor sera substituido pelo
-/// lido da ACPI.
-pub const apic_base: u64 = 0xFEE00000;
+/// Usado apenas como fallback: o caminho normal e o endereco lido da MADT
+/// pela descoberta de `kernel/main.zig` e instalado por `setBase`.
+pub const default_base: u64 = 0xFEE00000;
+
+/// Erros da instalacao do endereco base.
+pub const ConfigureError = error{
+    /// O endereco e zero: nao existe APIC na pagina zero.
+    NullAddress,
+    /// O endereco nao esta alinhado a uma pagina.
+    Misaligned,
+    /// O endereco esta fora do mapeamento identidade do firmware.
+    OutOfRange,
+};
+
+/// Tamanho de pagina usado para validar o alinhamento.
+const page_size: u64 = 4096;
+
+/// Limite do mapeamento identidade, em bytes (primeiros 4 GiB).
+const identity_mapped_limit: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Verdadeiro quando `address` pode ser usado como base do APIC local.
+///
+/// A funcao e pura e existe para que o teste cubra os mesmos criterios que
+/// `setBase` aplica.
+pub fn isValidBase(address: u64) bool {
+    if (address == 0) return false;
+    if (address % page_size != 0) return false;
+    return address < identity_mapped_limit;
+}
+
+/// Endereco base em uso. Comeca no valor padrao e e trocado por
+/// `setBase` depois da descoberta da ACPI.
+var base_address: u64 = default_base;
+
+/// Instala o endereco base vindo da ACPI.
+///
+/// A validacao acontece aqui, e nao no chamador: um valor invalido nunca
+/// chega a ser usado como ponteiro de MMIO.
+pub fn setBase(address: u64) ConfigureError!void {
+    if (address == 0) return error.NullAddress;
+    if (address % page_size != 0) return error.Misaligned;
+    if (address >= identity_mapped_limit) return error.OutOfRange;
+    base_address = address;
+}
+
+/// Endereco base em uso pelo kernel.
+pub fn baseAddress() u64 {
+    return base_address;
+}
+
+/// Volta ao endereco padrao; usado quando a descoberta falha.
+pub fn resetBase() void {
+    base_address = default_base;
+}
 
 /// Offset dos registradores do APIC local, em bytes, a partir da base.
 /// Cada registro de 32 bits ocupa 16 bytes (espacamento de 16).
@@ -138,7 +190,15 @@ pub const IcrDeliveryStatus = enum(u32) {
 pub const timer_vector: u32 = 64;
 
 /// Acesso ao APIC local como ponteiro para a regiao mapeada de memoria.
-var apic: [*]u8 = undefined;
+///
+/// Antes de `map` o ponteiro aponta para a base padrao, nunca para um valor
+/// indefinido: `isMapped` consulta `mapped` e nenhum leitor de registrador
+/// roda antes disso, mas um ponteiro indefinido seria comportamento
+/// indefinido mesmo sem ser lido.
+var apic: [*]u8 = @ptrFromInt(@as(usize, default_base));
+
+/// O APIC local foi registrado por `map`.
+var mapped: bool = false;
 
 /// Mapeia o APIC local na regiao de memoria do kernel.
 ///
@@ -147,11 +207,18 @@ var apic: [*]u8 = undefined;
 /// registra o ponteiro para acesso aos registradores.
 pub fn map(base: u64) void {
     apic = @ptrFromInt(@as(usize, base));
+    mapped = true;
+}
+
+/// Esquece o mapeamento registrado (usado pelos testes e pelo desligamento).
+pub fn unmap() void {
+    apic = @ptrFromInt(@as(usize, default_base));
+    mapped = false;
 }
 
 /// Retorna true se o APIC local foi mapeado.
 pub fn isMapped() bool {
-    return @intFromPtr(apic) != 0;
+    return mapped;
 }
 
 /// Le um registrador de 32 bits do APIC local.
@@ -172,7 +239,10 @@ fn write32(offset: u64, value: u32) void {
 ///
 /// O ID esta no byte mais significativo do registrador de ID.
 pub fn readApicId() u32 {
-    return read32(ApicOffset.id) >> 24;
+    // O ID de APIC local do xAPIC tem 8 bits; o restante do registrador nao e
+    // o identificador. A mascara evita que um byte alto qualquer chegue ao
+    // campo de destino de uma entrada do I/O APIC, que tambem tem 8 bits.
+    return (read32(ApicOffset.id) >> 24) & 0xFF;
 }
 
 /// Le a versao da APIC local.
@@ -245,8 +315,11 @@ pub fn sendIpi(apic_id: u32, delivery_mode: u32, vector: u8) void {
     // ICR alto: ID de destino no byte mais significativo.
     write32(ApicOffset.icr_high, apic_id << 24);
     // ICR baixo: delivery mode + vector + edge trigger + physical destination.
-    const command: u32 = delivery_mode | IcrLevel.assert |
-        IcrTriggerMode.edge | IcrDestinationMode.physical | @as(u32, vector);
+    const command: u32 = delivery_mode |
+        @as(u32, @intFromEnum(IcrLevel.assert)) |
+        @as(u32, @intFromEnum(IcrTriggerMode.edge)) |
+        @as(u32, @intFromEnum(IcrDestinationMode.physical)) |
+        @as(u32, vector);
     write32(ApicOffset.icr_low, command);
 }
 
@@ -279,6 +352,23 @@ pub fn sendSipi(apic_id: u32, vector: u8) void {
     write32(ApicOffset.icr_low, command);
 }
 
+/// Envia uma IPI INIT para uma CPU de destino (modo fisico, nivel assert).
+///
+/// O INIT coloca o processador de aplicacao no estado de espera de SIPI. Ele
+/// e a primeira mensagem da sequencia INIT-SIPI-SIPI do protocolo de boot
+/// multiprocessador; sem ele o AP pode nao aceitar o vetor de inicializacao.
+pub fn sendInit(apic_id: u32) void {
+    while (read32(ApicOffset.icr_low) & @as(u32, @intFromEnum(IcrDeliveryStatus.pending)) != 0) {
+        cpu.pause();
+    }
+    write32(ApicOffset.icr_high, apic_id << 24);
+    const command: u32 = @as(u32, @intFromEnum(IcrDeliveryMode.init)) |
+        @as(u32, @intFromEnum(IcrLevel.assert)) |
+        @as(u32, @intFromEnum(IcrTriggerMode.edge)) |
+        @as(u32, @intFromEnum(IcrDestinationMode.physical));
+    write32(ApicOffset.icr_low, command);
+}
+
 /// Segunda mensagem SIPI: envia o SIPI duas vezes com um intervalo,
 /// conforme requerido pela especificacao do protocolo de boot multiprocessador.
 pub fn sendSipiTwice(apic_id: u32, vector: u8) void {
@@ -300,4 +390,36 @@ test "apicOffsetsAreAligned" {
 
 test "timerVectorIsAfterHardwareInterrupts" {
     try std.testing.expectEqual(@as(u32, 64), timer_vector);
+}
+
+test "the base address validation rejects unusable values" {
+    try std.testing.expect(isValidBase(default_base));
+    try std.testing.expect(isValidBase(0xFEC0_0000));
+    try std.testing.expect(!isValidBase(0));
+    try std.testing.expect(!isValidBase(default_base + 4));
+    try std.testing.expect(!isValidBase(identity_mapped_limit));
+    try std.testing.expect(!isValidBase(identity_mapped_limit + page_size));
+}
+
+test "setBase stores a valid address and resetBase restores the default" {
+    const previous = baseAddress();
+    defer setBase(previous) catch {};
+
+    try setBase(0xFEC0_0000);
+    try std.testing.expectEqual(@as(u64, 0xFEC0_0000), baseAddress());
+
+    resetBase();
+    try std.testing.expectEqual(default_base, baseAddress());
+    try std.testing.expectEqual(@as(u64, 0xFEE0_0000), default_base);
+}
+
+test "setBase refuses the invalid values with a specific error" {
+    const previous = baseAddress();
+    defer setBase(previous) catch {};
+
+    try std.testing.expectError(error.NullAddress, setBase(0));
+    try std.testing.expectError(error.Misaligned, setBase(default_base + 1));
+    try std.testing.expectError(error.OutOfRange, setBase(identity_mapped_limit));
+    // A recusa nao altera o endereco em uso.
+    try std.testing.expectEqual(previous, baseAddress());
 }

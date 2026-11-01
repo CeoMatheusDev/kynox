@@ -133,6 +133,11 @@ docs/
   architecture/
   decisions/
   specs/
+  strategy/
+  roadmap/
+  releases/
+  audits/
+  validation/
 ```
 
 Não duplique a árvore atual por estética. Faça a extração de módulos somente quando a fronteira estiver clara e a migração puder ser testada.
@@ -613,6 +618,20 @@ The current subsystem maturity snapshot is maintained in:
 - docs/PROJECT_STATUS.md — human-readable progress, evidence, limitations and priorities.
 - docs/PROJECT_STATUS.json — machine-readable status inventory for agents and automation.
 
-Treat these as the current project-status source of truth, while source code and executed tests remain the authority for actual behavior. Update both status files whenever a subsystem changes state. Percentages are scoped engineering maturity estimates, not a global OS completion metric.
+Treat these as the current project-status source of truth, while source code and executed tests remain the authority for actual behavior. The target architecture and the staged plan live in docs/architecture/, docs/strategy/ and docs/roadmap/PRODUCT_ROADMAP.md; they are planning documents and carry no implementation claim. `docs-conformance-tests` keeps their required sections and their inventory entry from drifting. Update both status files whenever a subsystem changes state. Percentages are scoped engineering maturity estimates, not a global OS completion metric.
 
 The current highest-value gaps are SMP scheduler integration, VMM completeness, APIC/IOAPIC discovery, full native executable ABI/linking, VFS and power-loss-safe storage, asynchronous device I/O, and complete desktop services. Linux and Windows binary compatibility remain explicit long-term goals at 0% implementation until their loaders and OS ABIs work end to end.
+
+## 13. Identidade do produto e versionamento
+
+A identidade pública do Kynox é derivada, não escolhida à mão: a versão técnica vive em `VERSION` (SemVer 2.0.0) e o major seleciona o nome da geração em um mapa normativo. Formato técnico `MAJOR.MINOR.PATCH-PRERELEASE`; formato público `Kynox [Geração] [VERSÃO]`. O estado atual é **Kynox One 0.1.0-alpha.1** (`docs/VERSIONING.md`).
+
+Regras de arquitetura que decorrem disso:
+
+1. **Uma fonte.** `version.zig` embute `VERSION`; kernel, bootloader, SDK e ferramentas importam o módulo. Nenhum componente repete a versão, a tag ou o nome da geração.
+2. **Major é compatibilidade, não conclusão.** Abrir uma era significa quebrar o contrato anterior de propósito. Concluir funcionalidades dentro de uma era muda MINOR/PATCH/prerelease.
+3. **Nomes são normativos.** O mapa `0 Kynox One … 14 Kynox Cosmos` está em `version.zig` e `docs/roadmap/ERAS.md`, com teste de concordância. Major sem nome é erro; não se inventa nome.
+4. **Cinco linhas independentes.** Versão do sistema, identidade de geração, revisão de ABI, versões de formato binário e versões de protocolo interno evoluem por motivos diferentes e não se misturam.
+5. **Release é evidência.** Tag `v` + `VERSION`, nome público gerado, autorização do mantenedor, nunca por calendário ou contagem de commits.
+
+Os testes que sustentam a política estão em `version-tests` (fonte única, mapeamento, documentos, espelho no manifesto, ausência de literais) e `boot-markers-conformance-tests` (a linha de identidade impressa no boot continua sendo a esperada pelo teste de integração).

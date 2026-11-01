@@ -234,7 +234,6 @@ fi
 # qcow2 with the variables in raw works.
 
 OVMF_PAIRS=(
-    "${OVMF_CODE:-}:${OVMF_VARS:-}"
     "/usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd"
     "/usr/share/edk2/ovmf/OVMF_CODE_4M.fd:/usr/share/edk2/ovmf/OVMF_VARS_4M.fd"
     "/usr/share/edk2/x64/OVMF_CODE.fd:/usr/share/edk2/x64/OVMF_VARS.fd"
@@ -273,6 +272,17 @@ search_file() {
 OVMF_CODE_PATH=""
 OVMF_VARS_PATH=""
 
+# A pair given by the environment has priority, but only when both paths are
+# set: an empty pair would print as ":" in the diagnostic and mean nothing.
+if [[ -n "${OVMF_CODE:-}" || -n "${OVMF_VARS:-}" ]]; then
+    if [[ -n "${OVMF_CODE:-}" && -n "${OVMF_VARS:-}" ]]; then
+        OVMF_PAIRS=("${OVMF_CODE}:${OVMF_VARS}" "${OVMF_PAIRS[@]}")
+    else
+        echo "qemu-boot-test: OVMF_CODE and OVMF_VARS must be set together" >&2
+        exit 2
+    fi
+fi
+
 for pair in "${OVMF_PAIRS[@]}"; do
     code="${pair%%:*}"
     vars="${pair#*:}"
@@ -304,6 +314,15 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
     echo "qemu-boot-test: the roots searched were: ${OVMF_SEARCH_ROOTS[*]}" >&2
     echo "qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware" >&2
     exit 2
+fi
+
+# The firmware is found; the emulator itself is checked before the run so
+# that a missing binary is reported as such instead of as "command not found".
+if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+    echo "qemu-boot-test: qemu-system-x86_64 is not installed" >&2
+    echo "qemu-boot-test: firmware found at $OVMF_CODE_PATH" >&2
+    echo "qemu-boot-test: install QEMU (qemu-system-x86_64) and run again" >&2
+    exit 3
 fi
 
 OVMF_CODE_FORMAT="$(format_of "$OVMF_CODE_PATH")"

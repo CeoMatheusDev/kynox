@@ -1,0 +1,76 @@
+# QEMU suite attempts — 2026-10-31T23:33:30Z
+
+## environment
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+0.17.0
+GNU bash, version 5.2.15(1)-release (x86_64-pc-linux-gnu)
+
+## zig build qemu-test
+qemu-boot-test: no OVMF firmware found
+qemu-boot-test: the pairs searched were:
+qemu-boot-test:   /usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/edk2/ovmf/OVMF_CODE_4M.fd:/usr/share/edk2/ovmf/OVMF_VARS_4M.fd
+qemu-boot-test:   /usr/share/edk2/x64/OVMF_CODE.fd:/usr/share/edk2/x64/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/edk2-ovmf/OVMF_CODE.fd:/usr/share/edk2-ovmf/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd
+qemu-boot-test:   /usr/share/qemu/OVMF_CODE.fd:/usr/share/qemu/OVMF_VARS.fd
+qemu-boot-test: the roots searched were: /usr/share /usr/lib /usr/local/share /opt
+qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware
+qemu-test
++- run bash failure
+error: process exited with code 2
+failed command: bash tests/integration/boot-qemu.sh --image=./zig-out/bin/kynox.img
+
+Build Summary: 9/11 steps succeeded (1 failed)
+qemu-test transitive failure
++- run bash failure
+
+exit=1
+
+## zig build qemu-storage-test
+qemu-boot-test:   /usr/share/edk2/x64/OVMF_CODE.fd:/usr/share/edk2/x64/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/edk2-ovmf/OVMF_CODE.fd:/usr/share/edk2-ovmf/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd
+qemu-boot-test:   /usr/share/qemu/OVMF_CODE.fd:/usr/share/qemu/OVMF_VARS.fd
+qemu-boot-test: the roots searched were: /usr/share /usr/lib /usr/local/share /opt
+qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware
+qemu-storage-test
++- run bash
+   +- qemu-test
+      +- run bash failure
+error: process exited with code 2
+failed command: bash tests/integration/boot-qemu.sh --image=./zig-out/bin/kynox.img
+
+Build Summary: 9/13 steps succeeded (1 failed)
+qemu-storage-test transitive failure
++- run bash transitive failure
+   +- qemu-test transitive failure
+      +- run bash failure
+
+exit=1
+
+## zig build qemu-interactive-test
+qemu-boot-test: the pairs searched were:
+qemu-boot-test:   :
+qemu-boot-test:   /usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/edk2/ovmf/OVMF_CODE_4M.fd:/usr/share/edk2/ovmf/OVMF_VARS_4M.fd
+qemu-boot-test:   /usr/share/edk2/x64/OVMF_CODE.fd:/usr/share/edk2/x64/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/edk2-ovmf/OVMF_CODE.fd:/usr/share/edk2-ovmf/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd
+qemu-boot-test:   /usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd
+qemu-boot-test:   /usr/share/qemu/OVMF_CODE.fd:/usr/share/qemu/OVMF_VARS.fd
+qemu-boot-test: the roots searched were: /usr/share /usr/lib /usr/local/share /opt
+qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware
+qemu-interactive-test
++- run bash failure
+error: process exited with code 2
+failed command: bash tests/integration/interactive-qemu.sh --image=./zig-out/bin/kynox.img
+
+Build Summary: 9/11 steps succeeded (1 failed)
+qemu-interactive-test transitive failure
++- run bash failure
+
+exit=1
+

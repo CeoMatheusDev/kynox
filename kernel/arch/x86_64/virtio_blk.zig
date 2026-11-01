@@ -30,10 +30,13 @@
 //! deste arquivo falham se alguém restaurar um corpo vazio.
 //!
 //! As assinaturas ainda não recebem LBA, buffer nem contagem de setores, e
-//! por isso **não** constituem uma interface de I/O de blocos. O redesenho
-//! da API, a integração com `block.Device` e a persistência física em disco
-//! ficam para um incremento posterior
-//! (`docs/adr/ADR-F04-block-driver-proposta.md`).
+//! por isso **não** constituem uma interface de I/O de blocos.
+//!
+//! Pendente (auditoria de 2026-10-31, achado A-07): decidir entre remover
+//! este stub — ele só está referenciado pela raiz de testes
+//! `kernel/arch/x86_64/root.zig` — ou mantê-lo com um dono explícito, e
+//! registrar a decisão de camadas do driver de bloco em um ADR sob
+//! `docs/decisions/`, conforme `strategy.md` §5.
 
 const std = @import("std");
 

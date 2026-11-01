@@ -45,6 +45,28 @@ pub fn build(b: *std.Build) void {
     });
 
     // ------------------------------------------------------------------
+    // System version: the single source of truth is version.zig. The
+    // loader, the kernel and the SDK import it, so a version string is
+    // never spelled twice in the tree.
+    // ------------------------------------------------------------------
+    const version_module = b.createModule(.{
+        .root_source_file = b.path("version.zig"),
+    });
+
+    // The syscall ABI is a contract shared by the kernel and the SDK. The
+    // user mode programs cannot import the whole `shared` module (it pulls
+    // in port I/O and serial code), so the ABI has its own module root.
+    const syscall_abi_user_module = b.createModule(.{
+        .root_source_file = b.path("shared/syscall_abi.zig"),
+        .target = b.resolveTargetQuery(.{
+            .cpu_arch = .x86_64,
+            .os_tag = .freestanding,
+            .abi = .none,
+        }),
+        .optimize = .ReleaseSmall,
+    });
+
+    // ------------------------------------------------------------------
     // Kynox Native Boot, the UEFI loader.
     // ------------------------------------------------------------------
     const boot_target = b.resolveTargetQuery(.{
@@ -66,6 +88,7 @@ pub fn build(b: *std.Build) void {
         .error_tracing = false,
     });
     boot_module.addImport("kynox_shared", shared);
+    boot_module.addImport("kynox_version", version_module);
     const boot_executable = b.addExecutable(.{
         .name = "kynox-boot",
         .root_module = boot_module,
@@ -111,6 +134,8 @@ pub fn build(b: *std.Build) void {
     sdk_module.addImport("kynox_display", display_contract);
     sdk_module.addImport("kynox_input", input_contract);
     sdk_module.addImport("kynox_compositor", compositor_contract);
+    sdk_module.addImport("kynox_syscall_abi", syscall_abi_user_module);
+    sdk_module.addImport("kynox_version", version_module);
     const user_module = b.createModule(.{
         .root_source_file = b.path("user/hello.zig"),
         .target = user_target,
@@ -169,6 +194,21 @@ pub fn build(b: *std.Build) void {
         .os_tag = .freestanding,
         .abi = .none,
     });
+    // Build-time switches that change kernel behaviour. They exist so a
+    // change that needs runtime validation is a documented build flag, not a
+    // silent edit: `zig build -Dioapic-delivery=true` compiles the delivery
+    // path, the default keeps the validated 8259 path.
+    const kernel_options = b.addOptions();
+    kernel_options.addOption(
+        bool,
+        "ioapic_delivery",
+        b.option(
+            bool,
+            "ioapic-delivery",
+            "Deliver hardware interrupts through the I/O APIC instead of the 8259 (needs a recorded QEMU boot)",
+        ) orelse false,
+    );
+
     const kernel_module = b.createModule(.{
         .root_source_file = b.path("kernel/main.zig"),
         .target = kernel_target,
@@ -188,6 +228,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     kernel_module.addImport("kynox_block", block_kernel_module);
+    kernel_module.addOptions("kynox_config", kernel_options);
 
     const kernel_keyboard_module = b.createModule(.{
         .root_source_file = b.path("kernel/input/keyboard.zig"),
@@ -219,6 +260,7 @@ pub fn build(b: *std.Build) void {
     kernel_module.addAssemblyFile(b.path("kernel/arch/x86_64/syscall.s"));
     kernel_module.addAssemblyFile(b.path("kernel/arch/x86_64/ap_trampoline.s"));
     kernel_module.addImport("kynox_shared", shared);
+    kernel_module.addImport("kynox_version", version_module);
     kernel_module.addAnonymousImport("native_app", .{
         .root_source_file = native_app_output,
     });
@@ -243,6 +285,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    fsimg_module.addImport("kynox_version", version_module);
     const fsimg_executable = b.addExecutable(.{
         .name = "kynox-fsimg",
         .root_module = fsimg_module,
@@ -306,11 +349,74 @@ pub fn build(b: *std.Build) void {
     sdk_test_module.addImport("kynox_display", display_host_module);
     sdk_test_module.addImport("kynox_input", input_host_module);
     sdk_test_module.addImport("kynox_compositor", compositor_host_module);
+    const syscall_abi_host_module = b.createModule(.{
+        .root_source_file = b.path("shared/syscall_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sdk_test_module.addImport("kynox_syscall_abi", syscall_abi_host_module);
+    sdk_test_module.addImport("kynox_version", version_module);
     const sdk_tests = b.addTest(.{
         .name = "sdk-tests",
         .root_module = sdk_test_module,
     });
     unit_test_step.dependOn(&b.addRunArtifact(sdk_tests).step);
+
+    // Cross-tree conformance of the native syscall ABI: the contract, the
+    // kernel dispatch, the SDK and the specification must agree.
+    const abi_conformance_module = b.createModule(.{
+        .root_source_file = b.path("abi_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    abi_conformance_module.addImport("kynox_syscall_abi", syscall_abi_host_module);
+    const abi_conformance_tests = b.addTest(.{
+        .name = "abi-conformance-tests",
+        .root_module = abi_conformance_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(abi_conformance_tests).step);
+
+    // Conformance between the serial console and the boot test: every literal
+    // marker asserted by tests/integration/boot-qemu.sh must still be printed
+    // by the loader or the kernel.
+    const markers_conformance_module = b.createModule(.{
+        .root_source_file = b.path("boot_markers_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const markers_conformance_tests = b.addTest(.{
+        .name = "boot-markers-conformance-tests",
+        .root_module = markers_conformance_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(markers_conformance_tests).step);
+
+    // Structural guard of the planning documents: required sections, dated
+    // sources and status-inventory coverage. It asserts structure only; it
+    // never asserts that a planned feature exists.
+    const docs_conformance_module = b.createModule(.{
+        .root_source_file = b.path("docs_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const docs_conformance_tests = b.addTest(.{
+        .name = "docs-conformance-tests",
+        .root_module = docs_conformance_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(docs_conformance_tests).step);
+
+    // The version module carries the system version. Its tests fail if the
+    // components and the string drift, or if build.zig.zon disagrees.
+    const version_test_module = b.createModule(.{
+        .root_source_file = b.path("version.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    version_test_module.addImport("kynox_shared", shared_test_module);
+    const version_tests = b.addTest(.{
+        .name = "version-tests",
+        .root_module = version_test_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(version_tests).step);
 
     // F5: container KPK, codec puro testado no host.
     const kpk_test_module = b.createModule(.{
@@ -474,6 +580,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     arch_test_module.addImport("kynox_shared", shared);
+    // `timer.zig` and `interrupt.zig` read the delivery switch at comptime;
+    // the host tests compile the same module with the default value.
+    arch_test_module.addOptions("kynox_config", kernel_options);
     const arch_tests = b.addTest(.{
         .name = "arch-tests",
         .root_module = arch_test_module,
@@ -603,6 +712,15 @@ pub fn build(b: *std.Build) void {
     qemu_run.step.dependOn(&image_step.step);
     qemu_run_step.dependOn(&image_step.step);
     qemu_run_step.dependOn(&qemu_run.step);
+
+    // Documentation link check: the Markdown is the only reference the
+    // project publishes, and a link to a deleted file is invisible in review.
+    // The step is part of `test` because it needs no device and no firmware.
+    const docs_step = b.step("docs-check", "Validate the relative links of the Markdown documentation");
+    const docs_check = b.addSystemCommand(&.{ "python3", "scripts/check-docs-links.py", "." });
+    docs_check.has_side_effects = true;
+    docs_step.dependOn(&docs_check.step);
+    unit_test_step.dependOn(&docs_check.step);
 
     const check_step = b.step("check", "Run the unit tests and the automated boot test");
     check_step.dependOn(unit_test_step);

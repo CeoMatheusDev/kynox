@@ -3,4 +3,6 @@ zig-out/
 *.o
 pid
 .DS_Store
-```
+
+# Local, non-reproducible tool downloads (QEMU/OVMF provisioning)
+.tools/

@@ -16,7 +16,18 @@
 //! SDK mínimo para aplicações freestanding x86_64 do Kynox.
 //! Não depende de módulos privados do kernel.
 
+const std = @import("std");
+
 pub const syscall = @import("syscall.zig");
+
+/// Contrato normativo da ABI, reexportado para os aplicativos.
+pub const abi = @import("kynox_syscall_abi");
+
+/// Versão do sistema (fonte única: `version.zig` na raiz do repositório).
+///
+/// Não confundir com `syscall.abi_version`, que é a revisão do contrato de
+/// syscalls, nem com a versão dos formatos binários (handoff, KEX, KPK, KNV).
+pub const version = @import("kynox_version");
 
 /// Contrato público da metadata do display, compartilhado com o kernel.
 pub const display = @import("kynox_display");
@@ -27,19 +38,26 @@ pub const input = @import("kynox_input");
 /// Contrato público do cliente com o compositor, compartilhado com o kernel.
 pub const compositor = @import("kynox_compositor");
 
+/// Tipos de capability aceitos por `grant` e `revoke`.
+///
+/// Os valores vêm do contrato da ABI (`shared/syscall_abi.zig`); o enum
+/// existe apenas para o chamador não escrever números soltos.
 pub const CapabilityKind = enum(u64) {
-    channel = 0,
-    process = 1,
-    display = 2,
-    input = 3,
+    channel = abi.CapabilityKind.channel,
+    process = abi.CapabilityKind.process,
+    display = abi.CapabilityKind.display,
+    input = abi.CapabilityKind.input,
 };
 
+/// Direitos de uma capability, do contrato da ABI.
 pub const Right = struct {
-    pub const send: u64 = 1;
-    pub const receive: u64 = 2;
-    pub const delegate: u64 = 4;
-    pub const write: u64 = 8;
-    pub const read: u64 = 16;
+    pub const send: u64 = abi.Right.send;
+    pub const receive: u64 = abi.Right.receive;
+    pub const delegate: u64 = abi.Right.delegate;
+    pub const write: u64 = abi.Right.write;
+    pub const read: u64 = abi.Right.read;
+    pub const all: u64 = abi.Right.all;
+    pub const use: u64 = abi.Right.use;
 };
 
 pub fn ping() u64 {
@@ -165,4 +183,18 @@ pub fn inputWait(event: *input.InputEvent, ticks: u64) u64 {
 
 test {
     _ = @import("syscall.zig");
+}
+
+test "capability kinds and rights equal the ABI contract" {
+    inline for (comptime std.enums.values(CapabilityKind)) |kind| {
+        try std.testing.expectEqual(
+            @field(abi.CapabilityKind, @tagName(kind)),
+            @intFromEnum(kind),
+        );
+    }
+    try std.testing.expectEqual(abi.Right.all, Right.all);
+    try std.testing.expectEqual(abi.Right.use, Right.use);
+    inline for ([_][]const u8{ "send", "receive", "delegate", "write", "read" }) |name| {
+        try std.testing.expectEqual(@field(abi.Right, name), @field(Right, name));
+    }
 }

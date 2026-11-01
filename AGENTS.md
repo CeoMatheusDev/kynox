@@ -8,6 +8,8 @@ Kynox é um sistema operacional experimental nativo para **x86_64**, escrito pri
 
 Objetivo de longo prazo: construir um sistema operacional moderno, modular, seguro, previsível e de alto desempenho, com controle explícito do hardware, isolamento forte entre processos e uma experiência de desktop familiar a usuários de Windows (janelas, foco, barra de tarefas, gerenciamento de arquivos e configurações).
 
+Identidade oficial atual: **Kynox One 0.1.0-alpha.1** — geração `Kynox One` (major `0`), versão técnica `0.1.0-alpha.1` em `VERSION`. A política completa está em `docs/VERSIONING.md` e o mapa normativo de gerações em `docs/roadmap/ERAS.md`; a seção 12 deste arquivo resume as regras obrigatórias.
+
 A visão é uma direção de engenharia, não uma declaração de funcionalidades já implementadas. Sempre diferencie:
 - **Implementado:** código existente e integrado ao caminho executado.
 - **Parcial:** existe código, mas há limitações, caminhos não integrados ou dependências pendentes.
@@ -220,6 +222,14 @@ Consulte `build.zig` para confirmar os targets e dependências atuais. Não inve
 
 Não declare build ou teste aprovado sem ter executado o comando no ambiente desta tarefa. Diferencie "não executado", "compilou", "passou em host" e "validado em QEMU".
 
+### Ordem de trabalho do kernel
+
+- `docs/roadmap/KERNEL_COMPLETION_ROADMAP.md` define a ordem canônica das etapas K0–K13. Não inicie uma etapa antes das dependências declaradas nela, e registre no relatório qual etapa foi tocada.
+- Uma etapa só é promovida de P → F → E → H com a evidência do nível correspondente (build; execução gravada; QEMU/OVMF com o suite verde; hardware nomeado). Compilação nunca é validação de runtime.
+- Os quinze defeitos ranqueados em `docs/audits/2026-10-31-kernel-core-audit.md` são a justificativa preferencial para refatorações de kernel; refatorar fora deles exige justificativa técnica escrita antes da mudança.
+- `docs/architecture/kernel-internals.md`, `memory-management.md`, `execution-model.md` e `device-driver-model.md` definem contratos-alvo. Se a implementação precisar divergir deles, atualize o documento no mesmo commit — não deixe o contrato descrever o que o código não faz.
+- Não mover `kernel/graphics/` nem implementar KGA/KGX/KGL/KVK/KGR/KWM sob a justificativa de "completar o kernel"; essas áreas estão fora do roadmap do kernel.
+
 ## 7. Fluxo obrigatório para cada tarefa
 
 1. **Entender:** descreva o comportamento atual, o contrato e os chamadores.
@@ -272,6 +282,8 @@ A plataforma deve manter três ambientes separados:
 - **Linux Compatibility:** executar binários Linux x86-64 originais, começando por ELF64 e evoluindo syscall ABI, processos, memória, sinais, threads, TLS e linking dinâmico.
 - **Windows Compatibility:** executar binários Windows x86-64 originais, começando por PE32+ e evoluindo Win64 ABI, loader, NT/Win32 APIs, DLLs, TLS e unwind/exceptions.
 
+Compatibilidade gráfica (KGL para OpenGL, KVK para Vulkan) segue a mesma regra: são camadas não privilegiadas em user space sobre um núcleo interno compartilhado (KGX), nunca o kernel contendo ABIs estrangeiras. Nenhuma versão de OpenGL, Vulkan ou API de sistema pode ser anunciada sem matriz de conformidade publicada e tabela de desvios. Ver `docs/architecture/graphics-compatibility.md` e ADR-0008/0009.
+
 ELF e PE são formatos, não compatibilidade completa de sistema operacional. Nunca declare suporte amplo por apenas carregar um arquivo. Mantenha as ABIs de compatibilidade isoladas da ABI nativa do kernel; processos compatíveis continuam sob isolamento e enforcement de capabilities do Kynox. Toda expansão exige matriz de suporte, testes de conformidade, fuzzing e critérios objetivos.
 
 
@@ -288,4 +300,43 @@ When a task changes implementation maturity:
 6. Keep README's summary consistent with the detailed status inventory.
 7. If a source comment or module overview contradicts the active call path, verify the callers and correct the stale documentation in the same task.
 
+Planning documents (`docs/strategy/market-landscape.md`, `docs/architecture/*.md`, `docs/roadmap/PRODUCT_ROADMAP.md`) and the ADRs marked "accepted for planning" describe intended architecture. They are **not** evidence: never cite them as proof that a subsystem exists, and never raise a percentage because a document was written. When a document and the tree disagree, the tree wins and the document is corrected.
+
 Percentages are engineering maturity estimates, not percent of total OS completion. Do not invent one overall OS percentage by averaging unrelated subsystems. Linux and Windows compatibility must remain at 0% until actual executable loading and ABI behavior are implemented and tested.
+
+## 12. Identidade, geração e versionamento
+
+Regras obrigatórias para qualquer alteração que toque versão, nome do produto, tags ou releases.
+
+### 12.1 Fontes únicas
+
+| Informação | Fonte única | Consumidores |
+|---|---|---|
+| Versão técnica do sistema | arquivo `VERSION` (raiz), SemVer 2.0.0 | `version.zig`, que a embute em tempo de compilação |
+| Nome da geração/era | tabela `generations` em `version.zig` | kernel, bootloader, SDK, ferramentas |
+| Espelho da versão para o gerenciador de pacotes | `build.zig.zon` (`.version`) | build |
+| Revisão da ABI nativa | `shared/syscall_abi.zig` | kernel, SDK, `abi_conformance.zig` |
+| Versões de formato | cabeçalho de cada formato (handoff, KEX, KPK, KNV) | leitor e escritor de cada formato |
+
+1. Nunca escreva a versão, a tag (`v…`) ou o nome da geração como literal em kernel, bootloader, SDK ou ferramentas. Um teste inspeciona esses arquivos e falha se encontrar o literal.
+2. Altere `VERSION` e o espelho em `build.zig.zon` no mesmo commit; `version-tests` falha se divergirem.
+3. O nome público é **resolvido** a partir do major (`Kynox [Geração] [VERSÃO]`), nunca digitado.
+4. Um major sem nome oficial é erro (`error.UnnamedGeneration`), não um nome inventado. Adicionar geração exige decisão registrada (ADR), edição de `version.zig` **e** de `docs/roadmap/ERAS.md` no mesmo commit.
+
+### 12.2 Semantic Versioning
+
+- `MAJOR`: quebra de compatibilidade na linha estável; abre uma nova era.
+- `MINOR`: funcionalidade compatível. `PATCH`: correção compatível. `PRERELEASE`: ciclos `alpha.N`/`beta.N`/`rc.N`.
+- Versões `0.x` podem quebrar compatibilidade, conforme o SemVer pré-1.0.
+- Major **não** significa "objetivos técnicos concluídos", e concluir objetivos **não** sobe o major.
+
+### 12.3 Linhas de versão que não se confundem
+
+Versão do sistema, identidade da geração, revisão da ABI, versão de formato binário e versão de protocolo interno são independentes. Nunca grave a versão do sistema em estrutura de wire, formato persistente ou contrato de ABI.
+
+### 12.4 Tags e releases
+
+- Tag = `v` + `VERSION` (`v0.1.0-alpha.1`), anotada: `git tag -a v0.1.0-alpha.1 -m "Kynox v0.1.0-alpha.1"`.
+- O nome público da release é gerado pelo mapa oficial (`Kynox One 0.1.0-alpha.1`).
+- Criar, mover ou publicar tag exige autorização explícita do mantenedor. Nunca reescreva tag publicada.
+- Não avance a versão por calendário, contagem de commits ou conclusão de tarefas.
