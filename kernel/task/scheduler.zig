@@ -34,6 +34,7 @@ const paging = @import("../arch/x86_64/paging.zig");
 const segment = @import("../arch/x86_64/segment.zig");
 const smp = @import("../arch/x86_64/smp.zig");
 const channel = @import("../ipc/channel.zig");
+const process = @import("process.zig");
 
 /// The context of a task.
 pub const Context = context.Context;
@@ -413,8 +414,7 @@ pub const Scheduler = struct {
                 // the ready queue and choose the next task.
                 current.state = .ready;
                 // K3.12.2 fix: enqueue the ready task; previously missing.
-                const scheduler_inst = @import("task/scheduler.zig").scheduler;
-                scheduler_inst.enqueueReady(current, smp.cpuId());
+                scheduler.enqueueReady(current, smp.cpuId());
             }
         }
 
@@ -580,8 +580,7 @@ pub const Scheduler = struct {
         if (value.state == .terminated) return;
         value.state = .ready;
         // K3.12.2 fix: enqueue the ready task; previously missing.
-        const scheduler_inst = @import("task/scheduler.zig").scheduler;
-        scheduler_inst.enqueueReady(value, smp.cpuId());
+        scheduler.enqueueReady(value, smp.cpuId());
     }
 
     /// Blocks the current task waiting for an input event.

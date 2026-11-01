@@ -16,7 +16,7 @@ pub const ProcessHandle = extern struct {
 };
 
 /// Process lifecycle state.
-pub const ProcessState = enum {
+pub const ProcessLifecycleState = enum(u8) {
     not_started,
     initializing,
     running,
@@ -37,8 +37,8 @@ pub const Process = extern struct {
     handle: ProcessHandle = .{ .pid = 0, .generation = 0 },
     /// Parent process reference (weak; cleaned on reap).
     parent: ?*Process = null,
-    /// Process state.
-    state: ProcessState = .not_started,
+    /// Process state (stored as u8 for extern struct compatibility).
+    state: ProcessLifecycleState = .not_started,
     /// Address space — owned by process; destroyed on reap.
     space: ?*paging.AddressSpace = null,
     /// Exit code (set at exit; read by reap).
@@ -87,17 +87,17 @@ pub fn reapProcess(p: *Process, handle: ProcessHandle) bool {
 
 /// Verify handle matches process (generation check — no ABA reuse).
 pub fn verifyHandle(proc: *Process, handle: ProcessHandle) bool {
+    return proc.pid == handle.pid and proc.generation == handle.generation;
+}
+
+/// Creates a new process with fresh pid/generation.
 /// Returns the process pointer; caller must initialize space/threads.
 pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
     // In full implementation: allocate from pool; here scaffold.
     // For regression testing, return a static buffer or null if invalid.
+    _ = space; // stub: full space assignment deferred to K4.1 integration.
     if (pid == 0) return null; // kernel process; user must have non-zero
     // Stub: no dynamic allocation in kernel yet (per AGENTS.md 4.2 — avoid dynamic allocation in critical paths).
     // The process object is meant to be embedded in a pool or static array.
     return null; // deferred to full allocation mechanism
-}
-
-/// Verify handle matches process (generation check — no ABA reuse).
-pub fn verifyHandle(proc: *Process, handle: ProcessHandle) bool {
-    return proc.pid == handle.pid and proc.generation == handle.generation;
 }
