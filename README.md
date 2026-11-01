@@ -33,7 +33,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Virtual memory and address spaces | **50%** | User mappings and isolation foundations; unmap returns the frames the space owns and an address space is destroyed and its slot reused (generation-checked); advanced VM remains |
 | ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPIC redirection entries are programmed **masked** and delivery still comes from the 8259; PCI/APIC access paths exist |
 | SMP | **30%** | CPU table and a gated AP startup path exist; **no AP has ever run** and per-CPU scheduling is incomplete |
-| Scheduler and task switching | **55%** | Preemptive task switching exists; SMP scheduling remains |
+| Scheduler and task switching | **60%** | EEVDF ready queue with timer-driven preemption, now covered by 12 host tests that found three preemption defects (a switch on every tick, a quantum that was never refilled, a preempted task left `ready` with no successor); SMP scheduling and a lock remain |
 | User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI revision 1 is contract-checked; the ABI is still small and never ran in a VM here |
 | IPC and capabilities | **60%** | Core mechanisms and a real object lifecycle (destroy, destroySubject, releaseProcess); broader service model remains |
 | ELF64 and KEX native executables | **55–60%** | Native ELF loading and KEX container exist; dynamic linking remains |
@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**736 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (**748 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (736) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (748) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 49/49 steps, **736/736 tests passed** (fresh cache; the architecture artifact was absent from the suite before this run) |
+| `zig build test` | success — 51/51 steps, **748/748 tests passed** (fresh cache; the suite grew from 736 when `scheduler-tests` was added) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

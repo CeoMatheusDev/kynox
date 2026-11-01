@@ -15,8 +15,8 @@
 |---|---|
 | Task | `kernel/task/scheduler.zig`: 32 static slots, a state enum, a context pointer, a priority and a tick budget |
 | Context switch | `arch/x86_64/task.s`: saves callee-saved GPRs and `rsp`; **does not save FPU/SSE state** (comment confirms) |
-| Scheduler | round-robin over a ready ring with a simple priority preemption check; **no lock**; `0` tests; not importable in the host test root |
-| Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path |
+| Scheduler | EEVDF over the tasks of a CPU: a virtual runtime, a deadline and a weight per task, and a quantum drawn from the slice; **no lock, no idle task**; **12 host tests** over the policy (`kernel/task_root.zig`), none over the switch itself |
+| Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path, at the end of the quantum of the running task, or as soon as the task blocks. A tick with slice left only moves the clock |
 | Threads | a task *is* a thread; no thread group |
 | Processes | no process object. Scheduling slots are used directly as "processes"; `fs` indexes by a process id that must be smaller than `max_processes = 8` |
 | Lifecycle | `create`, `start`, `terminateCurrent`; **no join, no wait, no reap, no exit code**; `terminateCurrent` never frees the slot, so a boot that cycles 32 tasks is out of slots |
@@ -25,8 +25,11 @@
 | SMP | `current[]` is per-CPU in shape but the CPU struct's `current_task` is never written; a single global TSS means ring 3 on an AP is impossible |
 
 The audit's summary applies: the scheduler is a correct *mechanism* for the
-single-CPU demonstration and an incorrect *system* for anything else. It has no
-tests, which is why the roadmap makes the policy testable before it is extended.
+single-CPU demonstration and an incorrect *system* for anything else. Its policy
+is now covered by 12 host tests (`audits/2026-11-01-scheduler-tests.md`), and
+writing them closed three preemption defects; the lock, the idle task and the
+SMP stress test are still missing, which is why the roadmap keeps the policy
+testable before it is extended.
 
 ## 2. Objects
 

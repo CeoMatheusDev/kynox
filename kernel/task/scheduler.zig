@@ -396,7 +396,6 @@ pub const Scheduler = struct {
     fn prepareNext(self: *Scheduler) bool {
         const current = self.current[smp.cpuId()] orelse return false;
 
-
         // Decrement the quantum of the current task, and preempt it if it
         // has expired. A quantum of zero means the task is not subject to
         // time-slicing.
@@ -407,6 +406,15 @@ pub const Scheduler = struct {
         // in the same tick would turn the blocked task ready again and it
         // would resume with the neutral result of the call before the event
         // or the message arrives.
+        //
+        // A task that is still running and has a quantum left keeps the
+        // processor: the tick only moves the clock. Switching on every tick
+        // would turn the quantum into a decoration and would give the
+        // processor to the task with the smallest virtual runtime on every
+        // interruption, whatever the slice of the task that was running.
+        var must_switch = current.state != .running;
+        var preempted = false;
+
         if (context.quantumPreempts(current.state == .running, current.quantum)) {
             current.quantum -= 1;
             if (current.quantum == 0) {
@@ -415,10 +423,24 @@ pub const Scheduler = struct {
                 current.state = .ready;
                 // K3.12.2 fix: enqueue the ready task; previously missing.
                 scheduler.enqueueReady(current, smp.cpuId());
+                must_switch = true;
+                preempted = true;
             }
         }
 
-        const next = self.findNextReady(current) orelse return false;
+        if (!must_switch) return false;
+
+        const next = self.findNextReady(current) orelse {
+            // A task that exhausted its quantum and has nobody to hand the
+            // processor to keeps it, with a new quantum: it is still the only
+            // task that can run, and leaving it ready would be a task that no
+            // tick ever chooses again.
+            if (preempted) {
+                current.state = .running;
+                current.quantum = current.slice;
+            }
+            return false;
+        };
 
         // The task that leaves becomes ready to be chosen again, and
         // **does not** become ready again when it is blocked: a task that
@@ -448,6 +470,12 @@ pub const Scheduler = struct {
         next.state = .running;
         self.current[smp.cpuId()] = next;
         next.schedules += 1;
+
+        // The entering task gets the quantum of its slice. Without the
+        // refill the task would keep the zero that the last slice left
+        // behind, and `quantumPreempts` would stop preempting it for good:
+        // a task would be time-sliced exactly once in its whole life.
+        next.quantum = next.slice;
 
         // EEVDF: avanca vruntime pela fatia/weight (1024 = peso unitario).
         if (next.weight != 0) {
@@ -782,3 +810,324 @@ pub fn preempt_enable() void {
 
 /// Per-CPU preemption counter (max 255 nesting depth).
 var preempt_counter: [256]u8 = @splat(0);
+
+// ---------------------------------------------------------------------------
+// The tests of the policy
+// ---------------------------------------------------------------------------
+//
+// The mechanism (the switch, the TSS, the CR3 load) is assembly and cannot run
+// on the host. The policy can: the ready queue, the choice of the next task, the
+// admission of a new task and the accounting. Those are the parts that were
+// written without a single test until 2026-11-01, which is defect 1 of the
+// audit: "the scheduler has no synchronisation and no tests".
+//
+// What these tests do not prove: that a switch works, that the scheduler is safe
+// under SMP, or that the canary check runs. They prove the decisions.
+
+const testing = std.testing;
+
+/// Clears the scheduler state so that each test starts from zero.
+fn resetSchedulerForTest() void {
+    scheduler.storage = @splat(.{});
+    scheduler.tasks = @splat(null);
+    scheduler.count = 0;
+    scheduler.current = @splat(null);
+    scheduler.ready_queue = @splat(@splat(null));
+    scheduler.ready_count = @splat(0);
+    scheduler.next_id = 0;
+    scheduler.statistics = .{};
+}
+
+/// A task that the tests put in the list of the scheduler.
+fn taskForTest(vruntime: i64, state: State) *Task {
+    const task = &scheduler.storage[scheduler.count];
+    task.* = .{ .id = scheduler.next_id, .state = state, .quantum = 16, .vruntime = vruntime };
+    scheduler.tasks[scheduler.count] = task;
+    scheduler.count += 1;
+    scheduler.next_id += 1;
+    return task;
+}
+
+test "the ready queue is a fifo, and it accepts the whole pool" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var tasks: [3]*Task = undefined;
+    for (&tasks, 0..) |*slot, index| {
+        slot.* = taskForTest(@intCast(index), .ready);
+        scheduler.enqueueReady(slot.*, 0);
+    }
+
+    try testing.expectEqual(@as(u32, 3), scheduler.readyCount(0));
+
+    // The first task that entered leaves first.
+    try testing.expectEqual(tasks[0], scheduler.dequeueReady(0).?);
+    try testing.expectEqual(tasks[1], scheduler.dequeueReady(0).?);
+    try testing.expectEqual(tasks[2], scheduler.dequeueReady(0).?);
+
+    // An empty queue answers null instead of an old entry.
+    try testing.expect(scheduler.dequeueReady(0) == null);
+    try testing.expectEqual(@as(u32, 0), scheduler.readyCount(0));
+
+    // A CPU that does not exist cannot be addressed.
+    try testing.expect(scheduler.dequeueReady(smp.max_cpus) == null);
+    scheduler.enqueueReady(tasks[0], smp.max_cpus);
+    try testing.expectEqual(@as(u32, 0), scheduler.readyCount(0));
+}
+
+test "a full queue drops the newcomer and keeps the tasks it has" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var index: usize = 0;
+    while (index < max_tasks) : (index += 1) {
+        const task = taskForTest(@intCast(index), .ready);
+        scheduler.enqueueReady(task, 0);
+    }
+    try testing.expectEqual(@as(u32, max_tasks), scheduler.readyCount(0));
+
+    // The pool of the tasks is exhausted first, so the extra task is a task of
+    // the storage that is not in the list; the queue is full and refuses it.
+    const extra = &scheduler.storage[0];
+    scheduler.enqueueReady(extra, 0);
+    try testing.expectEqual(@as(u32, max_tasks), scheduler.readyCount(0));
+
+    // Every queued task survives, in order: the refusal may not corrupt the
+    // queue that is full.
+    index = 0;
+    while (index < max_tasks) : (index += 1) {
+        const task = scheduler.dequeueReady(0).?;
+        try testing.expectEqual(@as(u32, @intCast(index)), task.id);
+    }
+}
+
+test "the next task is the ready one with the smallest virtual runtime" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const current = taskForTest(10, .running);
+    scheduler.current[0] = current;
+
+    const late = taskForTest(50, .ready);
+    const early = taskForTest(5, .ready);
+    const middle = taskForTest(20, .ready);
+
+    // The choice is the minimum, not the creation order.
+    try testing.expectEqual(early, scheduler.findNextReady(current).?);
+
+    // A task that is running elsewhere, blocked or terminated is not a
+    // candidate, even with the smallest runtime.
+    early.state = .blocked;
+    try testing.expectEqual(middle, scheduler.findNextReady(current).?);
+    middle.state = .terminated;
+    try testing.expectEqual(late, scheduler.findNextReady(current).?);
+
+    // With no ready task the function answers null instead of the current task:
+    // the caller decides what to do when nothing can run.
+    late.state = .ready;
+    late.state = .blocked;
+    try testing.expect(scheduler.findNextReady(current) == null);
+}
+
+test "a thread of a process that is leaving is not scheduled" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const current = taskForTest(0, .running);
+    scheduler.current[0] = current;
+
+    var leaving_process: process.Process = .{};
+    leaving_process.state = .exiting;
+
+    const orphan = taskForTest(1, .ready);
+    orphan.process_ref = &leaving_process;
+    const healthy = taskForTest(9, .ready);
+
+    // The orphan has the smallest runtime and is still not chosen: scheduling
+    // it would run code of a process that is being destroyed.
+    try testing.expectEqual(healthy, scheduler.findNextReady(current).?);
+
+    // Once the process is running again, the ordinary rule applies.
+    leaving_process.state = .running;
+    try testing.expectEqual(orphan, scheduler.findNextReady(current).?);
+}
+
+test "spawning refuses a stack that cannot hold a frame" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var small_stack: [128]u8 = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    // A stack below 256 bytes cannot hold the frame of the entry function.
+    try testing.expect(scheduler.spawn(noopEntry, small_stack[0..], kernel_stack[0..], 0) == null);
+    try testing.expectEqual(@as(u32, 0), scheduler.count);
+
+    // The kernel stack has the same requirement.
+    var task_stack: [1024]u8 align(16) = undefined;
+    try testing.expect(scheduler.spawn(noopEntry, task_stack[0..], small_stack[0..], 0) == null);
+    try testing.expectEqual(@as(u32, 0), scheduler.count);
+}
+
+test "a new task starts at the smallest runtime of the ready tasks" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const slow = taskForTest(80, .ready);
+    const fast = taskForTest(20, .ready);
+    _ = slow;
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const task = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 7).?;
+
+    // The newcomer inherits the minimum so that it is not postponed behind
+    // tasks that accumulated runtime before it existed.
+    try testing.expectEqual(fast.vruntime, task.vruntime);
+
+    // The deadline is the slice scaled by the weight: 10 ticks at the unit
+    // weight (1024) is ten ticks of virtual runtime.
+    try testing.expectEqual(@as(i64, 10), task.deadline - task.vruntime);
+
+    // The priority is the one the caller asked for, and the task starts ready
+    // with the initial context of a kernel task.
+    try testing.expectEqual(@as(u8, 7), task.priority);
+    try testing.expectEqual(State.ready, task.state);
+    try testing.expectEqual(kernel_code_selector, task.context.cs);
+    try testing.expectEqual(kernel_data_selector, task.context.ss);
+    try testing.expect(task.context.rsp % 16 == 8);
+}
+
+test "a heavier task earns virtual runtime more slowly when it runs" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    // Each task needs its own kernel stack: the canary of a task lives at the
+    // base of that stack, and two tasks that shared one would overwrite each
+    // other's canary and be killed on the next switch.
+    var light_stack: [1024]u8 align(16) = undefined;
+    var heavy_stack: [1024]u8 align(16) = undefined;
+    var task_stack: [1024]u8 align(16) = undefined;
+
+    const light = scheduler.spawn(noopEntry, task_stack[0..], light_stack[0..], 0).?;
+    const heavy = scheduler.spawn(noopEntry, task_stack[0..], heavy_stack[0..], 0).?;
+    heavy.weight = 2048;
+    light.quantum = 1;
+    light.state = .running;
+    scheduler.current[0] = light;
+
+    // The light task leaves when its quantum expires and the heavy one enters:
+    // a slice of ten ticks at double weight is five ticks of virtual runtime.
+    try testing.expect(scheduler.tick(0));
+    try testing.expectEqual(heavy, scheduler.current[0].?);
+    try testing.expectEqual(@as(i64, 5), heavy.vruntime);
+
+    // The same slice at the unit weight is ten ticks.
+    heavy.quantum = 1;
+    try testing.expect(scheduler.tick(0));
+    try testing.expectEqual(light, scheduler.current[0].?);
+    try testing.expectEqual(@as(i64, 10), light.vruntime);
+}
+
+test "the task pool refuses the task after the last one" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stacks: [max_tasks][1024]u8 align(16) = undefined;
+
+    var created: u32 = 0;
+    while (created < max_tasks) : (created += 1) {
+        const kernel_stack = kernel_stacks[created][0..];
+        try testing.expect(scheduler.spawn(noopEntry, stack[0..], kernel_stack, 0) != null);
+    }
+    try testing.expectEqual(@as(u32, max_tasks), scheduler.count);
+
+    // The pool is a hard limit and it is reported, not hidden behind a task
+    // that never runs.
+    try testing.expect(scheduler.spawn(noopEntry, stack[0..], kernel_stacks[0][0..], 0) == null);
+    try testing.expectEqual(@as(u32, max_tasks), scheduler.count);
+}
+
+test "a tick moves the clock and lets a task with an expired quantum leave" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_kernel_stack: [1024]u8 align(16) = undefined;
+    var second_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const first = scheduler.spawn(noopEntry, stack[0..], first_kernel_stack[0..], 0).?;
+    const second = scheduler.spawn(noopEntry, stack[0..], second_kernel_stack[0..], 0).?;
+    first.state = .running;
+    second.state = .ready;
+    scheduler.current[0] = first;
+    first.quantum = 2;
+
+    // The first tick spends one tick of the quantum: the task keeps running and
+    // the scheduler does not switch.
+    try testing.expect(scheduler.tick(0) == false);
+    try testing.expectEqual(@as(u64, 1), scheduler.statistics.ticks);
+    try testing.expectEqual(@as(u16, 1), first.quantum);
+    try testing.expectEqual(first, scheduler.current[0].?);
+
+    // The second tick exhausts it: the current task goes back to the queue and
+    // the other one is chosen and charged with its slice.
+    try testing.expect(scheduler.tick(0) == true);
+    try testing.expectEqual(@as(u64, 2), scheduler.statistics.ticks);
+    try testing.expectEqual(second, scheduler.current[0].?);
+    try testing.expectEqual(State.ready, first.state);
+    try testing.expectEqual(State.running, second.state);
+    try testing.expectEqual(@as(u64, 1), second.schedules);
+    try testing.expect(second.vruntime > 0);
+}
+
+test "a task that blocked does not come back because its quantum expired" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var waiter_kernel_stack: [1024]u8 align(16) = undefined;
+    var other_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const waiter = scheduler.spawn(noopEntry, stack[0..], waiter_kernel_stack[0..], 0).?;
+    const other = scheduler.spawn(noopEntry, stack[0..], other_kernel_stack[0..], 0).?;
+    scheduler.current[0] = waiter;
+    waiter.state = .blocked;
+    waiter.quantum = 1;
+
+    // The tick must not turn a blocked task ready: it would resume with a
+    // result that never arrived. The switch happens; the state does not change.
+    _ = scheduler.tick(0);
+    try testing.expectEqual(State.blocked, waiter.state);
+    try testing.expectEqual(other, scheduler.current[0].?);
+}
+
+/// The entry of a task that does nothing: the tests never run it.
+fn noopEntry() void {}
+
+test "the only task keeps the processor when its quantum expires" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const only = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    only.state = .running;
+    only.quantum = 1;
+    scheduler.current[0] = only;
+
+    // The slice is spent and there is no other ready task: no switch happens,
+    // and the task keeps running with the quantum of its slice. Without the
+    // restoration the task would be left `ready` while it is the one on the
+    // processor, and no tick would ever choose it again.
+    try testing.expect(scheduler.tick(0) == false);
+    try testing.expectEqual(only, scheduler.current[0].?);
+    try testing.expectEqual(State.running, only.state);
+    try testing.expectEqual(only.slice, only.quantum);
+
+    // The tick still moves the clock.
+    try testing.expectEqual(@as(u64, 1), scheduler.statistics.ticks);
+}

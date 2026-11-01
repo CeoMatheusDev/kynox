@@ -630,6 +630,31 @@ pub fn build(b: *std.Build) void {
     });
     unit_test_step.dependOn(&b.addRunArtifact(ipc_tests).step);
 
+    // The scheduler of the tasks is tested on the host as well: the policy is
+    // the part that can be wrong without a processor noticing, and it had no
+    // tests at all (defect 1 of the audit of 2026-10-31). The root sits at the
+    // top of the kernel tree because the scheduler imports `arch/`, `ipc/` and
+    // `fs/`.
+    //
+    // The artifact keeps the filter of its own tests: the module of the
+    // scheduler imports the architecture modules, whose tests already run in
+    // `arch-tests`, and running them twice would inflate the count of the
+    // suite without testing anything new.
+    const scheduler_test_module = b.createModule(.{
+        .root_source_file = b.path("kernel/task_root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    scheduler_test_module.addImport("kynox_shared", shared);
+    // The architecture modules read the configuration at comptime.
+    scheduler_test_module.addOptions("kynox_config", kernel_options);
+    const scheduler_tests = b.addTest(.{
+        .name = "scheduler-tests",
+        .root_module = scheduler_test_module,
+        .filters = &.{"task.scheduler.test."},
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(scheduler_tests).step);
+
     // The RamFS and the ELF64 load planner are free of architecture
     // specific code. They share a root at the top of the kernel tree
     // because the loader imports the file system.

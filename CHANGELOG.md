@@ -21,13 +21,37 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — the scheduler policy is tested on the host
+
+- **`scheduler-tests`, 12 tests.** The scheduling policy of
+  `kernel/task/scheduler.zig` was executed by none of the 736 tests. The new
+  root `kernel/task_root.zig` (next to `host_root.zig`) defines the four
+  symbols that `arch/x86_64/task.s` provides for the real switch, so the policy
+  — the FIFO ready queue, the full-queue refusal, the EEVDF choice by virtual
+  runtime, the skip of blocked/terminated tasks and of threads of an
+  `exiting`/`reaped` process, the stack-size refusal, the inherited start, the
+  weight accounting, the pool limit, the tick and the blocked task — runs on
+  the host. The artifact runs with a test filter so the architecture tests it
+  imports are not counted twice.
+- **Three preemption defects closed, found by those tests.** A tick used to
+  switch to the next ready task whatever the quantum, so the slice decided
+  nothing; the entering task did not get a new quantum, so a task was
+  time-sliced exactly once in its life; and a preemption that found no other
+  ready task left the running task marked `ready` with a zero quantum. The
+  switch now happens at the end of the quantum (or as soon as the task
+  blocks), the quantum is refilled from the slice, and the fallback restores
+  the current task. Measured: **748 tests in 51/51 steps**
+  (`scheduler-tests` 12), with `zig build` writing the image and no runtime
+  evidence — no QEMU and no OVMF in this environment.
+
 ### Fixed (2026-11-01) — host-verified, not runtime-verified
 
 - **The host suite was not running the architecture tests.** `fpu.zig` used
   unnamed inline-assembly operands and `paging.zig` imported a file outside its
   module path, so `arch-tests` did not compile and paging, ACPI, SMP and PCI
   tests were missing from the suite that reported 716 tests. After the fix the
-  measured total is **736 tests in 49/49 steps** (`arch-tests` 144).
+  measured total was **736 tests in 49/49 steps** (`arch-tests` 144); the
+  scheduler tests of the same day take it to 748.
 - **Unmap now returns the frame it owns.** A software ownership bit
   (`paging.Flags.owned`) records the frames the space obtained from the manager;
   `takeOwnership` is applied when an image is fully materialised, and

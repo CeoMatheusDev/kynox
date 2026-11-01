@@ -20,7 +20,7 @@
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written (`zig-out/bin/kynox.img`, 128 MiB, 32 731 clusters) |
-| `zig build test --summary all` (fresh cache) | success — **49/49 steps, 736/736 tests**, 23 artifacts |
+| `zig build test --summary all` (fresh cache) | success — **51/51 steps, 748/748 tests**, 24 artifacts (736 at the end of this sweep; the scheduler tests of the same day added 12 — see [`2026-11-01-scheduler-tests.md`](2026-11-01-scheduler-tests.md)) |
 | `zig build docs-check` | success — every relative link resolves |
 
 The 736 tests are the sum of what the artifacts report, measured in this
@@ -73,7 +73,7 @@ now part of a test root — its ten helper tests had never been compiled.
 
 | # | Defect | Blocked on |
 |---|---|---|
-| 1 | Scheduler has no synchronisation and pretends to be per-CPU | K3; needs a lock and per-CPU ownership, which needs a runtime to validate |
+| 1 | Scheduler has no synchronisation and pretends to be per-CPU | K3; needs a lock and per-CPU ownership, which needs a runtime to validate. The **policy** half is closed and tested: [`2026-11-01-scheduler-tests.md`](2026-11-01-scheduler-tests.md) adds 12 host tests and fixes three preemption defects. The lock, the per-CPU ownership and the idle task remain |
 | 2 | Single global TSS with one `rsp0` | K0 step 3; a mistake in the fault path turns a `#GP` into a triple fault, and there is no way to observe it here |
 | 8 | FPU/SSE state not saved on the context switch | K3; `fpu.zig` has the instructions, but changing `task.s` without a boot to test it is a blind change to every context switch |
 | 9 | `main.zig` mixes bring-up, demo and self-test | K0 step 1–2 (phase table); the largest structural item of the roadmap |
