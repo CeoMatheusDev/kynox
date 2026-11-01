@@ -5,7 +5,7 @@
 const std = @import("std");
 const scheduler = @import("scheduler.zig");
 const context = @import("context.zig");
-const pmod = @import("../arch/x86_64/paging.zig");
+const paging = @import("../arch/x86_64/paging.zig");
 
 pub const ProcessId = u32;
 
@@ -105,11 +105,11 @@ pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
 
 /// K4.9 reap: calls paging destruction and revokes capabilities (stub for full revocation).
 pub fn reapFull(p: *Process, handle: ProcessHandle) bool {
-    const pmod = @import("../arch/x86_64/paging.zig");
+    const pag = @import("../arch/x86_64/paging.zig");
     if (p.space) |space| {
-        pmod.destroyAddressSpaceReal(space);
+        pag.destroyAddressSpaceReal(space);
     } else {
-        pmod.destroyAddressSpace();
+        pag.destroyAddressSpace();
     }
     const security = @import("../ai/security.zig");
     security.revokeCapabilities();
