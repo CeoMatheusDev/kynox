@@ -38,7 +38,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | IPC and capabilities | **60%** | Core mechanisms and a real object lifecycle (destroy, destroySubject, releaseProcess); broader service model remains |
 | ELF64 and KEX native executables | **55–60%** | Native ELF loading and KEX container exist; dynamic linking remains |
 | Native SDK and runtime | **40%** | Initial SDK and sample apps exist; public runtime is incomplete |
-| RamFS, KFSX and KNV | **35–60%** | In-memory FS, mount namespace and volume codec exist; VFS/power-loss guarantees remain |
+| RamFS, KFSX and KNV | **43–60%** | In-memory FS, mount namespace and volume codec exist; the VFS now exposes a **directory listing in chunks** (cookie plus a namespace generation, so a stale cookie is refused instead of resumed onto a reused slot); permissions and a second backend remain |
 | VirtIO Block / KVDI | **65%** | Real synchronous block I/O and QEMU persistence probe exist; async I/O remains |
 | Networking | **10%** | Header types and a transmit path that fails explicitly; no device, queues or stack |
 | Graphics and compositor | **60%** | Rasterization, windows and composition exist; full desktop remains |
@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**881 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green), and its QEMU job fails at the dependency install, so no boot suite has ever run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (**889 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green), and its QEMU job fails at the dependency install, so no boot suite has ever run |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (881) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (889) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 52/52 steps, **881/881 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator) |
+| `zig build test` | success — 52/52 steps, **889/889 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator → 889 with the directory listing) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

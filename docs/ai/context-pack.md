@@ -23,12 +23,12 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **52/52 steps, 881/881 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 889/889 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 212 · shared 64 · task 72 · kernel
+Per artifact: kvdi 173 · fs-loader 162 · arch 212 · shared 64 · task 72 · kernel
 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
@@ -52,7 +52,7 @@ operating system.
 | IPC and capabilities | 60 | channels and a real capability lifecycle |
 | ELF64 and KEX | 55–60 | native loading; no dynamic linking |
 | Native SDK | 40 | initial contracts and samples |
-| RamFS, KFSX, KNV | 35–60 | in-memory FS, mount namespace, volume codec |
+| RamFS, KFSX, KNV | 43–60 | in-memory FS, mount namespace, volume codec, `readdir` in chunks with a namespace generation |
 | VirtIO Block / KVDI | 65 | real synchronous block I/O |
 | Networking | 10 | types and an explicit refusal |
 | Graphics and compositor | 60 | raster, windows, composition |

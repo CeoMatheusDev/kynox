@@ -21,6 +21,35 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — o VFS aprende a listar um diretório
+
+- **A operação que faltava**: o RamFS sabia listar e o VFS não expunha nada
+  disso. `fs.readdir(path, cookie, generation, out)` lista em pedaços, sem
+  alocar, atravessando o namespace (um volume montado é listado pelo próprio
+  diretório).
+- **A listagem pode ser invalidada no meio.** A tabela de entradas do RamFS é uma
+  só, com 64 posições, e uma posição liberada é reutilizada pela próxima entrada
+  criada. Um cookie que guardasse só o índice descreveria outra coisa na segunda
+  chamada — o chamador pularia um nome, ou receberia dois nomes para a mesma
+  posição, sem nenhum erro. O RamFS ganhou uma **geração por volume**, avançada
+  em toda mutação de namespace e por nenhuma operação que falhou, e um cookie de
+  outra geração é recusado com `DirectoryChanged` em vez de continuado.
+- **Recusas explícitas**: `NotADirectory`, `EntryNotFound`, `BufferTooSmall`
+  (um buffer que não cabe uma entrada não pode devolver o mesmo cookie: seria um
+  laço infinito disfarçado de sucesso).
+- **O que a listagem não promete**: ordem alfabética, `.` e `..` sintéticos, nem
+  estabilidade dos nomes depois de uma mutação.
+- **Um defeito encontrado pelos testes**: a primeira versão copiava a entrada
+  para uma variável local antes de fatiar o nome, e a fatia apontava para a
+  pilha da função — os nomes saíam errados. A correção é usar o ponteiro para a
+  entrada do estado, como `listDirFor` já fazia.
+- **O boot lista `/`** com a mesma API, em pedaços de quatro, e imprime o que a
+  listagem devolveu.
+- **Oito testes de host** (889 no total, `fs-loader` 162).
+- Documentação: `docs/audits/2026-11-01-vfs-readdir.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`kfsx_vfs` 35% → 43%, `ramfs` 55% → 57%),
+  `README.md`, `docs/ai/context-pack.md` e o item 1 do K10 no roadmap.
+
 ### Added (2026-11-01) — o vetor vem do kernel, não do driver
 
 - **O buraco**: a faixa 68..254 tinha dono, mas o dono precisava **escolher** o
