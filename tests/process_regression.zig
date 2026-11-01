@@ -36,6 +36,20 @@ test "Process state machine allows valid transitions" {
     try std.testing.expect(p.state == .reaped);
 }
 
+test "K4.2 lifecycle stubs: init -> publish -> exit -> reap" {
+    var p: process.Process = .{ .pid = 3, .state = .not_started };
+    process.initializeProcess(&p, null); // space null for stub
+    try std.testing.expect(p.state == .initializing);
+    process.publishProcess(&p);
+    try std.testing.expect(p.state == .running);
+    process.exitProcess(&p, 42);
+    try std.testing.expect(p.state == .exiting);
+    p.state = .exited; // simulate all threads finished
+    try std.testing.expect(process.reapProcess(&p, .{ .pid = 3, .generation = 0 }));
+    try std.testing.expect(p.state == .reaped);
+    try std.testing.expect(p.generation == 1); // incremented on reap
+}
+
 test "Process create rejects zero pid" {
     // User processes must have non-zero pid (kernel uses 0).
     const result = process.createProcess(0, null);

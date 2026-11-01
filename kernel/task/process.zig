@@ -53,7 +53,40 @@ pub const Process = extern struct {
     schedules: u64 = 0,
 };
 
-/// Creates a new process with fresh pid/generation.
+/// K4.2: Lifecycle stubs — create/init/publish/exit/reap.
+/// Full reap requires K4.9 (wait/reap integration) and scheduler fix.
+
+/// Initialize a process from created state to initializing.
+pub fn initializeProcess(p: *Process, space: *paging.AddressSpace) void {
+    p.space = space;
+    p.state = .initializing;
+}
+
+/// Publish process to running state (after initial thread created).
+pub fn publishProcess(p: *Process) void {
+    p.state = .running;
+}
+
+/// Request process exit — transitions to .exiting.
+pub fn exitProcess(p: *Process, code: u16) void {
+    p.exit_code = code;
+    p.state = .exiting;
+}
+
+/// Reap process — verifies state .exited, releases generation (stub).
+/// Full reap releases AddressSpace and capabilities (deferred to K4.9).
+pub fn reapProcess(p: *Process, handle: ProcessHandle) bool {
+    if (p.state != .exited) return false;
+    if (!verifyHandle(p, handle)) return false;
+    p.generation += 1; // generation incremented on reap to prevent stale handle reuse
+    p.handle.generation = p.generation;
+    p.state = .reaped;
+    // AddressSpace and capabilities release deferred to full reap (K4.9).
+    return true;
+}
+
+/// Verify handle matches process (generation check — no ABA reuse).
+pub fn verifyHandle(proc: *Process, handle: ProcessHandle) bool {
 /// Returns the process pointer; caller must initialize space/threads.
 pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
     // In full implementation: allocate from pool; here scaffold.
