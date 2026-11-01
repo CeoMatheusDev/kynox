@@ -2710,6 +2710,12 @@ fn installSmp() void {
     apic.map(lapic_base);
     apic.enable();
 
+    // Quem invalida uma traducao nas outras CPUs. O gancho e instalado depois
+    // do APIC local porque e ele quem entrega o aviso; antes disso uma maquina
+    // com um processador nao tem para quem pedir, e a tabela de paginas faz a
+    // invalidacao local sozinha.
+    paging.installRemoteFlush(&smp.flushRemotePage);
+
     // Configura o timer local da APIC para o BSP (100 Hz, mesmo do PIT).
     timer.initApicTimer(timer_frequency);
 
@@ -5130,6 +5136,15 @@ fn reportScheduler() void {
         statistics.reschedules,
         statistics.wake_reschedules,
         smp.rescheduleRequests(),
+    });
+    // The TLB path: how many pages left the tables while another processor was
+    // online, how many announcements a processor served, and how many
+    // shootdowns were abandoned for lack of an answer. The last number is a
+    // lost guarantee, not a counter of noise.
+    serial.printLine("[KNK] tlb: {d} shootdowns, {d} flushes served, {d} timeouts", .{
+        smp.shootdownsSent(),
+        smp.shootdownsServed(),
+        smp.shootdownTimeouts(),
     });
     serial.printLine("[KNK] tasks: {d} ready, {d} blocked, {d} ticks, {d} switches", .{
         statistics.ready,

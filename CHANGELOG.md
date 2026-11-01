@@ -21,6 +21,41 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — a TLB shootdown, so a page that leaves the tables leaves every TLB
+
+- **O vetor e o aviso**: `apic.shootdown_vector` (66) e `apic.sendShootdown`, com
+  stub em `interrupt.s`, porta no IDT e um handler que encerra a interrupcao e
+  responde.
+- **A caixa de correio** (`kernel/arch/x86_64/tlb.zig`): a IPI carrega um vetor e
+  nao um endereco, entao a pagina viaja por memoria. Cada pedido tem uma geracao:
+  um aviso reentregue e `duplicate`, um reconhecimento atrasado e `stale`, e o
+  desconto e um compare-and-swap que nunca deixa a contagem de respostas passar
+  por baixo de zero — sem isso um unico atraso transformaria o pendente em
+  4 294 967 295 e o pedido seguinte nunca fecharia.
+- **`smp.shootdown`** recusa com motivo (`no_targets`, `no_apic`), devolve
+  `.complete` quando todos responderam e `.timeout` quando alguem nao respondeu,
+  contando o tempo perdido em vez de esconde-lo. O handler roda no processador
+  que tem a traducao velha, invalida (`invlpg`, ou CR3 recarregado para o escopo
+  `all`) e so entao reconhece.
+- **O gancho das tabelas de pagina**: `paging.installRemoteFlush` instala
+  `smp.flushRemotePage` no boot, e as tres saidas de pagina (`unmapKernelPage` e
+  os dois caminhos de `unmapUserPageIn`) chamam o gancho depois do `invlpg`
+  local. O `paging.zig` continua sem importar o APIC, e os testes das tabelas
+  rodam sem controlador.
+- **`cpu.flushTlb`** e `kynox_flush_tlb` em `cpu.s`: a unica forma de esvaziar o
+  TLB inteiro e recarregar o registrador da base das tabelas.
+- **Nove testes de host** (837 no total, `arch-tests` 168): cinco em `tlb.zig`
+  (o pedido que so termina com todas as respostas, o aviso repetido, o pedido
+  abandonado e o atrasado, a geracao nova contra o reconhecimento velho, a caixa
+  vazia) e quatro em `smp.zig` (a maquina com um processador, a recusa sem
+  controlador, o aviso espuro e o handler que invalida e reconhece uma vez).
+- **Linha de boot**: `[KNK] tlb: N shootdowns, N flushes served, N timeouts`.
+- Documentacao: `docs/audits/2026-11-01-tlb-shootdown.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 60% → 68%, `virtual_memory` 50% → 56%,
+  `kernel_cpu_interrupts` 66% → 70%), `README.md`,
+  `docs/architecture/memory-management.md` (o invariante M4),
+  `docs/ai/context-pack.md` e a anotacao do item 6 do K2 no roadmap.
+
 ### Fixed (2026-11-01) — the version of the image builder goes to stdout
 
 - `kynox-fsimg --version` printed the banner with `std.debug.print`, which

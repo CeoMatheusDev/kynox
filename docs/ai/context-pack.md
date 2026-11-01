@@ -23,12 +23,12 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **52/52 steps, 828/828 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 837/837 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 159 · shared 64 · task 72 · kernel
+Per artifact: kvdi 173 · fs-loader 154 · arch 168 · shared 64 · task 72 · kernel
 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
@@ -44,9 +44,9 @@ operating system.
 | UEFI bootloader and handoff | 70 | core path implemented, firmware coverage thin |
 | Kernel CPU, exceptions, interrupts | 66 | registry of interrupt lines, one tick source, per-CPU segment and double-fault stack, no hardware coverage |
 | Physical memory, heap, DMA | 60 | allocators and DMA path exist |
-| Virtual memory, address spaces | 50 | unmap returns the frames it owns; spaces are destroyed and reused with a generation |
+| Virtual memory, address spaces | 56 | unmap returns the frames it owns, spaces are destroyed and reused with a generation, and an unmap asks every other processor to drop the translation (`paging.installRemoteFlush` → `smp.flushRemotePage`) |
 | ACPI, PCI, APIC | 50 | MADT drives the LAPIC; IOAPIC entries are **masked**, delivery is still the 8259 |
-| SMP | 60 | CPU table from the MADT, trampoline copied and patched below 1 MiB, INIT/SIPI sent, an AP that enters the scheduler gets a task and an idle task of its own, a reschedule IPI (vector 65) can wake it and a worker is migrated to the first online AP; **no AP has ever answered**, so **no IPI has ever been delivered** |
+| SMP | 68 | CPU table from the MADT, trampoline copied and patched below 1 MiB, INIT/SIPI sent, an AP that enters the scheduler gets a task and an idle task of its own, a reschedule IPI (vector 65) can wake it and a worker is migrated to the first online AP; **no AP has ever answered**, so **no IPI has ever been delivered** |
 | Scheduler and task switching | 83 | EEVDF policy in a pure module, a state lock with per-CPU ownership, a generic blocking primitive, a wait queue and a mutex, an idle task per CPU, an owner per task, a reschedule that is not a tick and a migration — all tested; **no AP has ever taken a task**, the idle task has never halted here, the mutex has no user |
 | User mode and syscalls | 55–60 | ring 3 and ABI revision 1, contract-checked, never ran in a VM |
 | IPC and capabilities | 60 | channels and a real capability lifecycle |

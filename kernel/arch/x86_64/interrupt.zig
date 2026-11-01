@@ -184,6 +184,12 @@ pub fn install() void {
     // without waiting for a clock that may not exist on that CPU.
     setGate(apic.reschedule_vector, @intFromPtr(&kynox_interrupt_65));
 
+    // The TLB shootdown: the page and the generation travel through
+    // `tlb.Mailbox`, and this vector is the announcement. A processor that
+    // receives it invalidates the translation and acknowledges, which is what
+    // lets the sender know the translation is gone everywhere.
+    setGate(apic.shootdown_vector, @intFromPtr(&kynox_interrupt_66));
+
     // The vectors that are not handled point at a stub that reports them.
     const unexpected = stubFor(255);
     for (exception_count + hardware_interrupt_count..entry_count) |vector| {
@@ -477,6 +483,17 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
         return if (must_switch) 1 else 0;
     }
 
+    // The TLB shootdown. The interrupt is finished at the controller first, so
+    // that the acknowledgement is the last thing this processor says; the
+    // invalidation itself happens in the handler, on the processor that has the
+    // stale entry.
+    if (vector == @as(u64, apic.shootdown_vector)) {
+        apic.eoi();
+
+        _ = smp.handleShootdown();
+        return 0;
+    }
+
     return 0;
 }
 
@@ -540,3 +557,4 @@ extern var kynox_interrupt_46: u8;
 extern var kynox_interrupt_47: u8;
 extern var kynox_interrupt_64: u8;
 extern var kynox_interrupt_65: u8;
+extern var kynox_interrupt_66: u8;

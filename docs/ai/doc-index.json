@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 67,
+    "documents": 68,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 8,
+      "record": 9,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 5733
+      "words": 6079
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2647
+      "words": 2698
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 7929
+      "words": 8156
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 4848
+      "words": 4940
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1329
+      "words": 1343
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -255,7 +255,7 @@
       "kind": "architecture",
       "authority": "planning",
       "summary": "Physical and virtual memory: the frame manager, the page tables, what unmap returns, and the invariants.",
-      "words": 1637,
+      "words": 1678,
       "declared_status": "planning document"
     },
     {
@@ -390,6 +390,16 @@
       "authority": "record",
       "summary": "Policy split, wait queue and mutex: what was implemented, the tests that prove it and what is still open.",
       "words": 1492,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-tlb-shootdown.md",
+      "title": "The TLB shootdown: uma IPI, uma caixa de correio e uma garantia — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The TLB shootdown: vector 66, the mailbox that carries the page, the generation that makes a late answer harmless, the page-table hook and the timeout that is reported instead of hidden.",
+      "words": 1382,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -538,7 +548,7 @@
       "kind": "roadmap",
       "authority": "planning",
       "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
-      "words": 9567,
+      "words": 9600,
       "declared_status": "planning document"
     },
     {

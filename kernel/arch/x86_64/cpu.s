@@ -35,3 +35,20 @@ kynox_invlpg:
     invlpg (%rdi)
     ret
 .size kynox_invlpg, . - kynox_invlpg
+
+/*
+ * Empties the TLB of the processor.
+ *
+ * x86-64 has no instruction that flushes the whole TLB from the kernel; the
+ * architectural sequence is to read the page directory base register and write
+ * the same value back, which invalidates every cached translation that is not
+ * marked global. Clobbering RAX is allowed: it is a scratch register of the
+ * System V ABI and the function returns nothing.
+ */
+.global kynox_flush_tlb
+.type kynox_flush_tlb, @function
+kynox_flush_tlb:
+    movq %cr3, %rax
+    movq %rax, %cr3
+    ret
+.size kynox_flush_tlb, . - kynox_flush_tlb

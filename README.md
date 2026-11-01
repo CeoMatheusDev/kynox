@@ -28,11 +28,11 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Area | Progress | Current state |
 |---|---:|---|
 | UEFI bootloader and handoff | **70%** | Core path implemented; broader firmware validation remains |
-| Kernel CPU, exceptions and interrupts | **66%** | Core paths exist; an interrupt-line registry replaces the vector `switch`, one tick source drives the scheduler, and the segment, its table and the stack of the double fault are **per processor**; hardening and hardware coverage remain |
+| Kernel CPU, exceptions and interrupts | **70%** | Core paths exist; an interrupt-line registry replaces the vector `switch`, one tick source drives the scheduler, the segment, its table and the stack of the double fault are **per processor**, and three kernel vectors (timer 64, reschedule 65, TLB shootdown 66) have a gate, a stub and a handler; hardening and hardware coverage remain |
 | Physical memory, heap and DMA | **60%** | Core allocators and DMA path exist; scalability/reclaim remain |
-| Virtual memory and address spaces | **50%** | User mappings and isolation foundations; unmap returns the frames the space owns and an address space is destroyed and its slot reused (generation-checked); advanced VM remains |
+| Virtual memory and address spaces | **56%** | User mappings and isolation foundations; unmap returns the frames the space owns, an address space is destroyed and its slot reused (generation-checked), and an unmap now **asks every other processor to drop the translation** through a hook; advanced VM (regions, demand paging, COW) remains |
 | ACPI, PCI and APIC | **50%** | MADT discovery drives the LAPIC base at boot; IOAPIC redirection entries are programmed **masked** and delivery still comes from the 8259; PCI/APIC access paths exist |
-| SMP | **60%** | CPU table from the MADT, one stack per logical CPU, the AP trampoline **copied and patched below 1 MiB**, an AP that enters the scheduler with a **task of its own**, a **reschedule IPI** (vector 65) that makes a CPU re-evaluate its queue, and a worker migrated to the first online AP at boot; **no AP has ever answered**, so no IPI has been delivered, and no per-CPU clock exists |
+| SMP | **68%** | CPU table from the MADT, one stack per logical CPU, the AP trampoline **copied and patched below 1 MiB**, an AP that enters the scheduler with a **task of its own**, a **reschedule IPI** (vector 65), a **TLB shootdown** (vector 66) with a mailbox, a generation per request and an acknowledgement count, and a worker migrated to the first online AP at boot; **no AP has ever answered**, so no IPI has been delivered, and no per-CPU clock exists |
 | Scheduler and task switching | **83%** | EEVDF policy in its own module, a state lock with per-CPU ownership that counts its re-entries (the scheduler calls itself inside one decision), a generic blocking primitive that queues a wait with a deadline, a wait queue that cannot lose a wakeup, a mutex with a direct handoff, and an **idle task** the policy chooses only when nothing else can run — 63 host tests in the task artifact, including a four-thread lock contention test, an end-to-end mutex/scheduler test and the idle-task choice; every task **names the CPU that owns it**, the idle task exists per CPU, `migrateTo` moves a task to another queue, a **reschedule IPI** hands the processor over without counting a tick or charging the slice, and a wake that lands on a foreign queue kicks its owner; **no AP has ever taken a task** and the mutex has no user in the kernel yet |
 | User mode and syscalls | **55–60%** | Ring 3 apps and native syscall path exist; ABI revision 1 is contract-checked; the ABI is still small and never ran in a VM here |
 | IPC and capabilities | **60%** | Core mechanisms and a real object lifecycle (destroy, destroySubject, releaseProcess); broader service model remains |
@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**828 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (**837 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (828) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (837) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 52/52 steps, **828/828 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration) |
+| `zig build test` | success — 52/52 steps, **828/828 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

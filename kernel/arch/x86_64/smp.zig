@@ -38,6 +38,7 @@ const x86_cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
 const segment = @import("segment.zig");
 const trampoline = @import("ap_trampoline.zig");
+const tlb = @import("tlb.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -275,6 +276,153 @@ pub fn firstOnlineAp() ?u8 {
 /// Quantas IPIs de reschedule foram realmente entregues.
 pub fn rescheduleRequests() u64 {
     return reschedule_requests;
+}
+
+/// O resultado de um TLB shootdown.
+///
+/// Como no reschedule, nao e um booleano: "nao havia ninguem a quem pedir" e
+/// "havia, e eu nao podia falar com eles" sao fatos diferentes, e o segundo e o
+/// caso normal de um host sem controlador.
+pub const ShootdownOutcome = enum {
+    /// Todos os processadores avisados responderam: a traducao sumiu de todos.
+    complete,
+    /// Nao ha outro processador online: a invalidacao local e a historia toda.
+    no_targets,
+    /// Ha outro processador online e o APIC local nao esta mapeado, entao
+    /// ninguem pode ser avisado.
+    no_apic,
+    /// O pedido foi publicado e as IPIs sairam, mas alguem nao respondeu a
+    /// tempo. A pagina pode continuar traduzida nessa CPU.
+    timeout,
+};
+
+/// Quantas voltas de `pause` o remetente espera pelas respostas.
+///
+/// O orcamento e grande de proposito: uma resposta custa uma invalidacao e um
+/// reconhecimento, e desistir cedo demais transformaria um shootdown lento em
+/// uma garantia perdida. O numero existe para que a maquina nao trave para
+/// sempre quando um processador esta morto ou preso.
+const shootdown_spin_budget: u32 = 4 * 1024 * 1024;
+
+/// A caixa de correio do shootdown: um pedido no ar por vez.
+var shootdown_mailbox: tlb.Mailbox = .{};
+
+/// O lock do remetente. Os receptores nunca o tocam: quem espera a resposta nao
+/// pode ser o mesmo que a responde.
+var shootdown_lock: spinlock.Spinlock = .{};
+
+var shootdowns: u64 = 0;
+var shootdown_timeouts: u64 = 0;
+
+/// Pede a todos os outros processadores que esqueçam uma traducao.
+///
+/// Uma entrada obsoleta no TLB de outro processador e memoria que continua
+/// acessivel depois de a tabela dizer que nao esta: a pagina volta para o
+/// alocador, outro dono a recebe, e a CPU que guardou a traducao velha escreve
+/// na pagina do novo dono. A invalidacao local (`invlpg`) cobre so este
+/// processador, e e por isso que existe esta funcao.
+///
+/// O pedido e publicado em `tlb.Mailbox` — a IPI carrega um vetor e nao um
+/// endereco — e este processador espera as respostas por um tempo limitado. Se
+/// alguma faltar, o pedido e abandonado e o resultado diz `timeout`: uma
+/// garantia perdida e reportada, nunca escondida atras de um sucesso.
+pub fn shootdown(scope: tlb.Scope, address: u64) ShootdownOutcome {
+    const self_index = cpuId();
+
+    var targets: u32 = 0;
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        targets += 1;
+    }
+
+    // Uma maquina com um processador nao tem traducao remota para esquecer, e
+    // esse e o caso normal da suite de host.
+    if (targets == 0) return .no_targets;
+    if (!apic.isMapped()) return .no_apic;
+
+    shootdown_lock.lock();
+    defer shootdown_lock.unlock();
+
+    _ = shootdown_mailbox.begin(scope, address, targets);
+    shootdowns += 1;
+
+    index = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == self_index) continue;
+        if (cpus[index].state != .online) continue;
+        apic.sendShootdown(cpus[index].apic_id);
+    }
+
+    var spins: u32 = 0;
+    while (!shootdown_mailbox.isComplete()) {
+        if (spins == shootdown_spin_budget) {
+            shootdown_mailbox.abandon();
+            shootdown_timeouts += 1;
+            return .timeout;
+        }
+        x86_cpu.pause();
+        spins += 1;
+    }
+
+    return .complete;
+}
+
+/// O que esta CPU faz quando recebe o aviso de um shootdown.
+///
+/// Roda no handler da interrupcao, no processador que tem a traducao velha: ele
+/// invalida e responde. Um aviso reentregue — ou um pedido que esta CPU ja
+/// serviu — nao tem o que fazer, e `latch` e quem sabe disso.
+pub fn handleShootdown() tlb.Ack {
+    const index = cpuId();
+    const request = shootdown_mailbox.latch(index) orelse return .idle;
+
+    switch (request.scope) {
+        .page => x86_cpu.invlpg(request.address),
+        .all => x86_cpu.flushTlb(),
+    }
+
+    return shootdown_mailbox.acknowledge(index, request);
+}
+
+/// O gancho que as tabelas de pagina instalam para a pagina que sai.
+///
+/// `paging.zig` nao importa este modulo: um import circular entre o mapeamento e
+/// o SMP amarraria as duas camadas, e os testes das tabelas rodam sem
+/// controlador. O boot instala `paging.installRemoteFlush(&flushRemotePage)`.
+pub fn flushRemotePage(virtual: u64) void {
+    _ = shootdown(.page, virtual);
+}
+
+/// Quantos pedidos de shootdown foram publicados.
+pub fn shootdownsSent() u64 {
+    return shootdowns;
+}
+
+/// Quantos pedidos foram abandonados por falta de resposta.
+pub fn shootdownTimeouts() u64 {
+    return shootdown_timeouts;
+}
+
+/// Quantos avisos os processadores desta maquina ja serviram.
+pub fn shootdownsServed() u64 {
+    return shootdown_mailbox.served;
+}
+
+/// Quantas respostas ainda faltam no pedido no ar.
+pub fn shootdownOutstanding() u32 {
+    return shootdown_mailbox.outstanding();
+}
+
+/// Publica um pedido sem enviar IPI nenhuma.
+///
+/// Existe para que o handler possa ser exercitado onde nao ha controlador: sem
+/// ele, o caminho "recebe o aviso, invalida e responde" so rodaria em hardware,
+/// e uma maquina que nunca recebeu uma IPI nao prova nada sobre o codigo que a
+/// atende.
+pub fn publishShootdownForTest(scope: tlb.Scope, address: u64, targets: u32) u64 {
+    return shootdown_mailbox.begin(scope, address, targets).generation;
 }
 
 /// O que o kernel faz quando uma CPU chega em `kynox_ap_entry`.
@@ -642,6 +790,76 @@ test "a reschedule asks for the CPU that can receive it, and refuses the others"
 
     // Nothing was delivered, so the counter that reports delivery did not move.
     try std.testing.expectEqual(before, rescheduleRequests());
+}
+
+test "a machine with one processor has no remote translation to forget" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before_sent = shootdownsSent();
+    const before_served = shootdownsServed();
+    const before_timeouts = shootdownTimeouts();
+
+    try std.testing.expectEqual(
+        ShootdownOutcome.no_targets,
+        shootdown(.page, 0x4000_0000),
+    );
+
+    // Nada foi publicado: nao ha pedido pendente, nao ha resposta a esperar, e
+    // a invalidacao local que `invlpg` ja fez e a historia toda.
+    try std.testing.expectEqual(before_sent, shootdownsSent());
+    try std.testing.expectEqual(before_served, shootdownsServed());
+    try std.testing.expectEqual(before_timeouts, shootdownTimeouts());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "a shootdown refuses to pretend when the controller is not mapped" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+    _ = registerCpu(1, 7);
+
+    const before = shootdownsSent();
+    try std.testing.expectEqual(ShootdownOutcome.no_apic, shootdown(.all, 0));
+
+    // A outra CPU esta online e ninguem pode avisa-la: um `.complete` aqui
+    // seria a mentira mais cara do kernel, porque a traducao velha continua la.
+    try std.testing.expectEqual(before, shootdownsSent());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "a spurious announcement invalidates nothing and counts nothing" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = shootdownsServed();
+    try std.testing.expectEqual(tlb.Ack.idle, handleShootdown());
+    try std.testing.expectEqual(before, shootdownsServed());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+}
+
+test "the handler invalidates the page and acknowledges the request once" {
+    _ = configureFromMadt(&[_]acpi.Processor{.{ .apic_id = 0, .enabled = true }}, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const served_before = shootdownsServed();
+    const generation = publishShootdownForTest(.page, 0x2000, 1);
+    try std.testing.expect(generation > 0);
+    try std.testing.expectEqual(@as(u32, 1), shootdownOutstanding());
+
+    // The handler runs with `invlpg` as a no-op on the host: what the test
+    // observes is the protocol — one acknowledgement per request, and not one
+    // more for a repeated announcement.
+    try std.testing.expectEqual(tlb.Ack.accepted, handleShootdown());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+    try std.testing.expectEqual(served_before + 1, shootdownsServed());
+
+    try std.testing.expectEqual(tlb.Ack.idle, handleShootdown());
+    try std.testing.expectEqual(@as(u32, 0), shootdownOutstanding());
+    try std.testing.expectEqual(served_before + 1, shootdownsServed());
 }
 
 test "the stack of a CPU is handed out for the numbers the table has" {

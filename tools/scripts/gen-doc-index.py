@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-tlb-shootdown.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The TLB shootdown: vector 66, the mailbox that carries the page, the generation that makes a late answer harmless, the page-table hook and the timeout that is reported instead of hidden.",
+    },
     "docs/audits/2026-11-01-reschedule-ipi.md": {
         "kind": "implementation-record",
         "authority": "record",

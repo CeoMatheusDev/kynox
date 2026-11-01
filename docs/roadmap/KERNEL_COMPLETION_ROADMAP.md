@@ -377,8 +377,12 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    counter), reschedule IPI, and a halt IPI. Shootdown is wired into `unmap`, which
    is what finally satisfies memory invariant M4. *(2026-11-01: the reschedule IPI
    exists — vector 65, gate, stub, handler and `smp.reschedule`, with the boot
-   migrating a worker to the first online AP. The shootdown and the halt IPI do
-   not. See `docs/audits/2026-11-01-reschedule-ipi.md`.)*
+   migrating a worker to the first online AP — and the **TLB shootdown** exists
+   too (vector 66, mailbox with a generation and one acknowledgement per
+   processor, wired into every unmap through `paging.installRemoteFlush`). The
+   halt IPI does not, and no IPI of any kind has been delivered here. See
+   `docs/audits/2026-11-01-reschedule-ipi.md` and
+   `docs/audits/2026-11-01-tlb-shootdown.md`.)*
 7. **Unhandled interrupts are counted and named**, not silently acknowledged. A
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);

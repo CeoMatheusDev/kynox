@@ -323,6 +323,20 @@ pub fn sendReschedule(apic_id: u32) void {
     sendIpi(apic_id, 0, reschedule_vector);
 }
 
+/// The vector of the TLB shootdown IPI.
+///
+/// The IPI carries a vector and nothing else, so the page travels through
+/// memory (`tlb.Mailbox`) and this vector is only the announcement that a new
+/// request is there. It sits above the reschedule (65) for the same reason: the
+/// hardware range keeps the devices, and every vector the kernel invents lives
+/// above it.
+pub const shootdown_vector: u8 = 66;
+
+/// Tells one CPU that the mailbox has a new translation to forget.
+pub fn sendShootdown(apic_id: u32) void {
+    sendIpi(apic_id, 0, shootdown_vector);
+}
+
 /// Envia uma IPI para uma CPU de destino (modo fisico).
 ///
 /// `apic_id` e o ID de APIC local da CPU de destino. `delivery_mode` e o
