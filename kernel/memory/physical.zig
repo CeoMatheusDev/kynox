@@ -62,10 +62,15 @@ pub const Statistics = struct {
     highest_address: u64 = 0,
 };
 
+/// Contagem de referências compartilhadas por página física.
+pub const max_ref_count: u8 = 255;
+
 /// The physical memory manager.
 pub const Manager = struct {
     /// The bitmap, one bit per page: a set bit marks a used page.
     bitmap: [bitmap_size]u8 = @splat(0),
+    /// Reference count for shared pages (1 if privately mapped).
+    refcount: [managed_pages]u8 = @splat(0),
     /// The state of the manager.
     statistics: Statistics = .{},
     /// The next page that the manager tries to hand out.
@@ -160,6 +165,7 @@ pub const Manager = struct {
         while (page < last_page and page < managed_pages) : (page += 1) {
             if (!self.isPageUsed(page)) {
                 self.setUsed(page, true);
+                self.refcount[page] = 1; // Ownership: private reference
                 self.statistics.used_pages += 1;
                 self.statistics.free_pages -= 1;
             }
@@ -219,6 +225,7 @@ pub const Manager = struct {
             if (page >= managed_pages) page = 0;
             if (!self.isPageUsed(page)) {
                 self.setUsed(page, true);
+                self.refcount[page] = 1; // Ownership: private reference
                 self.statistics.used_pages += 1;
                 self.statistics.free_pages -= 1;
                 self.hint = page + 1;
@@ -237,6 +244,16 @@ pub const Manager = struct {
         if (page >= managed_pages) return;
         if (!self.isPageUsed(page)) return;
 
+        // Ownership and reference tracking (Fase 3)
+        if (self.refcount[page] > 1) {
+            self.refcount[page] -= 1;
+            return; // Shared page: only decrement reference
+        }
+        if (self.refcount[page] == 0) {
+            return; // Already freed or invalid; prevent double-free
+        }
+
+        self.refcount[page] = 0;
         self.setUsed(page, false);
         self.statistics.used_pages -= 1;
         self.statistics.free_pages += 1;
