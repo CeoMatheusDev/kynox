@@ -23,12 +23,12 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **52/52 steps, 806/806 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 815/815 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 146 · shared 64 · task 63 · kernel
+Per artifact: kvdi 173 · fs-loader 154 · arch 155 · shared 64 · task 63 · kernel
 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
@@ -46,7 +46,7 @@ operating system.
 | Physical memory, heap, DMA | 60 | allocators and DMA path exist |
 | Virtual memory, address spaces | 50 | unmap returns the frames it owns; spaces are destroyed and reused with a generation |
 | ACPI, PCI, APIC | 50 | MADT drives the LAPIC; IOAPIC entries are **masked**, delivery is still the 8259 |
-| SMP | 30 | CPU table exists, **no AP has ever run** |
+| SMP | 44 | CPU table from the MADT, trampoline copied and patched below 1 MiB, INIT/SIPI sent; **no AP has ever answered** |
 | Scheduler and task switching | 74 | EEVDF policy in a pure module, a state lock with per-CPU ownership, a generic blocking primitive, a wait queue and a mutex, and an idle task that is chosen only when nothing else can run — all tested; **no AP has ever run**, the idle task has never halted here, the mutex has no user |
 | User mode and syscalls | 55–60 | ring 3 and ABI revision 1, contract-checked, never ran in a VM |
 | IPC and capabilities | 60 | channels and a real capability lifecycle |

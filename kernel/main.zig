@@ -48,6 +48,7 @@ const segment = @import("arch/x86_64/segment.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
 const timer = @import("arch/x86_64/timer.zig");
 const smp = @import("arch/x86_64/smp.zig");
+const ap_trampoline = @import("arch/x86_64/ap_trampoline.zig");
 const acpi = @import("arch/x86_64/acpi.zig");
 const apic = @import("arch/x86_64/apic.zig");
 const ioapic = @import("arch/x86_64/ioapic.zig");
@@ -2714,6 +2715,11 @@ fn installSmp() void {
     // Inicializa as pilhas dos APs (estrutura de dados de SMP).
     smp.initAps();
 
+    // O trampolim vai para a pagina que a SIPI nomeia. Antes disso `startAps`
+    // recusa enviar IPIs: um AP iniciado numa pagina sem o bloco executa o que
+    // estiver la.
+    installApTrampoline();
+
     const apic_id = apic.readApicId();
     serial.printLine("[KNK] smp: APIC local id={d}, base=0x{x}", .{
         apic_id, lapic_base,
@@ -2727,6 +2733,66 @@ fn installSmp() void {
         known, smp.bspCpuIndex(), smp.apCount(),
     });
     serial.printLine("[KNK] smp: AP stacks initialized (max_cpus={d})", .{smp.max_cpus});
+}
+
+/// Publishes the trampoline of the APs in the low page that a startup IPI names.
+///
+/// Three things have to be true before an AP can be started, and each one is a
+/// separate refusal instead of a silent failure:
+///
+///   * the page must be usable RAM according to the map the firmware handed
+///     over — the physical manager reserves everything below 1 MiB, so nothing
+///     else in the kernel owns it, but "nobody owns it" is not the same as
+///     "the firmware said it is memory";
+///   * the page must be mapped in the tables of the kernel by identity, because
+///     the AP keeps executing at the physical address after it enables paging;
+///   * the copy itself must fit and every field must land inside the block
+///     (`smp.prepareTrampoline` returns which precondition failed).
+///
+/// A failure does not stop the boot: the BSP keeps running alone, and
+/// `startAps` reports that no AP was started and why.
+fn installApTrampoline() void {
+    const address = ap_trampoline.base_address;
+    const count = @min(boot_info.memory_map_entries, max_memory_descriptors);
+
+    if (!memmap.isUsableRange(memory_map[0..count], address, ap_trampoline.page_size)) {
+        serial.printLine(
+            "[KNK] ap trampoline: page 0x{x} is not usable RAM in the map; no AP will be started",
+            .{address},
+        );
+        return;
+    }
+
+    paging.mapKernelPage(address, address) catch |err| switch (err) {
+        // The page was already mapped by identity: that is the state we want.
+        error.AlreadyMapped => {},
+        else => {
+            serial.printLine("[KNK] ap trampoline: page 0x{x} could not be mapped ({s}); no AP will be started", .{
+                address, @errorName(err),
+            });
+            return;
+        },
+    };
+
+    // The AP starts with the reset state of EFER. It needs the bits the BSP
+    // uses, read now and not hard-coded: on a processor without the
+    // no-execute feature the write would fault.
+    const efer_bits = cpu.modeBits();
+
+    if (smp.prepareTrampoline(address, paging.rootAddress(), efer_bits)) |err| {
+        serial.printLine("[KNK] ap trampoline: copy at 0x{x} refused ({s}); no AP will be started", .{
+            address, @errorName(err),
+        });
+        return;
+    }
+
+    serial.printLine("[KNK] ap trampoline: {d} bytes at 0x{x} (vector 0x{x}), entry 0x{x}, EFER bits 0x{x}", .{
+        ap_trampoline.kernelLayout().size,
+        address,
+        ap_trampoline.vector,
+        @intFromPtr(&smp.kynox_ap_entry),
+        efer_bits,
+    });
 }
 
 /// Programas the redirection entries of the I/O APIC discovered in the MADT.

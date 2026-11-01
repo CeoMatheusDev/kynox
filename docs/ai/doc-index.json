@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 64,
+    "documents": 65,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 5,
+      "record": 6,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 4644
+      "words": 5001
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2454
+      "words": 2503
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 7106
+      "words": 7398
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 4443
+      "words": 4593
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1265
+      "words": 1276
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -312,6 +312,16 @@
       "words": 6874,
       "date": "2026-10-31",
       "declared_status": "audit record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-ap-trampoline.md",
+      "title": "The trampoline of the APs — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The block of the AP trampoline as data: the copy below 1 MiB, the fields the BSP writes, the order of the ready word, the EFER bits of the AP and one numbering for the CPUs.",
+      "words": 1659,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
     },
     {
       "path": "docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md",
@@ -508,7 +518,7 @@
       "kind": "roadmap",
       "authority": "planning",
       "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
-      "words": 9458,
+      "words": 9507,
       "declared_status": "planning document"
     },
     {

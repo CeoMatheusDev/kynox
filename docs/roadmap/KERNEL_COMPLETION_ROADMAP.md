@@ -368,7 +368,11 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
 5. **AP startup** with a real INIT-SIPI-SIPI sequence: trampoline published,
    AP enters long mode on a per-CPU stack, initialises its GDT/TSS/APIC, then
    signals ready. `smp.startAps()` has a caller. APs that fail to start are
-   counted, not ignored.
+   counted, not ignored. *(2026-11-01: the trampoline is published below 1 MiB
+   and patched per AP, `smp.startAps()` has a caller, and the AP installs its
+   segment before it waits — but no AP has answered, the per-CPU block does not
+   exist, and the AP initialses no APIC of its own yet. See
+   `docs/audits/2026-11-01-ap-trampoline.md`.)*
 6. **IPI infrastructure**: TLB shootdown (address + generation, with an ack
    counter), reschedule IPI, and a halt IPI. Shootdown is wired into `unmap`, which
    is what finally satisfies memory invariant M4.

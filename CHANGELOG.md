@@ -21,6 +21,39 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — the trampoline of the APs is published below 1 MiB
+
+- **`kernel/arch/x86_64/ap_trampoline.zig`**: the block of `ap_trampoline.s` as
+  data. The offsets of the fields come from the symbols the assembly exports
+  (`kernelLayout()`), `install` copies the block into the low page and writes
+  what is the same for every AP (GDT base, far pointer, CR3, EFER bits, entry),
+  and `arm` writes one AP (stack, CPU number) clearing `ready` first and writing
+  it **last**. Every refusal has its own error: field outside the block, block
+  larger than a page, placement beyond the reach of a startup IPI, destination
+  too small, source that is not the block, value that does not fit in a 32-bit
+  field.
+- **`smp.prepareTrampoline(address, cr3, efer_bits)`** is the caller the
+  `ap_trampoline.s` never had, and `installApTrampoline()` at boot does the three
+  checks that make it safe: the page is usable RAM in the firmware map, it is
+  mapped by identity in the kernel tables, and the copy was validated. A refusal
+  is a boot line, not a silent "no AP".
+- **The AP sets the EFER bits of the BSP** (`LME` and, when the kernel enabled
+  it, `NXE`) before it loads the kernel CR3: an NX entry with `NXE` clear is a
+  reserved bit, and the general protection fault would happen inside the
+  trampoline, where there is no IDT — a triple fault with no message.
+- **One numbering for the CPUs**: the stack, the CPU number passed in RDI and the
+  table index are the same number (the MADT index), instead of `cpu_id - 1`, which
+  only held when the BSP was entry 0. The AP waits with `sti; hlt` instead of a
+  bare `hlt`, which froze it for ever with interrupts disabled.
+- **Nine new host tests** (815 in total, `arch-tests` 155): the vector and its
+  page, refused placements, the copy with every field and `ready` cleared,
+  arming two APs in a row, refused layouts and truncated 32-bit values, the
+  unpublished trampoline, an announcement without a copy, and one stack per
+  logical CPU.
+- Documentation: `docs/audits/2026-11-01-ap-trampoline.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 30% → 44%, the measured counts, `K-01`),
+  `README.md`, `docs/ai/context-pack.md`, the roadmap annotations of K0/K2.
+
 ### Added (2026-11-01) — a segment per processor and an idle task that halts
 
 - **Audit defect 2 closed in code: one TSS per CPU.** `segment.zig` had one

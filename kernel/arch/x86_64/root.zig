@@ -23,6 +23,7 @@ pub const frame = @import("frame.zig");
 pub const paging = @import("paging.zig");
 pub const spinlock = @import("spinlock.zig");
 pub const smp = @import("smp.zig");
+pub const ap_trampoline = @import("ap_trampoline.zig");
 pub const apic = @import("apic.zig");
 pub const ioapic = @import("ioapic.zig");
 pub const acpi = @import("acpi.zig");
@@ -64,6 +65,7 @@ test {
     _ = @import("paging.zig");
     _ = @import("spinlock.zig");
     _ = @import("smp.zig");
+    _ = @import("ap_trampoline.zig");
     _ = @import("apic.zig");
     _ = @import("ioapic.zig");
     _ = @import("acpi.zig");

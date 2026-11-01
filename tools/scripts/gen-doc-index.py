@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-ap-trampoline.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The block of the AP trampoline as data: the copy below 1 MiB, the fields the BSP writes, the order of the ready word, the EFER bits of the AP and one numbering for the CPUs.",
+    },
     "docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md": {
         "kind": "implementation-record",
         "authority": "record",
