@@ -1217,15 +1217,45 @@ pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
 
 /// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
 pub fn reclaimPhysicalPages(space: *AddressSpace) void {
-    // Reclaim físico (parcial — requer PMM.free() integration).
-    // Only private user-space tables (level3/level2/level1) are reclaimed.
+    const physical = @import("memory/physical.zig");
+    // Reclaim físico REAL: percorre as tabelas privadas do processo
+    // e libera cada página física via PMM.free().
+    // Kernel mappings (root) são compartilhados e não liberados.
     if (space.level3) |l3| {
-        for (0..512) |i| l3.entries[i] = 0;
+        for (0..512) |i| {
+            const entry = l3.entries[i];
+            if (entry & Flags.present != 0) {
+                const addr = entry & address_mask;
+                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
+                    physical.manager.free(addr);
+                }
+            }
+            l3.entries[i] = 0;
+        }
     }
     if (space.level2) |l2| {
-        for (0..512) |i| l2.entries[i] = 0;
+        for (0..512) |i| {
+            const entry = l2.entries[i];
+            if (entry & Flags.present != 0) {
+                const addr = entry & address_mask;
+                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
+                    physical.manager.free(addr);
+                }
+            }
+            l2.entries[i] = 0;
+        }
     }
     if (space.level1) |l1| {
-        for (0..512) |i| l1.entries[i] = 0;
+        for (0..512) |i| {
+            const entry = l1.entries[i];
+            if (entry & Flags.present != 0) {
+                const addr = entry & address_mask;
+                if (addr >= physical.minimum_address and addr < physical.managed_address_space) {
+                    physical.manager.free(addr);
+                }
+            }
+            l1.entries[i] = 0;
+        }
     }
+    _ = space;
 }
