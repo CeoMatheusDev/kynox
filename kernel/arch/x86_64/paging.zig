@@ -1214,3 +1214,9 @@ pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
         for (0..512) |i| l1.entries[i] = 0;
     }
 }
+
+/// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
+pub fn reclaimPhysicalPages(space: *AddressSpace) void {
+    // Reclaim físico: requer PMM revogação por página física mapeada.
+    // Stub: página física ainda não liberada automaticamente; intervenção manual/garbage collection pendente.
+}

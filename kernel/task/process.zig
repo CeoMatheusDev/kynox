@@ -108,6 +108,7 @@ pub fn reapFull(p: *Process, handle: ProcessHandle) bool {
     const pag = @import("../arch/x86_64/paging.zig");
     if (p.space) |space| {
         pag.destroyAddressSpaceReal(space);
+        pag.reclaimPhysicalPages(space);
     } else {
         pag.destroyAddressSpace();
     }
