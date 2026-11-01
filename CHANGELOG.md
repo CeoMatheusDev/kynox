@@ -21,6 +21,33 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — o vetor vem do kernel, não do driver
+
+- **O buraco**: a faixa 68..254 tinha dono, mas o dono precisava **escolher** o
+  número. Dois drivers que pedissem 70 descobriam o conflito no registro, na
+  máquina, na ordem em que os drivers rodam.
+- **`kernel/arch/x86_64/vector_pool.zig`**: um driver pede um bloco de N e recebe
+  uma base. Três regras vêm do hardware — N é potência de dois (o campo de três
+  bits da MSI guarda log2(N)), a base é múltipla de N (as N mensagens têm de
+  ocupar um bloco alinhado) e o bloco termina antes do espúrio 255.
+- **187 não é potência de dois**: um bloco de 128 teria de começar em 0 ou em
+  128, e 128 + 128 passa do 255 — o maior bloco que a faixa aceita é **64**, e
+  cabe uma vez (128..191). O número é calculado em comptime a partir das
+  constantes do registro, não escrito à mão.
+- **MSI pede um bloco; MSI-X pede N vetores**: a entrada da tabela carrega o
+  próprio vetor, então quatro entradas são quatro reservas de um — a mesma
+  função com outro número, e não um segundo alocador.
+- **Reservar não é instalar**: na janela entre os dois, uma mensagem que chegue é
+  contada como não tratada e não vai para o driver que ainda se configura.
+  `install` é tudo ou nada (`VectorBusy` devolve o bloco inteiro) e `release`
+  confere o grant antes de liberar — base ou contagem erradas não liberam nada.
+- **O relatório do boot** ganhou os vetores livres e, na linha da MSI-X, se o
+  pool tem um vetor por entrada da tabela.
+- **Oito testes de host** (881 no total, `arch-tests` 212).
+- Documentação: `docs/audits/2026-11-01-vector-pool.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`kernel_cpu_interrupts` 78% → 81%),
+  `README.md`, `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
 ### Added (2026-11-01) — os vetores de dispositivo têm dono
 
 - **O buraco**: as duas rodadas anteriores deixaram o kernel capaz de *escrever*

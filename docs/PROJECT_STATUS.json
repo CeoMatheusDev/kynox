@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 873/873 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 204, including the per-CPU segment, the AP trampoline, the reschedule refusals and the device vector registry; no QEMU target executed)",
+      "result": "success: 52/52 steps, 881/881 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 212, including the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
       "date": "2026-11-01"
     },
     {
@@ -71,7 +71,7 @@
     },
     {
       "command": "zig build docs-check",
-      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (74 documents)",
+      "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (75 documents)",
       "date": "2026-11-01"
     },
     {
@@ -248,7 +248,7 @@
     "context_pack": "docs/ai/context-pack.md",
     "generator": "tools/scripts/gen-doc-index.py",
     "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
-    "documents": 74,
+    "documents": 75,
     "authorities": [
       "binding",
       "current",
@@ -300,7 +300,7 @@
     },
     {
       "id": "kernel_cpu_interrupts",
-      "maturity_percent": 78,
+      "maturity_percent": 81,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/",
@@ -321,7 +321,9 @@
         "the entry of an AP (kynox_ap_entry) installs the segment of its CPU before it enters its loop, and the scheduler writes rsp0 through segment.tssFor(smp.cpuId())",
         "four vectors the kernel invents have a gate, a stub and a handler: the local timer (64), the reschedule IPI (65), the TLB shootdown (66) and the halt IPI (67); the hardware range (32..47) is the other group",
         "the device vector space (68..254, 187 vectors, the spurious 255 excluded) has one entry point per vector in assembly and a table the kernel indexes (kynox_device_stub_table), because the stub is what tells the handler which vector arrived; a shared stub would report the same number for all of them",
-        "interrupt.verify() at boot also rebuilds the gate address of the first and the last device vector and compares them with the stub table, and the kernel stops when they disagree"
+        "interrupt.verify() at boot also rebuilds the gate address of the first and the last device vector and compares them with the stub table, and the kernel stops when they disagree",
+        "a device vector allocator (kernel/arch/x86_64/vector_pool.zig): a driver asks for a block of N and receives a base, N must be a power of two and the base a multiple of N (the two rules of the MSI Message Control field), the block must end before the spurious 255, the largest block is 64 because the range of 187 cannot align 128, MSI-X takes one vector per entry instead of a block, install is all or nothing, and release checks the grant before freeing anything",
+        "the boot reports how many device vectors are free for drivers, and the MSI-X report says whether the pool has one vector per table entry to give"
       ],
       "limitations": [
         "exception recovery audit incomplete",
@@ -331,21 +333,22 @@
         "no AP has reached kynox_ap_entry, so installForCpu has only run for the BSP",
         "the dispatch path and the tick policy have never run in a VM",
         "the halt IPI and the fatal path have never stopped a machine: the report is host-tested, the stop is not",
-        "no device vector has ever fired: no MSI and no MSI-X have been delivered, so the device dispatch branch has never run on a machine"
+        "no device vector has ever fired: no MSI and no MSI-X have been delivered, so the device dispatch branch has never run on a machine",
+        "no driver has asked the allocator for a vector, so the reserve/install/release sequence has only run in host tests"
       ],
       "pending_work": [
         "exercise the exception paths in QEMU and record results",
         "see an AP reach kynox_ap_entry (the trampoline is published, but no AP has answered)",
-        "a driver that registers a device vector, and a boot that records one arriving"
+        "a driver that asks for a vector, installs its handler and records an MSI or an MSI-X arriving"
       ],
       "tests": [
-        "arch-tests (204 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
+        "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (204 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)"
+          "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
         ],
         "commands": [
           "zig build test"

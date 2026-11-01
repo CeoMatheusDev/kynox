@@ -272,7 +272,7 @@ pub fn dispatch(vector: u64) bool {
 }
 
 /// Clears the registry. Host tests only.
-fn resetForTest() void {
+pub fn resetForTest() void {
     registrations = @splat(.{});
     unhandled_interrupts = 0;
     device_registrations = @splat(.{});

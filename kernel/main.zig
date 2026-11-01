@@ -48,6 +48,7 @@ const compositor_abi = kynox.compositor;
 const cpu = @import("arch/x86_64/cpu.zig");
 const interrupt = @import("arch/x86_64/interrupt.zig");
 const interrupt_registry = @import("arch/x86_64/interrupt_registry.zig");
+const vector_pool = @import("arch/x86_64/vector_pool.zig");
 const paging = @import("arch/x86_64/paging.zig");
 const segment = @import("arch/x86_64/segment.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
@@ -763,9 +764,10 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // The vectors a device may name. Nothing is registered yet — no driver
     // consumes a device vector — and the line says exactly that, with the
     // capacity, instead of a zero that could be read as "the kernel has none".
-    serial.printLine("[KNK] device vectors: {d} of {d} registered (vectors {d}..{d}, the spurious {d} excluded)", .{
+    serial.printLine("[KNK] device vectors: {d} of {d} registered, {d} free for drivers (vectors {d}..{d}, the spurious {d} excluded)", .{
         interrupt_registry.registeredDeviceVectors(),
         interrupt_registry.device_vector_count,
+        vector_pool.freeCount(),
         interrupt_registry.first_device_vector,
         interrupt_registry.first_device_vector + interrupt_registry.device_vector_count - 1,
         255,
@@ -2327,12 +2329,25 @@ fn reportMsix(
     }
 
     usable.* += 1;
+
+    // What the pool owes this function. An MSI-X entry carries its own vector,
+    // so the table needs N vectors and not N adjacent ones: the question is how
+    // many are free, and `plan` — the alignment of a block — is the wrong
+    // question to ask here.
+    var block_text: [80]u8 = undefined;
+    const free = vector_pool.freeCount();
+    const needed: u64 = places.vectors;
+    const block: []const u8 = if (free >= needed)
+        std.fmt.bufPrint(&block_text, "pool: {d} free, enough for the {d} entries", .{ free, needed }) catch "pool: enough free"
+    else
+        std.fmt.bufPrint(&block_text, "pool: {d} free, no room for {d} entries", .{ free, needed }) catch "pool: not enough free";
+
     serial.printLine(
-        "[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s), table at BAR {d}+0x{x} (0x{x}), PBA at BAR {d}+0x{x} (not programmed: the BAR window is not mapped)",
+        "[KNK] msix: 00:{d}.0 device=0x{x} {d} vector(s), table at BAR {d}+0x{x} (0x{x}), PBA at BAR {d}+0x{x} ({s}; the BAR window is not mapped)",
         .{
-            device,        device_id,        places.vectors,
+            device,           device_id,        places.vectors,
             places.table.bir, places.table.offset, bar.address + places.table.offset,
-            places.pba.bir,   places.pba.offset,
+            places.pba.bir,   places.pba.offset, block,
         },
     );
 }

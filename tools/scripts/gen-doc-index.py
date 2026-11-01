@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-vector-pool.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The device vector allocator: a block of N aligned to N for MSI, one vector per entry for MSI-X, why 187 is not a power of two and the largest block is 64, and the deliberate gap between reserving and installing a vector.",
+    },
     "docs/audits/2026-11-01-device-vectors.md": {
         "kind": "implementation-record",
         "authority": "record",

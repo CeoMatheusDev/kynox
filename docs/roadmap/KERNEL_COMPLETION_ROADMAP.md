@@ -410,10 +410,15 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    own stub in assembly and an IDT gate installed from a table the kernel indexes,
    the registry gives each one an owner or counts it as unhandled, and the
    spurious 255 is excluded — so the remaining gap is a driver and a delivered
-   message, not a place for the message to land. See
+   message, not a place for the message to land. The **allocator** is there too:
+   a driver asks for a block of N (N a power of two, the base a multiple of N,
+   which is what MSI can express) or for one vector per MSI-X table entry, and
+   the block must end before the spurious 255; the largest block is 64, because
+   187 is not a power of two and a block of 128 would start at 0 or at 128. See
    `docs/audits/2026-11-01-msi-programming.md`,
-   `docs/audits/2026-11-01-msix-table.md` and
-   `docs/audits/2026-11-01-device-vectors.md`.)*
+   `docs/audits/2026-11-01-msix-table.md`,
+   `docs/audits/2026-11-01-device-vectors.md` and
+   `docs/audits/2026-11-01-vector-pool.md`.)*
 
 **Completion criteria.**
 - Exactly one component calls `scheduler.tick()`; the call site is listed in the

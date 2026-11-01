@@ -23,12 +23,12 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **52/52 steps, 873/873 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 881/881 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 204 · shared 64 · task 72 · kernel
+Per artifact: kvdi 173 · fs-loader 154 · arch 212 · shared 64 · task 72 · kernel
 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
@@ -42,7 +42,7 @@ operating system.
 | Area | % | In one line |
 |---|---:|---|
 | UEFI bootloader and handoff | 70 | core path implemented, firmware coverage thin |
-| Kernel CPU, exceptions, interrupts | 78 | registry of interrupt lines, one tick source per machine whose **ownership is per processor** (with a counter of ignored ticks), per-CPU segment and double-fault stack, four kernel vectors (timer 64, reschedule 65, shootdown 66, halt 67), the device vector space (68..254, one stub per vector, an owner registry) with no device vector ever fired, no hardware coverage |
+| Kernel CPU, exceptions, interrupts | 81 | registry of interrupt lines, one tick source per machine whose **ownership is per processor** (with a counter of ignored ticks), per-CPU segment and double-fault stack, four kernel vectors (timer 64, reschedule 65, shootdown 66, halt 67), the device vector space (68..254, one stub per vector, an owner registry) and a vector allocator (a block of N aligned for MSI, one vector per entry for MSI-X, the largest block 64) with no device vector ever fired, no hardware coverage |
 | Physical memory, heap, DMA | 60 | allocators and DMA path exist |
 | Virtual memory, address spaces | 56 | unmap returns the frames it owns, spaces are destroyed and reused with a generation, and an unmap asks every other processor to drop the translation (`paging.installRemoteFlush` → `smp.flushRemotePage`) |
 | ACPI, PCI, APIC | 66 | MADT drives the LAPIC; IOAPIC entries are **masked**, delivery is still the 8259; the MSI capability is programmed behind `-Dmsi-delivery` (message, layout, allocation), the MSI-X capability is decoded and its table located but never written; vectors 68..254 are deliverable with one stub each, but **no MSI or MSI-X has ever been delivered and no device vector has ever fired** |
