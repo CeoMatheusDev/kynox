@@ -92,9 +92,18 @@ pub fn revokeCapabilities() void {
     // Use revokeAllCapabilities(table) para revogação por tabela.
 }
 
-/// K4.9 reap: revoga todas as capabilities do processo.
-/// Revogação por handle: iterative over all channel handles of the process;
-/// revokes each granted resource (stub — interface pendente).
+/// Revoga uma capability por handle (real — marca como revogada).
+/// Implementação: zera a entrada na tabela; handles derivados são invalidados
+/// porque a tabela é a fonte de verdade (linearização).
+pub fn revokeCapability(table: *CapabilityTable, handle: u32) void {
+    var i: u32 = 0;
+    while (i < table.count) : (i += 1) {
+        if (table.entries[i] == handle) {
+            table.entries[i] = 0;
+            break;
+        }
+    }
+}
 pub fn revokeAllCapabilities(table: *CapabilityTable) void {
     // Revogação real: zera todas as entradas da tabela.
     for (0..table.entries.len) |i| table.entries[i] = 0;
