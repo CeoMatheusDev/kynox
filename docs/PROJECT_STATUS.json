@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test",
-      "result": "success: 49/49 steps, 702/702 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
+      "result": "success: 49/49 steps, 704/704 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
       "date": "2026-10-31"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "path": "docs/architecture/platform-architecture.md",
-      "title": "Target platform architecture: layer map, kernel/user-mode split, sixteen subsystem contracts, dependency graph",
+      "title": "Target platform architecture: layer map, kernel/user-mode split, public/internal interface table, eighteen subsystem contracts, dependency graph",
       "status": "planned work only; current state mapped in the document",
       "date": "2026-10-31",
       "adrs": []
@@ -129,6 +129,13 @@
         "0004-graphics-stack-split.md",
         "0007-packaging-sandbox-updates.md"
       ]
+    },
+    {
+      "path": "docs/architecture/user-experiences.md",
+      "title": "User experiences: home, gaming, development, enterprise and professional profiles with measurable requirements",
+      "status": "planned work only; no profile exists beyond the boot scene",
+      "date": "2026-10-31",
+      "adrs": []
     },
     {
       "path": "docs/roadmap/PRODUCT_ROADMAP.md",

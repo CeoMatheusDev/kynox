@@ -30,7 +30,7 @@ above P** — most are not even P. The kernel items that exist are at F/E-blocke
 
 ## 2. Ordering rationale (from the audit)
 
-1. **Runtime evidence is the critical path.** The tree compiles and passes 702
+1. **Runtime evidence is the critical path.** The tree compiles and passes 704
    host tests, but no QEMU/OVMF run has ever been recorded. Every subsystem's
    maturity is capped by that, and no graphics work can be validated without a
    running system. This is stage 0 — an infrastructure prerequisite, not a
@@ -266,7 +266,8 @@ S12 (apps) only after S10.
 - **Deliverables:** installable image with a working desktop and app launching.
 - **Completion criteria:** documented user flows (login, launch, move/resize,
   lock, logout) pass automated UI tests.
-- **Tests:** scripted session tests; accessibility checks.
+- **Tests:** scripted session tests; accessibility checks; the Home profile
+  requirements HOM-01…HOM-07 of `user-experiences.md` become test cases here.
 - **Risks:** scope; theming consistency; input edge cases.
 - **External deps:** fonts (licensed/open), iconography.
 - **Acceptance:** E-level run recorded; usability review documented.
@@ -296,7 +297,8 @@ S12 (apps) only after S10.
 - **Deliverables:** applications shipped in the image.
 - **Completion criteria:** each app has tests and no privileged code; SDK samples
   become these apps.
-- **Tests:** UI automation; crash-free session tests.
+- **Tests:** UI automation; crash-free session tests; Development profile
+  requirements DEV-01…DEV-07 of `user-experiences.md`.
 - **Risks:** application quality distracts from platform work; scope control.
 - **Acceptance:** documented per-app status.
 
@@ -325,7 +327,9 @@ S12 (apps) only after S10.
   fleet image.
 - **Completion criteria:** colour accuracy measured; policy enforcement tested;
   recovery audited.
-- **Tests:** colour charts; policy conformance; recovery drills.
+- **Tests:** colour charts; policy conformance; recovery drills; Professional
+  (PRO-01…PRO-08) and Enterprise (ENT-01…ENT-08) requirements from
+  `user-experiences.md`.
 - **Risks:** certification requirements; management plane scope.
 - **Acceptance:** documented pilot deployment.
 

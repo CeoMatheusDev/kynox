@@ -30,6 +30,7 @@ const platform = @embedFile("docs/architecture/platform-architecture.md");
 const graphics = @embedFile("docs/architecture/graphics-platform.md");
 const applications = @embedFile("docs/architecture/application-ecosystem.md");
 const security = @embedFile("docs/architecture/security-architecture.md");
+const experiences = @embedFile("docs/architecture/user-experiences.md");
 const roadmap = @embedFile("docs/roadmap/PRODUCT_ROADMAP.md");
 const status_json = @embedFile("docs/PROJECT_STATUS.json");
 const adr_index = @embedFile("docs/decisions/README.md");
@@ -40,6 +41,7 @@ const planning_documents = [_]struct { path: []const u8, text: []const u8 }{
     .{ .path = "docs/architecture/graphics-platform.md", .text = graphics },
     .{ .path = "docs/architecture/application-ecosystem.md", .text = applications },
     .{ .path = "docs/architecture/security-architecture.md", .text = security },
+    .{ .path = "docs/architecture/user-experiences.md", .text = experiences },
     .{ .path = "docs/roadmap/PRODUCT_ROADMAP.md", .text = roadmap },
 };
 
@@ -109,6 +111,27 @@ test "the ADR index lists the architecture decisions created with these document
     try expectContains(adr_index, "0005-native-graphics-api.md");
     try expectContains(adr_index, "0006-userspace-compositor.md");
     try expectContains(adr_index, "0007-packaging-sandbox-updates.md");
+}
+
+test "the user-experience document covers the five profiles with requirements" {
+    try expectContains(experiences, "## 3. Home");
+    try expectContains(experiences, "## 4. Gaming");
+    try expectContains(experiences, "## 5. Development");
+    try expectContains(experiences, "## 6. Enterprise");
+    try expectContains(experiences, "## 7. Professional applications");
+    try expectContains(experiences, "## 8. What all profiles share");
+    const ids = [_][]const u8{ "HOM-01", "GAM-01", "DEV-01", "ENT-01", "PRO-01" };
+    for (ids) |id| try expectContains(experiences, id);
+    // A profile must never be described as a separate ABI or package format.
+    try expectContains(experiences, "A profile may never change");
+}
+
+test "the platform document separates public from internal interfaces" {
+    try expectContains(platform, "### 4.0 Public and internal interfaces per subsystem");
+    try expectContains(platform, "Public interface (stable, versioned)");
+    try expectContains(platform, "Internal interface (private, changeable)");
+    try expectContains(platform, "### 4.17 Updates and recovery");
+    try expectContains(platform, "### 4.18 Virtualisation and enterprise resources");
 }
 
 test "the security document refuses to claim unimplemented guarantees" {

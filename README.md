@@ -47,7 +47,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (702 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (704 tests, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters, TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -90,7 +90,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (702) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (704) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -138,7 +138,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — 14/14 steps; `kynox-boot.efi` 185,344 B, `kynox-kernel` 66,777,813 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 49/49 steps, **702/702 tests passed** (fresh cache) |
+| `zig build test` | success — 49/49 steps, **704/704 tests passed** (fresh cache) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |
@@ -169,6 +169,7 @@ recorded attempt and the exact procedure are in
 - [docs/architecture/graphics-platform.md](docs/architecture/graphics-platform.md) — display system, driver model, graphics core, native API, renderer, compositor and tools (planning document).
 - [docs/architecture/application-ecosystem.md](docs/architecture/application-ecosystem.md) — executable format, SDK, packaging, sandbox and compatibility (planning document).
 - [docs/architecture/security-architecture.md](docs/architecture/security-architecture.md) — threat model, capability proofs and explicit non-guarantees (planning document).
+- [docs/architecture/user-experiences.md](docs/architecture/user-experiences.md) — home, gaming, development, enterprise and professional profiles with measurable requirements (planning document).
 - [docs/roadmap/PRODUCT_ROADMAP.md](docs/roadmap/PRODUCT_ROADMAP.md) — stages S0–S15 with an evidence ladder (planning document).
 - [docs/audits/2026-10-31-audit.md](docs/audits/2026-10-31-audit.md) — audit, findings and prioritized plan.
 - [CHANGELOG.md](CHANGELOG.md) — release history and unreleased changes.

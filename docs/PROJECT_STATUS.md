@@ -39,7 +39,7 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (QEMU/hardware) evidence exists for this snapshot.
 
 **Validation distinction.** On 2026-10-31 the following were executed:
-`zig build` (14/14 steps) and `zig build test` (49/49 steps, **702/702 tests
+`zig build` (14/14 steps) and `zig build test` (49/49 steps, **704/704 tests
 passed**). `zig build qemu-test`, `qemu-storage-test`, `qemu-interactive-test`
 and `check` were **not executed** — the environment has no QEMU, no OVMF and no
 reachable package mirror. Host test results therefore appear as
@@ -51,7 +51,7 @@ reachable package mirror. Host test results therefore appear as
 |---|---|---|
 | `zig version` | 2026-10-31 | `0.17.0` |
 | `zig build` | 2026-10-31 | success — 14/14 steps; `kynox-boot.efi` 185,344 B · `kynox-kernel` 66,777,813 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test` | 2026-10-31 | success — 702 tests (23 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 8 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
+| `zig build test` | 2026-10-31 | success — 704 tests (23 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 10 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
 | `zig build qemu-interactive-test` | — | **not executed** |
@@ -88,7 +88,7 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation | Linux process ABI, syscall translation, signals/futex/TLS, dynamic linker |
 | Windows binary compatibility | **0%** | not_started | No implementation | PE32+ loader, Win64 ABI, NT/Win32, DLL/TLS/unwind |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (702 tests) in `zig build test`, including a documentation link check and a planning-document structure guard; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (704 tests) in `zig build test`, including a documentation link check and a planning-document structure guard; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
 | Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, `docs-check`, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | CI defined but never run; toolchain installed by hand; no reproducible-artifact story |
 
@@ -110,7 +110,7 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (702) and QEMU integration scripts.
+- Host unit tests (704) and QEMU integration scripts.
 
 ## Planning documents (not implementation)
 
@@ -122,10 +122,11 @@ this file moved because of them.**
 | Document | Content | State of the described work |
 |---|---|---|
 | [strategy/market-landscape.md](strategy/market-landscape.md) | Market structure, nine technology deep dives, ranked opportunities, dated sources S1–S15 | Analysis only |
-| [architecture/platform-architecture.md](architecture/platform-architecture.md) | Layer map, kernel/user-mode split, sixteen subsystem contracts, dependency graph, cross-cutting rules | Target architecture; §10 maps the tree as it is today |
+| [architecture/platform-architecture.md](architecture/platform-architecture.md) | Layer map, kernel/user-mode split, eighteen subsystem contracts, dependency graph, cross-cutting rules | Target architecture; §10 maps the tree as it is today |
 | [architecture/graphics-platform.md](architecture/graphics-platform.md) | Display System, GPU driver model, graphics core, native API, renderer, compositor, tools, security and performance model | Nothing implemented; the tree has a software rasteriser and an in-kernel compositor |
 | [architecture/application-ecosystem.md](architecture/application-ecosystem.md) | KEX v2 layout, loader pipeline, SDK layers, KPK packaging, sandbox portals, atomic updates, compatibility contract | Planning; KEX/KPK codecs exist, no package manager, no SDK API beyond the syscall wrappers |
 | [architecture/security-architecture.md](architecture/security-architecture.md) | Threat model, trust boundaries, capability proof obligations, device isolation, supply chain, recovery, explicit non-guarantees | Planning; SMEP/SMAP and KPTI exist, IOMMU and measured boot do not |
+| [architecture/user-experiences.md](architecture/user-experiences.md) | Five profiles (home, gaming, development, enterprise, professional) with measurable requirements, what they share, and the rule that a profile is policy, never a separate ABI | No profile exists beyond the boot scene |
 | [roadmap/PRODUCT_ROADMAP.md](roadmap/PRODUCT_ROADMAP.md) | Stages S0–S15 ordered by dependency, with the P/F/E/H evidence ladder | No stage complete |
 
 Decisions with analysed alternatives are recorded in

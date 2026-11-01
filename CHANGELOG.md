@@ -28,7 +28,7 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
   gaming, security, updates, tooling), ranked opportunities, risk register and
   fifteen dated sources. Planning document: it claims no feature.
 - `docs/architecture/platform-architecture.md` — layer map with a "today"
-  column, a sixteen-row kernel/user-mode table, sixteen subsystem contracts
+  column, a sixteen-row kernel/user-mode table, eighteen subsystem contracts
   (responsibility, interfaces, dependencies, privilege bounds, concurrency,
   memory, failure, security, performance criteria, current state, next step),
   dependency graph, concurrency model, failure ladder and unmeasured budgets.
@@ -44,6 +44,13 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
   model, boot chain, hardening, capability proof obligations, device/IOMMU
   rules, sandbox, supply chain, audit and recovery, per-property evidence and
   explicit non-guarantees.
+- `docs/architecture/user-experiences.md` — five profiles (home, gaming,
+  development, enterprise, professional) with numbered, measurable
+  requirements and the rule that a profile is policy, never a separate ABI,
+  package format or graphics stack.
+- `docs/architecture/platform-architecture.md` §4.0 — public versus internal
+  interface table for all eighteen subsystems; §4.17 updates/recovery and
+  §4.18 virtualisation/enterprise contracts.
 - `docs/roadmap/PRODUCT_ROADMAP.md` — stages S0–S15 ordered by real
   dependencies, each with scope, prerequisites, interfaces, deliverables,
   objective completion criteria, tests, risks, external dependencies and
@@ -222,7 +229,7 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success (14/14 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 702/702 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
+| `zig build test` | success — 704/704 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
 | `zig build docs-check` | success — every relative link resolves |
 | `zig build -Dioapic-delivery=true` | success (compiles; **never booted**, so no delivery is claimed) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |

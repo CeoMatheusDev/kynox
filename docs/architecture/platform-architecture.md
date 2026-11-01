@@ -95,6 +95,7 @@ code must be privileged or why it must not be.
 | Package manager, updater | User space | Policy, signatures, rollback |
 | Portal/permission broker | User space | Mediation with user consent |
 | Session manager, shell, desktop | User space | User experience |
+| Hypervisor, device model | User space | Guest isolation; kernel owns VMCS/EPT only |
 | Debugger, profiler, validators | User space | Tooling must not run privileged |
 
 \* The user-space driver tier requires an IOMMU. Without one, the vendor driver
@@ -106,6 +107,41 @@ published per device.
 The format is compact: **R**esponsibility, **I**nterfaces, **D**ependencies,
 **P**rivilege, **C**oncurrency, **M**emory, **F**ailure, **S**ecurity,
 **Pf**erformance target, **T**oday, **N**ext.
+
+Two interface classes exist and are never mixed. A **public interface** is a
+contract other components may depend on: it is versioned, documented and cannot
+change without an ABI/format decision. An **internal interface** is private to a
+component's implementation and may change at any commit. §4.0 lists both for
+every subsystem; the blocks in §4.1–4.18 describe what the component must
+guarantee.
+
+### 4.0 Public and internal interfaces per subsystem
+
+| Subsystem | Public interface (stable, versioned) | Internal interface (private, changeable) |
+|---|---|---|
+| Boot handoff | `KNB → KNK` structure, versioned in `shared/handoff.zig` | Loader page-table builder, GOP selection |
+| CPU/interrupts | Vector assignments, exception frame layout, syscall entry contract | IDT/GDT construction, PIC/APIC register helpers |
+| Time | Clock classes and read semantics exposed to user space | Timer calibration, TSC scaling |
+| Physical/virtual memory | `SharedMemory` objects, mapping permissions, physical-address grants | PMM bitmap, page-table walk, heap arenas |
+| Processes/scheduler | Task creation, priority/class API, wait primitives | Run queues, load balancing, context-switch asm |
+| Syscall gate | Syscall numbers, argument marshalling, status codes (ABI revision) | Dispatch table, copy-in/copy-out helpers |
+| IPC | Channel protocol, message framing, capability attachment | Ring layout, wake-up mechanism |
+| Capabilities | Handle semantics, rights bitmask, delegation rules | Handle table representation, revocation sweeps |
+| Device model | Device classes, resource grants (MMIO/IRQ/DMA), driver manifests | Probe ordering, bus walkers, KVDI transport |
+| Storage/VFS | Mount namespace API, file operations, volume/KNV format | Cache, journal, block scheduler |
+| Network | Socket classes, address types, service endpoints | Packet buffers, protocol state machines |
+| Display (KDS) | Connector/CRTC/plane properties, atomic commit, fence handoff | Mode validation, link training, EDID parsing |
+| Graphics core | GPU objects, queue/submission ABI, fence timelines | Command validation tables, hang detector |
+| Audio | Stream classes, format negotiation, clock domain | Graph scheduling, DMA ring management |
+| Services/session | Service manifest, supervision protocol, session events | Startup ordering, dependency solver |
+| Diagnostics | Trace record format, counter schema, capture file format | Per-CPU ring buffers, symbolisation |
+| Updates | Package manifest, signature chain, image slots, rollback API | Downloader, delta engine, staging |
+| Virtualisation | Guest VM lifecycle, device model ABI, vCPU exit reasons | VMCS/VMCB handling, IOMMU domain tables |
+
+The right-hand column may be rewritten by any implementation change; the
+left-hand column requires an ADR and, for the ABI and formats, a compatibility
+assessment. This split is what allows internals to evolve quickly while
+applications, drivers and tools stay stable.
 
 ### 4.1 Boot and firmware handoff
 
@@ -393,6 +429,60 @@ The format is compact: **R**esponsibility, **I**nterfaces, **D**ependencies,
 - **T** Serial logs, counters, benchmark harness (not in the build graph).
 - **N** Binary trace format, frame capture, GPU counters, crash triage tool.
 
+### 4.17 Updates and recovery
+
+- **R** Deliver a verified system image and application versions, activate them
+  atomically, and return the machine to a known-good state without user data
+  loss.
+- **I** Signed manifest and repository index (ADR-0007), image slot selection,
+  health signal, "roll back now", recovery-mode entry.
+- **D** Storage (two image slots or snapshots), boot loader (slot choice and
+  failure counting), signature verification (public key ring), package manager.
+- **P** User space; the boot loader only reads slot state and a monotonic
+  counter in a reserved region.
+- **C** One transaction at a time; activation is a single pointer commit; the
+  downloader may be concurrent but cannot mutate a slot in use.
+- **M** No full-image copy in RAM: streaming verification and write; delta
+  patches are optional and never trusted without the final hash.
+- **F** Failed verification discards the download; failed boot increments the
+  counter and the third failure selects the previous slot; a missing slot falls
+  back to recovery media.
+- **S** Every artifact is signed; signatures cover content hashes; keys can be
+  revoked; the recovery environment is itself a signed image.
+- **Pf** Activation time and rollback time measured per storage class; update
+  never blocks the session for more than the final reboot.
+- **T** KPK codec only; no repository, no signature verification, no slots, no
+  updater, no recovery mode.
+- **N** Image layout with two slots, signed repository, health-signal protocol,
+  rollback tests with injected boot failures.
+
+### 4.18 Virtualisation and enterprise resources
+
+- **R** Run guest systems under hardware-assisted isolation, expose device
+  assignment safely, and give managed deployments policy, identity and audit
+  without a privileged vendor agent.
+- **I** VM lifecycle (create, start, stop, snapshot), virtual device model ABI,
+  vCPU exit reasons, policy objects delivered to the broker, audit record
+  schema.
+- **D** CPU virtualisation extensions (VT-x/AMD-V), IOMMU (VT-d/AMD-Vi), memory
+  subsystem, device model, capabilities, identity service.
+- **P** A hypervisor service in user space driving minimal kernel primitives;
+  the kernel owns VMCS/VMCB setup, EPT/NPT and interrupt injection.
+- **C** Per-vCPU threads pinned by policy; device-model threads never share
+  mutable state with the guest without a ring.
+- **M** Guest memory is pinned or IOMMU-mapped, charged to the VM's quota, and
+  released only after all DMA is quiesced.
+- **F** A guest crash or a hostile guest driver is contained to its domain; a
+  hypervisor crash kills the VMs, never the host.
+- **S** Device assignment requires an IOMMU domain; without one, assignment is
+  refused rather than emulated insecurely. Enterprise policy never bypasses
+  user consent for personal data.
+- **Pf** Exit handling cost, VM boot time and assigned-device throughput measured
+  per platform; no claim before measurement.
+- **T** None. No VT-x, VT-d, hypervisor, VMCS handling or guest support exists.
+- **N** VT-x/EPT enablement, a minimal hypervisor service, IOMMU domains, device
+  assignment with a hostile-guest test.
+
 ## 5. Cross-cutting contracts
 
 - **Object identity:** every kernel object is named by a 64-bit handle with a
@@ -421,7 +511,9 @@ boot ─▶ CPU/interrupts ─▶ time ─▶ scheduler ─▶ IPC ─▶ capabi
                     │                     ├─▶ storage ─▶ VFS service
                     │                     ├─▶ display core ─▶ compositor
                     │                     ├─▶ GPU core ─▶ KGA ─▶ renderer
-                    │                     └─▶ network / audio devices
+                    │                     ├─▶ network / audio devices
+                    ├─▶ update service ─▶ recovery
+                    └─▶ hypervisor ─▶ IOMMU ─▶ device assignment
                     └─▶ observability ◀── every subsystem
 ```
 
@@ -488,6 +580,7 @@ method.
 | Security | Ring 3, W^X, capabilities | SMEP/SMAP, KASLR, IOMMU, secure boot chain |
 | Updates | KPK codec | Repository, signatures, atomic update |
 | Tooling | Serial logs, counters | Trace format, capture, profilers |
+| Virtualisation | None | VT-x/EPT, IOMMU domains, hypervisor service |
 
 ## 11. Open questions
 
