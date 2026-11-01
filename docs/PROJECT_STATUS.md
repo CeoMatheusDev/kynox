@@ -248,6 +248,7 @@ Taken from the audit plan (see the audit for evidence and scope):
 9. Define Linux compatibility as an isolated personality starting from a small
    static ELF64 matrix; Windows as a separate PE32+/Win64 personality.
 10. Expand VFS and durable storage (journal/atomic commit) with recovery tests.
+11. **Audit K3.12.2 (scheduler/SMP)**: branch `audit/k3-12-2-scheduler-smp` merged to `main` (`39335ae`). Defeitos registrados (per-CPU `ready_queue` nunca usado; `wakeTask` sem enqueue; `prepareNext` stale `.ready`; `cpuId()` fixo; `registerCpu` duplo incremento; `failed` ausente). Regressão `tests/scheduler_regression.zig`; maturidade 55% mantida (sem validação runtime); correções bloqueadas até design de lock/`running_cpu`/migração; K4 NÃO iniciado.
 
 ## Updating this status
 
