@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-bda-and-ebda.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The firmware data below 1 MiB: the EBDA pointer at 0x40E is a segment, the block of the trampoline has to end at or below it, and a failed read says that it was not checked instead of reporting null.",
+    },
     "docs/audits/2026-11-01-halt-ipi-and-fatal.md": {
         "kind": "implementation-record",
         "authority": "record",

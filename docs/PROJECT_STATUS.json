@@ -335,7 +335,7 @@
         "see an AP reach kynox_ap_entry (the trampoline is published, but no AP has answered)"
       ],
       "tests": [
-        "arch-tests (176 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, pci, virtio, timer, fpu)",
+        "arch-tests (181 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
@@ -490,7 +490,7 @@
     },
     {
       "id": "smp",
-      "maturity_percent": 76,
+      "maturity_percent": 78,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
@@ -513,6 +513,7 @@
         "smp.shootdown refuses with a reason (no_targets, no_apic, complete, timeout) and the handler runs on the processor that holds the stale entry, invalidates it (invlpg, or a reload of CR3 for the all scope) and acknowledges",
         "a clock per processor: timer.armCpuClock gives each CPU a role (system on the BSP, local on an AP), timer.drivesSchedulerOn answers per processor, timer.onCpuTick counts per CPU and moves the clock of the machine only for the system role, and timer.ticksOf/ignoredTicks expose the numbers",
         "an AP enables its own local APIC (enable, TPR 0) and arms its own timer with the bus frequency the BSP measured (timer.armLocalApicTimer), refusing instead of guessing when there is no measurement",
+        "the block of the APs is placed against the firmware data, not only against the memory map: kernel/arch/x86_64/bda.zig reads the EBDA segment at 0x40E, fitsBelowEbda requires the block to end at or below its base, and smp.prepareTrampoline refuses with error.OverlapsEbda",
         "the halt IPI (vector 67): apic.sendHalt and smp.stopOtherCpus, which counts the processors that are online and the IPIs it actually delivered, and smp.describeStop, which prints those two numbers and the reason when they differ (no controller)",
         "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
@@ -524,7 +525,7 @@
         "a shootdown that times out is counted and not retried; nothing chases the processor that did not answer",
         "no migration of a running task",
         "no per-CPU timers/IPIs for scheduling",
-        "the page of the trampoline is checked against the firmware memory map, not against the EBDA pointer at 0x40E",
+        "the EBDA pointer has never been read on hardware, and a firmware that publishes none falls back to the page 0x8000 as a documented assumption",
         "no SMP stress test"
       ],
       "pending_work": [
@@ -1507,16 +1508,16 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 845 tests, in zig build test",
+        "24 host test artifacts, 850 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "845 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path)",
+        "850 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 72 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 70 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 71 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
@@ -1532,7 +1533,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 52/52 steps, 845/845 tests"
+        "zig build test: 52/52 steps, 850/850 tests"
       ],
       "validation": {
         "status": "host_tests_passed",

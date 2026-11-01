@@ -38,6 +38,7 @@ const handoff = kynox.handoff;
 const memmap = kynox.memmap;
 const port = kynox.port;
 const fatal = @import("fatal.zig");
+const bda = @import("arch/x86_64/bda.zig");
 const serial = kynox.serial;
 const usermode = kynox.usermode;
 const compositor_abi = kynox.compositor;
@@ -2837,6 +2838,37 @@ fn enterCpuScheduler(cpu_index: u8, kernel_stack: []u8) void {
 /// only queue that has a processor.
 var ap_worker: ?*scheduler.Task = null;
 
+/// The physical base of the extended BIOS data area, or null when the firmware
+/// published none (or when the page that holds the pointer is not mapped).
+///
+/// The word at 0x40E is a segment, so the base is `word << 4`; zero means "the
+/// firmware published nothing", which is not the same as "an EBDA at zero".
+fn readEbdaBase() ?u64 {
+    // The kernel maps its own image and the framebuffer, not the page at zero.
+    // Mapping it by identity is enough to read two bytes, and the page is not
+    // handed to anybody else: the physical manager reserves everything below
+    // 1 MiB.
+    paging.mapKernelPage(0, 0) catch |err| switch (err) {
+        error.AlreadyMapped => {},
+        else => {
+            serial.printLine("[KNK] ap trampoline: the page of the BDA could not be mapped ({s}); the EBDA was not checked", .{
+                @errorName(err),
+            });
+            return null;
+        },
+    };
+
+    const pointer: *const volatile u16 = @ptrFromInt(bda.bda_base + bda.ebda_pointer_offset);
+    const word = pointer.*;
+    const base = bda.ebdaFromWord(word);
+    if (base) |value| {
+        serial.printLine("[KNK] ap trampoline: EBDA at 0x{x} (word 0x{x} at 0x40E)", .{ value, word });
+    } else {
+        serial.printLine("[KNK] ap trampoline: the firmware published no EBDA", .{});
+    }
+    return base;
+}
+
 fn installApTrampoline() void {
     const address = ap_trampoline.base_address;
     const count = @min(boot_info.memory_map_entries, max_memory_descriptors);
@@ -2865,7 +2897,14 @@ fn installApTrampoline() void {
     // no-execute feature the write would fault.
     const efer_bits = cpu.modeBits();
 
-    if (smp.prepareTrampoline(address, paging.rootAddress(), efer_bits)) |err| {
+    // The word at 0x40E is the segment of the extended BIOS data area: the
+    // firmware map says the region below 1 MiB is usable RAM, and the firmware
+    // itself has data living there. The page of the BDA has to be mapped before
+    // it can be read, and a mapping that fails is not a reason to stop the boot:
+    // it is a reason to say that the EBDA was not checked.
+    const ebda_base = readEbdaBase();
+
+    if (smp.prepareTrampoline(address, paging.rootAddress(), efer_bits, ebda_base)) |err| {
         serial.printLine("[KNK] ap trampoline: copy at 0x{x} refused ({s}); no AP will be started", .{
             address, @errorName(err),
         });

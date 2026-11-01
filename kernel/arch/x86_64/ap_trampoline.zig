@@ -106,6 +106,9 @@ pub const Error = error{
     BadPlacement,
     /// A value does not fit in the field that holds it.
     ValueTooLarge,
+    /// The block would reach into the extended BIOS data area that the firmware
+    /// allocated below 1 MiB at run time.
+    OverlapsEbda,
 };
 
 /// The fields that are the same for every AP.

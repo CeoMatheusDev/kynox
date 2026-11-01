@@ -21,6 +21,31 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — o trampolim respeita o dado do firmware
+
+- **O buraco**: a região abaixo de 1 MiB era considerada livre porque o mapa do
+  handoff diz que é RAM utilizável — e o mapa está certo sobre a RAM, mas foi
+  construído **antes** de o firmware alocar a área estendida de dados do BIOS
+  (EBDA). Escrever o trampolim por cima dela corrompe dados que ninguém mais no
+  sistema conhece, e a falha aparece depois e em outro lugar.
+- **`kernel/arch/x86_64/bda.zig`**: a palavra em 0x40E é um **segmento**
+  (`ebdaFromWord` devolve `word << 4`, e zero é "o firmware não publicou uma"),
+  `ebdaBase`/`conventionalKiB` leem a BDA com `error.Short` para uma fatia curta,
+  e `fitsBelowEbda` aplica a regra conservadora: o **fim** do bloco tem de ficar
+  na base da EBDA ou abaixo — a EBDA não declara tamanho, e a função diz isso em
+  vez de fingir que sabe onde ela acaba.
+- **A recusa**: `smp.prepareTrampoline` ganhou `ebda_base` e
+  `error.OverlapsEbda`; `main.zig` mapeia a página zero por identidade, lê a
+  palavra e imprime o que encontrou — ou imprime que **não foi possível olhar**,
+  que é diferente de "não há EBDA".
+- **Cinco testes de host** (850 no total, `arch-tests` 181): o ponteiro zero, o
+  segmento contra o endereço, a leitura nos offsets certos com `error.Short`, os
+  quatro casos de colocação (abaixo, exatamente na base, um byte dentro, começo
+  abaixo e fim dentro) e o estouro do fim do bloco.
+- Documentação: `docs/audits/2026-11-01-bda-and-ebda.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`smp` 76% → 78%), `README.md`,
+  `docs/ai/context-pack.md` e a correção datada no §7 da auditoria do trampolim.
+
 ### Added (2026-11-01) — a máquina falha inteira: a IPI de parada e um caminho de falha só
 
 - **O buraco**: todas as falhas fatais terminavam em `port.haltForever()`, que

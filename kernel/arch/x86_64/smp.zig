@@ -40,6 +40,7 @@ const segment = @import("segment.zig");
 const trampoline = @import("ap_trampoline.zig");
 const tlb = @import("tlb.zig");
 const timer = @import("timer.zig");
+const bda = @import("bda.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -123,9 +124,18 @@ pub fn publishTrampoline(base: u64) void {
 /// Devolve o erro quando a copia nao aconteceu: um booleano aqui esconderia
 /// **qual** pre-condicao falhou, e um AP iniciado sem trampolim executa o que
 /// estiver naquela pagina.
-pub fn prepareTrampoline(address: u64, cr3: u64, efer_bits: u32) ?trampoline.Error {
+pub fn prepareTrampoline(address: u64, cr3: u64, efer_bits: u32, ebda_base: ?u64) ?trampoline.Error {
     const layout = trampoline.kernelLayout();
     trampoline.validatePlacement(address, layout.size) catch |err| return err;
+
+    // The firmware map calls the whole region below 1 MiB usable RAM, and it is
+    // not: the firmware allocated the extended BIOS data area there at run time,
+    // after the map was built. A block that reaches into it overwrites data that
+    // the firmware still owns, and the failure shows up much later and somewhere
+    // else.
+    if (!bda.fitsBelowEbda(ebda_base, address, trampoline.page_size)) {
+        return error.OverlapsEbda;
+    }
 
     const destination = @as([*]u8, @ptrFromInt(address))[0..@intCast(trampoline.page_size)];
     const source = trampoline.imageAddress()[0..layout.size];
