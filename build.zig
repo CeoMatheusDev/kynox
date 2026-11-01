@@ -627,33 +627,48 @@ pub fn build(b: *std.Build) void {
     const ipc_tests = b.addTest(.{
         .name = "ipc-tests",
         .root_module = ipc_test_module,
+        // The channel imports the context of the tasks, which imports the
+        // policy of the scheduler: without the filter, the tests of those two
+        // modules would be counted here **and** in `task-tests`, and the suite
+        // would grow without testing anything new. The filter also drops the
+        // anonymous test block of the root itself, which asserts nothing.
+        .filters = &.{"ipc.channel.test."},
     });
     unit_test_step.dependOn(&b.addRunArtifact(ipc_tests).step);
 
-    // The scheduler of the tasks is tested on the host as well: the policy is
-    // the part that can be wrong without a processor noticing, and it had no
-    // tests at all (defect 1 of the audit of 2026-10-31). The root sits at the
-    // top of the kernel tree because the scheduler imports `arch/`, `ipc/` and
-    // `fs/`.
+    // The task subsystem is tested on the host as well: the policy of the
+    // scheduler, the scheduler, the wait queue and the mutex are the parts that
+    // can be wrong without a processor noticing, and none of them had a test
+    // before 2026-11-01 (defect 1 of the audit of 2026-10-31). The root sits at
+    // the top of the kernel tree because the scheduler imports `arch/`, `ipc/`
+    // and `fs/`.
     //
-    // The artifact keeps the filter of its own tests: the module of the
-    // scheduler imports the architecture modules, whose tests already run in
-    // `arch-tests`, and running them twice would inflate the count of the
-    // suite without testing anything new.
-    const scheduler_test_module = b.createModule(.{
+    // The artifact keeps the filters of its own modules: the scheduler imports
+    // the architecture modules, whose tests already run in `arch-tests`, and
+    // running them twice would inflate the count of the suite without testing
+    // anything new. The context of the task is listed as well because the
+    // scheduler is what makes it reachable, and a name that appears once is
+    // easier to read than a directory scan.
+    const task_test_module = b.createModule(.{
         .root_source_file = b.path("kernel/task_root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    scheduler_test_module.addImport("kynox_shared", shared);
+    task_test_module.addImport("kynox_shared", shared);
     // The architecture modules read the configuration at comptime.
-    scheduler_test_module.addOptions("kynox_config", kernel_options);
-    const scheduler_tests = b.addTest(.{
-        .name = "scheduler-tests",
-        .root_module = scheduler_test_module,
-        .filters = &.{"task.scheduler.test."},
+    task_test_module.addOptions("kynox_config", kernel_options);
+    const task_tests = b.addTest(.{
+        .name = "task-tests",
+        .root_module = task_test_module,
+        .filters = &.{
+            "task.policy.test.",
+            "task.scheduler.test.",
+            "task.wait.test.",
+            "task.mutex.test.",
+            "task.context.test.",
+        },
     });
-    unit_test_step.dependOn(&b.addRunArtifact(scheduler_tests).step);
+    unit_test_step.dependOn(&b.addRunArtifact(task_tests).step);
 
     // The RamFS and the ELF64 load planner are free of architecture
     // specific code. They share a root at the top of the kernel tree

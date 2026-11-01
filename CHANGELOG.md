@@ -21,6 +21,33 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — the task subsystem: pure policy, wait queue, mutex
+
+- **The scheduling policy left the scheduler.** `kernel/task/policy.zig` holds
+  the decisions as pure functions over a flat description of the queue
+  (`pickNext`, `shouldPreempt`, `quantumFor`, `budgetFor`, `deadlineFor`,
+  `minVruntime`), and `scheduler.zig` keeps the state, the counters and the
+  mechanism. It is step 2 of K3. 12 tests, including a property test over 200
+  random queues against a reference implementation.
+- **A wait queue that cannot lose a wakeup.** `kernel/task/wait.zig` was a
+  42-line stub whose `dequeueWaiter` returned a field that nothing set; it is now
+  a FIFO queue of caller-owned nodes with a deadline per wait, a remembered wake
+  for the producer that runs first (`AddResult.already_woken`), a detach
+  primitive for the direct handoff, and separate counters for a wake, a
+  cancellation and a timeout. 11 tests, including a 500-operation invariant run.
+- **A mutex with an owner.** `kernel/task/mutex.zig`: recursion up to 255, a
+  queue of waiters, and a release that **transfers the ownership before it wakes
+  the waiter**, so a third task cannot take the mutex in the interval. 10 tests,
+  one of which asserts the ownership from inside the wake callback.
+- **Deleted**: `kernel/task/runqueue.zig` (a stub whose dequeue did not shift and
+  which nothing imported; the scheduler's own per-CPU `ready_queue` is the real
+  one) and `tests/wait_lifecycle_regression.zig` (structural assertions, one of
+  them now false, reachable from no target). Unreachable files: seven → six.
+- Measured: **781 tests in 51/51 steps** (`task-tests` 46, `ipc-tests` filtered to
+  its own channel tests so the shared modules are not counted twice), with
+  `zig build` writing the image and no runtime evidence. The mutex and the queue
+  have **no caller in the kernel yet**, and the scheduler still has no lock.
+
 ### Added (2026-11-01) — the scheduler policy is tested on the host
 
 - **`scheduler-tests`, 12 tests.** The scheduling policy of

@@ -28,6 +28,8 @@
 
 const std = @import("std");
 
+const policy = @import("policy.zig");
+
 /// The context of a task.
 ///
 /// It holds the registers of the processor, the state of the processor that
@@ -133,7 +135,10 @@ pub const frame_size: usize = 176;
 /// task ready again, otherwise it resumes with the neutral result of the
 /// call before the event or the message arrives.
 pub fn quantumPreempts(state_is_running: bool, quantum: u16) bool {
-    return state_is_running and quantum != 0;
+    // The answer lives in the policy module, which is where the whole decision
+    // of the scheduler was moved on 2026-11-01. This function stays because it
+    // is the name the scheduler used, and one definition is enough.
+    return policy.shouldPreempt(state_is_running, quantum);
 }
 
 test "the quantum only preempts a task that is still running" {

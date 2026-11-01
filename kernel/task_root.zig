@@ -15,7 +15,8 @@
 
 //! Aggregated entry point of the kernel modules that the host can test.
 
-//! Aggregated entry point of the host tests of the task scheduler.
+//! Aggregated entry point of the host tests of the task subsystem: the policy of
+//! the scheduler, the scheduler itself, the wait queue and the mutex.
 //!
 //! The scheduler chooses the next task from the policy that lives in
 //! `task/scheduler.zig`, and that policy reaches into `arch/` (the segment of
@@ -33,7 +34,10 @@
 
 const Context = @import("task/context.zig").Context;
 
+pub const policy = @import("task/policy.zig");
 pub const scheduler = @import("task/scheduler.zig");
+pub const wait_queue = @import("task/wait.zig");
+pub const mutex = @import("task/mutex.zig");
 
 // The four symbols that `arch/x86_64/task.s` defines for the real switch. The
 // host build has no assembly, so the test binary defines them here: the
@@ -48,5 +52,8 @@ export var kynox_next_cr3: u64 = 0;
 // the binary. Without it the artifact would be built with zero tests and would
 // pass no matter what.
 test {
+    _ = @import("task/policy.zig");
     _ = @import("task/scheduler.zig");
+    _ = @import("task/wait.zig");
+    _ = @import("task/mutex.zig");
 }

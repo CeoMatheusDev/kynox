@@ -23,7 +23,9 @@
 | `zig build docs-check` | success (it is part of `zig build test`) |
 
 The new artifact is `scheduler-tests`: **12 tests** (11 named tests plus the
-unnamed `task_root.test_0` that brings the module into the binary). The total
+unnamed `task_root.test_0` that brings the module into the binary). It was
+renamed `task-tests` later the same day, when the wait queue and the mutex joined
+it; see [`2026-11-01-task-subsystem.md`](2026-11-01-task-subsystem.md). The total
 moved from 736 to 748, and no other artifact changed its count: `ipc-tests`
 still reports 6, `arch-tests` still reports 144.
 

@@ -34,6 +34,7 @@ const paging = @import("../arch/x86_64/paging.zig");
 const segment = @import("../arch/x86_64/segment.zig");
 const smp = @import("../arch/x86_64/smp.zig");
 const channel = @import("../ipc/channel.zig");
+const policy = @import("policy.zig");
 const process = @import("process.zig");
 
 /// The context of a task.
@@ -131,6 +132,16 @@ pub const Task = struct {
 
 /// Maximum number of tasks that the kernel supports.
 pub const max_tasks = 32;
+
+comptime {
+    // The policy receives the queue as a fixed array on the stack, because the
+    // choice runs from the timer interrupt and cannot allocate. A pool larger
+    // than the array would silently hide tasks from the policy, so the size of
+    // the pool may never pass the size of the description.
+    if (max_tasks > policy.max_entries) {
+        @compileError("scheduler.max_tasks is above policy.max_entries");
+    }
+}
 
 /// Summary of the state of the scheduler.
 pub const Statistics = struct {
@@ -298,22 +309,13 @@ pub const Scheduler = struct {
 
         // O EEVDF herda o menor vruntime das tarefas prontas, para que a
         // tarefa nova nao seja adiada indefinidamente.
-        var min_vruntime: i64 = 0;
-        var has_ready = false;
-        for (self.tasks) |slot| {
-            const other = slot orelse continue;
-            if (other == task) continue;
-            if (other.state != .ready) continue;
-            if (!has_ready or other.vruntime < min_vruntime) {
-                min_vruntime = other.vruntime;
-                has_ready = true;
-            }
-        }
-        task.vruntime = if (has_ready) min_vruntime else 0;
-        const quantum_vtime: i64 = @divTrunc(@as(i64, task.slice) * 1024, @as(i64, @intCast(task.weight)));
-        // Performance note: this division occurs once per new-task setup,
-        // not every tick; the deadline is incremented by cached quantum.
-        task.deadline = task.vruntime + @max(@as(i64, 1), quantum_vtime);
+        // A new task starts at the smallest virtual runtime of the tasks that
+        // can run, so that it is not given the processor for an unbounded
+        // stretch; the deadline is one slice of its weight above that, which
+        // is the same number the accounting charges when it runs.
+        const entries = self.describeQueue(task);
+        task.vruntime = policy.minVruntime(&entries) orelse 0;
+        task.deadline = policy.deadlineFor(task.vruntime, task.slice, task.weight);
 
         return task;
     }
@@ -415,7 +417,7 @@ pub const Scheduler = struct {
         var must_switch = current.state != .running;
         var preempted = false;
 
-        if (context.quantumPreempts(current.state == .running, current.quantum)) {
+        if (policy.shouldPreempt(current.state == .running, current.quantum)) {
             current.quantum -= 1;
             if (current.quantum == 0) {
                 // The current task has exhausted its quantum: return it to
@@ -473,13 +475,16 @@ pub const Scheduler = struct {
 
         // The entering task gets the quantum of its slice. Without the
         // refill the task would keep the zero that the last slice left
-        // behind, and `quantumPreempts` would stop preempting it for good:
-        // a task would be time-sliced exactly once in its whole life.
-        next.quantum = next.slice;
+        // behind, and the policy would stop preempting it for good: a task
+        // would be time-sliced exactly once in its whole life.
+        next.quantum = policy.quantumFor(next.slice);
 
-        // EEVDF: avanca vruntime pela fatia/weight (1024 = peso unitario).
+        // EEVDF: the virtual runtime advances by the value of one slice of the
+        // weight of the task (`policy.budgetFor`), which is the same number the
+        // deadline of a new task uses. One function, one definition of the
+        // exchange rate between processor time and virtual time.
         if (next.weight != 0) {
-            next.vruntime += @divTrunc(@as(i64, @intCast(next.slice)) * 1024, @as(i64, @intCast(next.weight)));
+            next.vruntime += policy.budgetFor(next.slice, next.weight);
         }
 
         // The processor loads the stack pointer of the task state segment
@@ -672,33 +677,45 @@ pub const Scheduler = struct {
 
     /// Finds the next task that is ready.
     ///
-    /// The search continues after the current task, so that every task
-    /// reaches the processor. A policy that always returned the first task
-    /// of the list would starve the others.
+    /// The choice itself is not here: it is `policy.pickNext`, a pure function
+    /// over a flat description of the queue, tested on its own. This function
+    /// is the adapter — it builds that description from the task objects
+    /// (which requires knowing what a process is, and that is state, not
+    /// policy) and maps the answer back to a task.
+    ///
+    /// The description keeps one entry per slot, including the slots that
+    /// cannot run, so that the ring of the policy walks the same order as the
+    /// list of the scheduler and the answer is the slot itself.
     fn findNextReady(self: *const Scheduler, current: *Task) ?*Task {
-        const start = self.indexOf(current) + 1;
+        const entries = self.describeQueue(current);
+        const chosen = policy.pickNext(&entries, self.indexOf(current)) orelse return null;
+        return self.tasks[chosen];
+    }
 
-        var best_task: ?*Task = null;
-        var best_vruntime: i64 = std.math.maxInt(i64);
+    /// Describes the queue as the policy sees it.
+    ///
+    /// A slot is eligible when it holds a task, the task is ready, it is not
+    /// the task that is leaving, and the process of the task is not leaving:
+    /// the threads of a process that is `exiting` or `reaped` are not
+    /// scheduled, because their address space is on its way out.
+    fn describeQueue(self: *const Scheduler, current: *Task) [max_tasks]policy.Entry {
+        var entries: [max_tasks]policy.Entry = undefined;
 
-        var offset: usize = 0;
-        while (offset < self.tasks.len) : (offset += 1) {
-            const index = (start + offset) % self.tasks.len;
-            const task = self.tasks[index] orelse continue;
+        for (self.tasks, 0..) |slot, index| {
+            entries[index] = .{ .index = index, .vruntime = 0, .eligible = false };
+
+            const task = slot orelse continue;
             if (task == current) continue;
             if (task.state != .ready) continue;
-            // K4.3 fix: skip threads whose process is terminating or reaped.
-            if (task.process_ref) |proc_ref| {
-                const proc_state = proc_ref.state;
-                if (proc_state == .exiting or proc_state == .reaped) continue;
+            if (task.process_ref) |process_ref| {
+                const state = process_ref.state;
+                if (state == .exiting or state == .reaped) continue;
             }
-            // EEVDF: escolhe a tarefa elegivel com menor vruntime.
-            if (best_task == null or task.vruntime < best_vruntime) {
-                best_vruntime = task.vruntime;
-                best_task = task;
-            }
+
+            entries[index] = .{ .index = index, .vruntime = task.vruntime, .eligible = true };
         }
-        return best_task;
+
+        return entries;
     }
 
     /// The position of a task in the list of the scheduler.

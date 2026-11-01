@@ -20,7 +20,7 @@
 | Threads | a task *is* a thread; no thread group |
 | Processes | no process object. Scheduling slots are used directly as "processes"; `fs` indexes by a process id that must be smaller than `max_processes = 8` |
 | Lifecycle | `create`, `start`, `terminateCurrent`; **no join, no wait, no reap, no exit code**; `terminateCurrent` never frees the slot, so a boot that cycles 32 tasks is out of slots |
-| Synchronisation | spinlock and a counting semaphore; **no mutex with ownership, no reader/writer lock, no wait queue, no condition variable, no futex-like primitive** |
+| Synchronisation | spinlock and a counting semaphore; **a mutex with ownership, recursion and a direct handoff** (`task/mutex.zig`, 10 host tests) and **a wait queue with a deadline and no lost wakeup** (`task/wait.zig`, 11 host tests) exist since 2026-11-01, **with no caller in the kernel yet**; still no reader/writer lock, no condition variable and no futex-like primitive |
 | Timers | PIT and LAPIC tick both drive scheduling; no per-task sleep, no timeout list |
 | SMP | `current[]` is per-CPU in shape but the CPU struct's `current_task` is never written; a single global TSS means ring 3 on an AP is impossible |
 
@@ -169,7 +169,7 @@ Rules:
 | Tier | What |
 |---|---|
 | Unit (host) | policy functions: pick order, budget charge, preemption decision, queue invariants |
-| Unit (host) | lock implementations: try-lock behaviour, wait-queue lost-wakeup property, rwlock writer preference |
+| Unit (host) | lock implementations: try-lock behaviour, wait-queue lost-wakeup property, rwlock writer preference. The mutex and the wait queue have their tests; the rwlock does not exist |
 | Integration (QEMU) | create N threads that increment a counter under a mutex; assert the exact count |
 | Integration (QEMU) | thread exits and is joined; slot and stack accounting returns to baseline |
 | Concurrency (QEMU, SMP) | run the counter test on 2+ APs with the same assertion |
