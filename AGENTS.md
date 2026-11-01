@@ -290,6 +290,8 @@ When a task changes implementation maturity:
 6. Keep README's summary consistent with the detailed status inventory.
 7. If a source comment or module overview contradicts the active call path, verify the callers and correct the stale documentation in the same task.
 
+Planning documents (`docs/strategy/market-landscape.md`, `docs/architecture/*.md`, `docs/roadmap/PRODUCT_ROADMAP.md`) and the ADRs marked "accepted for planning" describe intended architecture. They are **not** evidence: never cite them as proof that a subsystem exists, and never raise a percentage because a document was written. When a document and the tree disagree, the tree wins and the document is corrected.
+
 Percentages are engineering maturity estimates, not percent of total OS completion. Do not invent one overall OS percentage by averaging unrelated subsystems. Linux and Windows compatibility must remain at 0% until actual executable loading and ABI behavior are implemented and tested.
 
 ## 12. Identidade, geração e versionamento

@@ -23,7 +23,7 @@
     "note": "GitHub releases of ziglang publish 0.15.x; 0.17.0 must be obtained from a channel that publishes it"
   },
   "percentage_semantics": "estimated subsystem engineering maturity, not OS completion, LOC, feature count, or time spent",
-  "percentage_note": "no percentage was changed by the 2026-10-31 audit or by the P1 readiness work; the version/ABI/ACPI changes add contract enforcement and host tests, not runtime validation",
+  "percentage_note": "no percentage was changed by the 2026-10-31 audit, by the P1 readiness work or by the architecture/market/roadmap study; planning documents and ADRs record intent and constraints, not behaviour, and adding them is not evidence of implementation",
   "status_values": [
     "not_started",
     "scaffolding",
@@ -61,7 +61,12 @@
     },
     {
       "command": "zig build test",
-      "result": "success: 47/47 steps, 694/694 tests passed (22 test artifacts, fresh cache; includes docs-check)",
+      "result": "success: 49/49 steps, 702/702 tests passed (23 test artifacts, fresh cache; includes docs-check and docs-conformance-tests)",
+      "date": "2026-10-31"
+    },
+    {
+      "command": "zig build docs-check",
+      "result": "success: docs: every relative link resolves across all Markdown files, including the six planning documents and ADR-0004…0007",
       "date": "2026-10-31"
     },
     {
@@ -78,6 +83,64 @@
       "command": "zig build qemu-interactive-test",
       "result": "not executed: no OVMF firmware found (exit 2) and qemu-system-x86_64 absent; see docs/validation/qemu.md",
       "date": "2026-10-31"
+    }
+  ],
+  "planning_documents": [
+    {
+      "path": "docs/strategy/market-landscape.md",
+      "title": "Market and technology landscape: nine deep dives, fifteen dated sources, ranked opportunities",
+      "status": "planned work only; no feature claimed",
+      "date": "2026-10-31",
+      "adrs": []
+    },
+    {
+      "path": "docs/architecture/platform-architecture.md",
+      "title": "Target platform architecture: layer map, kernel/user-mode split, sixteen subsystem contracts, dependency graph",
+      "status": "planned work only; current state mapped in the document",
+      "date": "2026-10-31",
+      "adrs": []
+    },
+    {
+      "path": "docs/architecture/graphics-platform.md",
+      "title": "Graphics platform: display system, driver model, graphics core, native API, renderer, compositor, tools",
+      "status": "planned work only; the tree has a software rasteriser and an in-kernel compositor",
+      "date": "2026-10-31",
+      "adrs": [
+        "0004-graphics-stack-split.md",
+        "0005-native-graphics-api.md",
+        "0006-userspace-compositor.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/application-ecosystem.md",
+      "title": "Application ecosystem: executable format, ABI, SDK, packaging, sandbox and compatibility",
+      "status": "planned work only; KEX/KPK codecs exist, no package manager",
+      "date": "2026-10-31",
+      "adrs": [
+        "0007-packaging-sandbox-updates.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/security-architecture.md",
+      "title": "Security architecture: threat model, capability proofs, device isolation, supply chain, recovery",
+      "status": "planned work only; SMEP/SMAP and KPTI exist, IOMMU does not",
+      "date": "2026-10-31",
+      "adrs": [
+        "0004-graphics-stack-split.md",
+        "0007-packaging-sandbox-updates.md"
+      ]
+    },
+    {
+      "path": "docs/roadmap/PRODUCT_ROADMAP.md",
+      "title": "Product roadmap S0-S15 with the prototype/functional/emulator/hardware ladder",
+      "status": "no stage complete",
+      "date": "2026-10-31",
+      "adrs": [
+        "0004-graphics-stack-split.md",
+        "0005-native-graphics-api.md",
+        "0006-userspace-compositor.md",
+        "0007-packaging-sandbox-updates.md"
+      ]
     }
   ],
   "runtime_evidence_note": "No QEMU or hardware run was performed. Any runtime statement about the produced image is unverified for this snapshot.",

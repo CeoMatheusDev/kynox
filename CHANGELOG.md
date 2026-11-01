@@ -23,6 +23,44 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
 ### Added
 
+- `docs/strategy/market-landscape.md` — market structure, nine technology
+  deep dives (desktop, window management, rendering, GPU APIs, driver models,
+  gaming, security, updates, tooling), ranked opportunities, risk register and
+  fifteen dated sources. Planning document: it claims no feature.
+- `docs/architecture/platform-architecture.md` — layer map with a "today"
+  column, a sixteen-row kernel/user-mode table, sixteen subsystem contracts
+  (responsibility, interfaces, dependencies, privilege bounds, concurrency,
+  memory, failure, security, performance criteria, current state, next step),
+  dependency graph, concurrency model, failure ladder and unmeasured budgets.
+- `docs/architecture/graphics-platform.md` — Display System (KDS), GPU driver
+  model with honest vendor tiers, graphics core (KGC), native API (KGA),
+  renderer (KGR), compositor and window system (KWM), tools (KGT), security
+  and performance model, and graphics steps G0–G9.
+- `docs/architecture/application-ecosystem.md` — KEX v2 layout and manifest,
+  loader pipeline, SDK layers, linking model, KPK packaging and signing,
+  installation layout, atomic updates and rollback, portal sandbox, and the
+  compatibility contract for KLC/KWC.
+- `docs/architecture/security-architecture.md` — claimed-today table, threat
+  model, boot chain, hardening, capability proof obligations, device/IOMMU
+  rules, sandbox, supply chain, audit and recovery, per-property evidence and
+  explicit non-guarantees.
+- `docs/roadmap/PRODUCT_ROADMAP.md` — stages S0–S15 ordered by real
+  dependencies, each with scope, prerequisites, interfaces, deliverables,
+  objective completion criteria, tests, risks, external dependencies and
+  acceptance; the P/F/E/H evidence ladder separates prototype from hardware
+  validation.
+- `docs/decisions/0004…0007` — graphics stack split, native graphics API,
+  user-space compositor, and packaging/sandbox/updates. Marked **accepted for
+  planning**; none is implemented and each carries reversal criteria.
+- `docs_conformance.zig` — `docs-conformance-tests`: asserts the required
+  sections of the planning documents, their dated sources, their presence in
+  `docs/PROJECT_STATUS.json`, the ADR index entries and the roadmap ladder. It
+  asserts structure only, never that a planned feature exists.
+- `docs/PROJECT_STATUS.json` — new `planning_documents` inventory; no
+  percentage was changed.
+
+### Added (earlier)
+
 - `VERSION` — root file with the technical version (`0.1.0-alpha.1`), the only
   writable source of it.
 - `docs/VERSIONING.md` — normative identity and versioning policy: public and
@@ -184,7 +222,8 @@ identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success (14/14 steps); `kynox.img` 128 MiB, 32 731 clusters |
-| `zig build test` | success — 694/694 tests, 47/47 steps (22 test artifacts, fresh cache, `docs-check` included) |
+| `zig build test` | success — 702/702 tests, 49/49 steps (23 test artifacts, fresh cache, `docs-check` and `docs-conformance-tests` included) |
+| `zig build docs-check` | success — every relative link resolves |
 | `zig build -Dioapic-delivery=true` | success (compiles; **never booted**, so no delivery is claimed) |
 | `zig build qemu-test` | not executed — exits 2, `no OVMF firmware found` (see `docs/validation/qemu.md`) |
 | `zig build qemu-storage-test` | not executed — fails through the same dependency |

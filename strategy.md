@@ -133,6 +133,11 @@ docs/
   architecture/
   decisions/
   specs/
+  strategy/
+  roadmap/
+  releases/
+  audits/
+  validation/
 ```
 
 Não duplique a árvore atual por estética. Faça a extração de módulos somente quando a fronteira estiver clara e a migração puder ser testada.
@@ -613,7 +618,7 @@ The current subsystem maturity snapshot is maintained in:
 - docs/PROJECT_STATUS.md — human-readable progress, evidence, limitations and priorities.
 - docs/PROJECT_STATUS.json — machine-readable status inventory for agents and automation.
 
-Treat these as the current project-status source of truth, while source code and executed tests remain the authority for actual behavior. Update both status files whenever a subsystem changes state. Percentages are scoped engineering maturity estimates, not a global OS completion metric.
+Treat these as the current project-status source of truth, while source code and executed tests remain the authority for actual behavior. The target architecture and the staged plan live in docs/architecture/, docs/strategy/ and docs/roadmap/PRODUCT_ROADMAP.md; they are planning documents and carry no implementation claim. `docs-conformance-tests` keeps their required sections and their inventory entry from drifting. Update both status files whenever a subsystem changes state. Percentages are scoped engineering maturity estimates, not a global OS completion metric.
 
 The current highest-value gaps are SMP scheduler integration, VMM completeness, APIC/IOAPIC discovery, full native executable ABI/linking, VFS and power-loss-safe storage, asynchronous device I/O, and complete desktop services. Linux and Windows binary compatibility remain explicit long-term goals at 0% implementation until their loaders and OS ABIs work end to end.
 

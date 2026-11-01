@@ -390,6 +390,20 @@ pub fn build(b: *std.Build) void {
     });
     unit_test_step.dependOn(&b.addRunArtifact(markers_conformance_tests).step);
 
+    // Structural guard of the planning documents: required sections, dated
+    // sources and status-inventory coverage. It asserts structure only; it
+    // never asserts that a planned feature exists.
+    const docs_conformance_module = b.createModule(.{
+        .root_source_file = b.path("docs_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const docs_conformance_tests = b.addTest(.{
+        .name = "docs-conformance-tests",
+        .root_module = docs_conformance_module,
+    });
+    unit_test_step.dependOn(&b.addRunArtifact(docs_conformance_tests).step);
+
     // The version module carries the system version. Its tests fail if the
     // components and the string drift, or if build.zig.zon disagrees.
     const version_test_module = b.createModule(.{
