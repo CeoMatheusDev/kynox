@@ -410,6 +410,9 @@ pub const Scheduler = struct {
                 // The current task has exhausted its quantum: return it to
                 // the ready queue and choose the next task.
                 current.state = .ready;
+                // K3.12.2 fix: enqueue the ready task; previously missing.
+                const scheduler_inst = @import("task/scheduler.zig").scheduler;
+                scheduler_inst.enqueueReady(current, smp.cpuId());
             }
         }
 
@@ -574,6 +577,9 @@ pub const Scheduler = struct {
         const value: *Task = @ptrCast(@alignCast(task));
         if (value.state == .terminated) return;
         value.state = .ready;
+        // K3.12.2 fix: enqueue the ready task; previously missing.
+        const scheduler_inst = @import("task/scheduler.zig").scheduler;
+        scheduler_inst.enqueueReady(value, smp.cpuId());
     }
 
     /// Blocks the current task waiting for an input event.
