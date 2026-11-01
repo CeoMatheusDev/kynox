@@ -161,6 +161,7 @@ pub fn vectorName(vector: u64) []const u8 {
         30 => "security exception",
         31 => "reserved",
         32...47 => "hardware interrupt",
+        68...254 => "device interrupt",
         else => "unexpected vector",
     };
 }
@@ -196,9 +197,21 @@ pub fn install() void {
     // is the only thing still being written on the serial port.
     setGate(apic.halt_vector, @intFromPtr(&kynox_interrupt_67));
 
-    // The vectors that are not handled point at a stub that reports them.
+    // The device vectors: the range a device names when it interrupts with a
+    // message (MSI, MSI-X). Every vector has its own entry point, because the
+    // entry point is what tells the handler which vector arrived; a gate that
+    // pointed at a shared stub would report the wrong number.
+    for (0..registry.device_vector_count) |index| {
+        setGate(registry.first_device_vector + index, kynox_device_stub_table[index]);
+    }
+
+    // What is left — the holes between the hardware range and the device range,
+    // and the spurious vector — points at a stub that reports it.
     const unexpected = stubFor(255);
-    for (exception_count + hardware_interrupt_count..entry_count) |vector| {
+    var vector: usize = exception_count + hardware_interrupt_count;
+    while (vector < entry_count) : (vector += 1) {
+        if (vector >= registry.first_device_vector and
+            vector < registry.first_device_vector + registry.device_vector_count) continue;
         setGate(vector, unexpected);
     }
 
@@ -309,8 +322,29 @@ pub fn readTablePointer() IdtPointer {
 /// Verifies that the table that is active is the one the kernel installed.
 pub fn verify() bool {
     const pointer = readTablePointer();
-    return pointer.base == @intFromPtr(&table) and
-        pointer.limit == entry_count * @sizeOf(Gate) - 1;
+    if (pointer.base != @intFromPtr(&table)) return false;
+    if (pointer.limit != entry_count * @sizeOf(Gate) - 1) return false;
+
+    // The gates of the device range are the ones a device would reach, and a
+    // gate that points at the stub of another vector would report the wrong
+    // number to the handler. The two ends of the range are checked against the
+    // table the assembly publishes; a mismatch means `install` did not run or
+    // the table and the loop disagree.
+    const first = registry.first_device_vector;
+    const last = first + registry.device_vector_count - 1;
+    if (gateAddress(first) != kynox_device_stub_table[0]) return false;
+    if (gateAddress(last) != kynox_device_stub_table[registry.device_vector_count - 1]) return false;
+
+    return true;
+}
+
+/// The address of the entry point that a gate holds, rebuilt from its three
+/// parts.
+fn gateAddress(vector: u64) u64 {
+    const gate = table[vector];
+    return @as(u64, gate.offset_low) |
+        (@as(u64, gate.offset_middle) << 16) |
+        (@as(u64, gate.offset_high) << 32);
 }
 
 /// The frame of the processor that the stub built.
@@ -503,6 +537,17 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
         return 0;
     }
 
+    // A device vector: the device wrote the message into memory
+    // (MSI/MSI-X) and the local APIC delivered it. The registry decides who
+    // owns the vector; the interrupt is acknowledged after the handler, so a
+    // device that is served slowly cannot nest a second message on top of the
+    // first.
+    if (registry.isDeviceVector(vector)) {
+        const must_switch = registry.dispatchDevice(vector);
+        apic.eoi();
+        return if (must_switch) 1 else 0;
+    }
+
     // The halt IPI. The interrupt is finished at the controller first, because
     // after this line the processor never services another one.
     if (vector == @as(u64, apic.halt_vector)) {
@@ -576,3 +621,12 @@ extern var kynox_interrupt_64: u8;
 extern var kynox_interrupt_65: u8;
 extern var kynox_interrupt_66: u8;
 extern var kynox_interrupt_67: u8;
+
+/// The entry points of the device vectors, in vector order: entry N is the
+/// vector `first_device_vector + N`.
+///
+/// The table lives in assembly (`kynox_device_stub_table`, in `interrupt.s`)
+/// because a hundred and eighty-seven externs in Zig would be a hundred and
+/// eighty-seven lines that say nothing. The assembly knows its own symbols; the
+/// kernel only indexes the table.
+extern var kynox_device_stub_table: [registry.device_vector_count]usize;

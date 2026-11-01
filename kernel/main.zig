@@ -47,6 +47,7 @@ const compositor_abi = kynox.compositor;
 
 const cpu = @import("arch/x86_64/cpu.zig");
 const interrupt = @import("arch/x86_64/interrupt.zig");
+const interrupt_registry = @import("arch/x86_64/interrupt_registry.zig");
 const paging = @import("arch/x86_64/paging.zig");
 const segment = @import("arch/x86_64/segment.zig");
 const syscall = @import("arch/x86_64/syscall.zig");
@@ -758,6 +759,17 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // desliga a INTx daquele dispositivo, e e por isso que o padrao e nao
     // programar: a entrega das linhas ISA continua no 8259.
     reportPciInterrupts();
+
+    // The vectors a device may name. Nothing is registered yet — no driver
+    // consumes a device vector — and the line says exactly that, with the
+    // capacity, instead of a zero that could be read as "the kernel has none".
+    serial.printLine("[KNK] device vectors: {d} of {d} registered (vectors {d}..{d}, the spurious {d} excluded)", .{
+        interrupt_registry.registeredDeviceVectors(),
+        interrupt_registry.device_vector_count,
+        interrupt_registry.first_device_vector,
+        interrupt_registry.first_device_vector + interrupt_registry.device_vector_count - 1,
+        255,
+    });
 
     // F7 base: leitura real do espaco de configuracao PCI no bus 0. A sonda
     // nao habilita o dispositivo nem assume um driver; ela existe para

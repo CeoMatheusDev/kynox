@@ -21,6 +21,39 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — os vetores de dispositivo têm dono
+
+- **O buraco**: as duas rodadas anteriores deixaram o kernel capaz de *escrever*
+  a mensagem, e nada do outro lado. O vetor 70 estava na faixa "unexpected
+  vector": programar uma MSI teria trocado uma interrupção por um relatório de
+  defeito do kernel.
+- **187 pontos de entrada, não um**: `kernel/arch/x86_64/interrupt.s` ganhou
+  `INTERRUPT_ENTRY 68..254` e a tabela `kynox_device_stub_table` em `.data`. O
+  stub é quem diz ao handler **qual** vetor chegou; um stub compartilhado
+  entregaria o mesmo número para todos.
+- **A faixa**: 68..254, com o **255 excluído** — é o espúrio do APIC local, e um
+  dispositivo que o nomeie está pedindo que o kernel trate uma mensagem real
+  como defeito do controlador.
+- **`interrupt_registry.zig`**: um dono por vetor, `AlreadyRegistered` e
+  `VectorNotDeliverable` como as duas recusas, contador por vetor,
+  `unhandledDeviceCount` para o vetor que chega sem dono (contado, nunca
+  despachado para um palpite) e `resetForTest` limpando as duas tabelas.
+- **`interrupt.zig`**: os portões saem da tabela do assembly, o laço do
+  "unexpected" pula a faixa, o despacho reconhece o vetor de dispositivo antes do
+  halt IPI e reconhece a interrupção **depois** do handler. `verify()` no boot
+  também compara as duas pontas da faixa com a tabela.
+- **PIE medido, não suposto**: `readelf -rW` mostra **187 relocações
+  `R_X86_64_RELATIVE` dentro da tabela** (1724 na imagem), e o carregador aceita
+  só relativa com alvo em segmento gravável — três condições que fariam o portão
+  apontar para o endereço errado se falhassem.
+- **O boot reporta** `device vectors: 0 of 187 registered`, com a capacidade ao
+  lado de um zero que nenhum driver preencheu ainda.
+- **Cinco testes de host** (873 no total, `arch-tests` 204).
+- Documentação: `docs/audits/2026-11-01-device-vectors.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`kernel_cpu_interrupts` 75% → 78%,
+  `acpi_pci_apic` 63% → 66%), `README.md`, `docs/ai/context-pack.md` e o item 8
+  do K2 no roadmap.
+
 ### Added (2026-11-01) — MSI-X: a tabela na memória do dispositivo
 
 - **A diferença**: a MSI tem uma mensagem nos registradores da capability; a

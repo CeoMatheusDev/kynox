@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-device-vectors.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The device vector space: 68..254 with the spurious 255 excluded, one entry point per vector because the stub is what names the vector to the handler, the registry that gives each vector an owner, the dispatch that counts an unowned vector instead of guessing, and the PIE relocations the .data stub table needs.",
+    },
     "docs/audits/2026-11-01-msix-table.md": {
         "kind": "implementation-record",
         "authority": "record",

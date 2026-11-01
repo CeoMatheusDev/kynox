@@ -405,9 +405,15 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    decoded** — table size stored as N-1, the BIR and offset of the table and the
    PBA, a 16-byte entry per vector, and the enable order that fills the table
    while the function is masked — but its table is never written, because the
-   window of the BAR of a device the kernel does not drive is not mapped. See
-   `docs/audits/2026-11-01-msi-programming.md` and
-   `docs/audits/2026-11-01-msix-table.md`.)*
+   window of the BAR of a device the kernel does not drive is not mapped. The
+   **vector space a message names now exists**: every vector of 68..254 has its
+   own stub in assembly and an IDT gate installed from a table the kernel indexes,
+   the registry gives each one an owner or counts it as unhandled, and the
+   spurious 255 is excluded — so the remaining gap is a driver and a delivered
+   message, not a place for the message to land. See
+   `docs/audits/2026-11-01-msi-programming.md`,
+   `docs/audits/2026-11-01-msix-table.md` and
+   `docs/audits/2026-11-01-device-vectors.md`.)*
 
 **Completion criteria.**
 - Exactly one component calls `scheduler.tick()`; the call site is listed in the
