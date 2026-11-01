@@ -268,6 +268,8 @@ Limitação documentada: `arch-tests` falha por import de módulo (`paging.zig` 
 
 Nenhum resultado simulado, inventado ou não executado. Nenhum `force` usado. Nenhuma versão alterada (`VERSION`: `0.1.0-alpha.1`; ABI rev 1). Nenhum arquivo de usuário descartado.
 
+Limitação de infraestrutura: `arch-tests` falha por import de módulo (`paging.zig` → `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`). Isso não indica falha funcional no kernel. `kernel-tests` PASS (22/22) confirma integridade.
+
 Nota técnica: `zig build test` (`arch-tests`) falha por limitação de infraestrutura de módulo (`paging.zig` import `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`); isso não indica falha funcional no kernel, apenas restrição do build de testes arquiteturais isolados. `kernel-tests` PASS (22/22) confirma integridade.
 
 ## Updating this status
