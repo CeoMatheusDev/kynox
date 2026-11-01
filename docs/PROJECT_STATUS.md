@@ -251,7 +251,7 @@ Taken from the audit plan (see the audit for evidence and scope):
 11. **Audit K3.12.2 (scheduler/SMP)**: branch `audit/k3-12-2-scheduler-smp` merged to `main` (`39335ae`). Defeitos registrados (per-CPU `ready_queue` nunca usado; `wakeTask` sem enqueue; `prepareNext` stale `.ready`; `cpuId()` fixo; `registerCpu` duplo incremento; `failed` ausente). Regressão `tests/scheduler_regression.zig`; maturidade 55% mantida (sem validação runtime); correções bloqueadas até design de lock/`running_cpu`/migração; K4 NÃO iniciado.
 12. **Audit K3.12.4 (preemption/wait/lifecycle)**: branch `audit/k3-12-4-wait-lifecycle` merged to `main` (`5d5a9ac`). `wait.zig`/`runqueue.zig`/`thread.zig`/`metrics.zig`/`clock.zig`/`irq.zig`/`ipi.zig` ausentes; `preempt_disable`/`preempt_enable` não encontrados; `timer.zig` tem tick/EOI; testes de regressão adicionados; maturidade do scheduler permanece 55%; K4 NÃO iniciado.
 13. **K4 design (process model)**: K4.0 ADR-K4-001 + K4.1-4.9 scaffolds merged (`main` 66e217a). Reap completo parcial (`AddressSpace` destruição stub; capabilities revogação pendente); `paging.zig` destruição completa ainda requerida; QEMU PASS.
-14. **QEMU validação K4 (2026-11-01)**: `zig build qemu-test` passou (`qemu-boot-test` todos os checks verdes); build/test/docs-check PASS; K4 scaffolds integrados; reap completo ainda não validado.
+14. **QEMU validação K4 (2026-11-01)**: `zig build qemu-test` passou (`qemu-boot-test` todos os checks verdes); build/test/docs-check PASS; K4 scaffolds integrados; reap parcial + preempt_disable stub documentados; reap completo ainda requer reclaim físico + cap revogação completa.
 
 ## Updating this status
 
