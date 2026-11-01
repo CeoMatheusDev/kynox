@@ -98,3 +98,16 @@ pub fn revokeAllCapabilities() void {
     // Iterate process handle table; revoke channel, page, doorbell, signal resources.
     // Status: stub for resource revocation model not yet defined.
 }
+
+/// Tabela simples de capabilities (scaffold real — interface completa ainda pendente).
+pub const CapabilityTable = extern struct {
+    entries: [16]u32 = @splat(0),
+    count: u32 = 0,
+};
+
+/// Revoga capabilities de um processo (real — zera tabela; integração completa com recursos ainda pendente).
+pub fn revokeCapabilitiesForProcess(table: *CapabilityTable) void {
+    // Revogação real: zera todas as entradas da tabela; recursos derivados ainda precisam ser revogados individualmente pelo PMM e pelo kernel.
+    for (0..table.entries.len) |i| table.entries[i] = 0;
+    table.count = 0;
+}
