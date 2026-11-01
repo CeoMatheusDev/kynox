@@ -90,16 +90,47 @@ pub fn verifyHandle(proc: *Process, handle: ProcessHandle) bool {
     return proc.pid == handle.pid and proc.generation == handle.generation;
 }
 
+/// Maximum number of processes in the static pool.
+pub const max_processes: usize = 8;
+
+/// Static process pool (no dynamic allocation in critical paths).
+var process_pool: [max_processes]Process = @splat(.{});
+var process_pool_used: [max_processes]bool = @splat(false);
+
 /// Creates a new process with fresh pid/generation.
-/// Returns the process pointer; caller must initialize space/threads.
+/// Allocates from the static pool; returns null if pool exhausted or pid==0.
 pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
-    // In full implementation: allocate from pool; here scaffold.
-    // For regression testing, return a static buffer or null if invalid.
-    _ = space; // stub: full space assignment deferred to K4.1 integration.
     if (pid == 0) return null; // kernel process; user must have non-zero
-    // Stub: no dynamic allocation in kernel yet (per AGENTS.md 4.2 — avoid dynamic allocation in critical paths).
-    // The process object is meant to be embedded in a pool or static array.
-    return null; // deferred to full allocation mechanism
+
+    // Find a free slot in the pool.
+    var i: usize = 0;
+    while (i < max_processes) : (i += 1) {
+        if (!process_pool_used[i]) {
+            process_pool_used[i] = true;
+            var p = &process_pool[i];
+            p.* = .{}; // reset
+            p.pid = pid;
+            p.generation += 1;
+            p.handle = .{ .pid = pid, .generation = p.generation };
+            p.space = space;
+            p.state = .not_started;
+            return p;
+        }
+    }
+    return null; // pool exhausted
+}
+
+/// Releases a process back to the pool (called by reap after resources freed).
+pub fn freeProcess(p: *Process) void {
+    // Find the slot and mark as free.
+    var i: usize = 0;
+    while (i < max_processes) : (i += 1) {
+        if (&process_pool[i] == p) {
+            process_pool_used[i] = false;
+            p.* = .{}; // reset
+            return;
+        }
+    }
 }
 // K4.9 reap: destrói AddressSpace via paging.zig; capabilities revogadas; ainda parcial (paging.zig destruição completa pendente)
 
