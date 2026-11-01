@@ -1,0 +1,570 @@
+{
+  "schema": 1,
+  "generated_by": "tools/scripts/gen-doc-index.py",
+  "note": "Machine-readable map of the documentation. `authority` says what an agent may do with a document: binding rules, the current state, an implementation record, an audit of a past tree, a plan, a decision or a reference. Only `current` documents carry numbers about today; `planning` documents never do.",
+  "authorities": {
+    "binding": "rules of the repository; violating them is a defect",
+    "current": "describes the tree as it is today",
+    "record": "what was implemented, with the command and the result",
+    "audit": "an observation of the tree at a date; history",
+    "planning": "a plan, never a claim about the tree",
+    "decision": "an ADR: the reason of a choice and what it rules out",
+    "reference": "a specification or a procedure the code must satisfy"
+  },
+  "counts": {
+    "documents": 62,
+    "by_authority": {
+      "binding": 2,
+      "audit": 5,
+      "current": 9,
+      "planning": 24,
+      "reference": 7,
+      "record": 3,
+      "decision": 12
+    }
+  },
+  "reading_order": [
+    "AGENTS.md",
+    "docs/ai/context-pack.md",
+    "docs/PROJECT_STATUS.md",
+    "docs/audits/2026-11-01-task-subsystem.md",
+    "docs/architecture/execution-model.md",
+    "docs/architecture/memory-management.md",
+    "docs/roadmap/KERNEL_COMPLETION_ROADMAP.md",
+    "CHANGELOG.md"
+  ],
+  "documents": [
+    {
+      "path": "AGENTS.md",
+      "title": "AGENTS.md — Diretrizes de Engenharia do Kynox",
+      "kind": "contract",
+      "authority": "binding",
+      "summary": "The rules of the repository: toolchain, validation discipline, status vocabulary, prohibited claims, and where progress is recorded.",
+      "words": 3504
+    },
+    {
+      "path": "AUDIT_K3.12.3_REPORT.md",
+      "title": "AUDIT_K3.12.3_REPORT",
+      "kind": "unverified-report",
+      "authority": "audit",
+      "summary": "Report from another working copy: kept for the record, carries no evidence and is counted by nothing.",
+      "words": 214
+    },
+    {
+      "path": "AUDIT_K3.12.4_REPORT.md",
+      "title": "AUDIT_K3.12.4_REPORT",
+      "kind": "unverified-report",
+      "authority": "audit",
+      "summary": "Report from another working copy: kept for the record, carries no evidence and is counted by nothing.",
+      "words": 354
+    },
+    {
+      "path": "AUDIT_K3.12.5_REPORT.md",
+      "title": "AUDIT_K3.12.5_REPORT",
+      "kind": "unverified-report",
+      "authority": "audit",
+      "summary": "Report from another working copy; its header says that its QEMU passes were never reproduced here.",
+      "words": 660
+    },
+    {
+      "path": "CHANGELOG.md",
+      "title": "Changelog",
+      "kind": "changelog",
+      "authority": "current",
+      "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
+      "words": 4062
+    },
+    {
+      "path": "KYNOX_NATIVE.md",
+      "title": "KYNOX_NATIVE.md — Kynox Native Technology",
+      "kind": "manifesto",
+      "authority": "planning",
+      "summary": "The intent of the system: what it wants to be, in prose, with no state claim.",
+      "words": 1366
+    },
+    {
+      "path": "LICENSE",
+      "title": "LICENSE",
+      "kind": "license",
+      "authority": "binding",
+      "summary": "GPL-3.0-only; the licence of every file of the tree.",
+      "words": 1581
+    },
+    {
+      "path": "README.md",
+      "title": "Kynox",
+      "kind": "overview",
+      "authority": "current",
+      "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
+      "words": 2373
+    },
+    {
+      "path": "VERSION",
+      "title": "VERSION",
+      "kind": "version",
+      "authority": "current",
+      "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
+      "words": 1
+    },
+    {
+      "path": "docs/BUILD.md",
+      "title": "Building and testing Kynox",
+      "kind": "procedure",
+      "authority": "reference",
+      "summary": "How to build the image and the tests with the declared toolchain.",
+      "words": 735
+    },
+    {
+      "path": "docs/PROJECT_STATUS.json",
+      "title": "PROJECT_STATUS",
+      "kind": "status-machine-readable",
+      "authority": "current",
+      "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
+      "words": 6595
+    },
+    {
+      "path": "docs/PROJECT_STATUS.md",
+      "title": "Kynox — Project Status & Progress",
+      "kind": "status",
+      "authority": "current",
+      "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
+      "words": 4288
+    },
+    {
+      "path": "docs/VERSIONING.md",
+      "title": "Kynox versioning and identity policy",
+      "kind": "procedure",
+      "authority": "reference",
+      "summary": "The single source of the version, the tag scheme and the rules of a release.",
+      "words": 1248
+    },
+    {
+      "path": "docs/ai/README.md",
+      "title": "Documentation for agents — start here",
+      "kind": "ai-entry-point",
+      "authority": "current",
+      "summary": "How an agent should read this repository: the order, the authority of each document, the token cost and the hard rules.",
+      "words": 1030
+    },
+    {
+      "path": "docs/ai/context-pack.md",
+      "title": "Context pack — the state of the tree",
+      "kind": "ai-context-pack",
+      "authority": "current",
+      "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
+      "words": 1170
+    },
+    {
+      "path": "docs/architecture/application-ecosystem.md",
+      "title": "Kynox — Application Ecosystem, SDK and Distribution",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "Packaging, sandboxing, updates and the SDK that applications use.",
+      "words": 1740,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/device-driver-model.md",
+      "title": "Device and driver model",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The driver model: discovery, KVDI, ownership of a device, and the interfaces a driver may use.",
+      "words": 1320,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/execution-model.md",
+      "title": "Execution model: tasks, threads, processes and scheduling",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "Processes, threads, scheduling, synchronisation, time and the user/kernel transition: the model and its state today.",
+      "words": 1711,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/graphics-compatibility.md",
+      "title": "Graphics compatibility: KGA, KGL, KVK and the shared execution core",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "KGA, KGX, KGL and KVK over one shared core; nothing in it is implemented.",
+      "words": 4125,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/graphics-platform.md",
+      "title": "Kynox — Graphics Platform Architecture",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The graphics stack: display, GPU model, KGC, KGA, renderer, compositor and tools.",
+      "words": 4228,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/k4-process-lifecycle.md",
+      "title": "K4 — Process Lifecycle Design",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "Lifecycle of a process: create, run, exit, reap, join, and the rules of each transition.",
+      "words": 716
+    },
+    {
+      "path": "docs/architecture/k4-process-model.md",
+      "title": "K4 — Process Architecture Design",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The K4 process and thread model as designed; its 'missing' list is history, not the current state.",
+      "words": 2610
+    },
+    {
+      "path": "docs/architecture/k4-security-process.md",
+      "title": "K4 — Security and Isolation Design",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The intersection of the process model and the security model.",
+      "words": 567
+    },
+    {
+      "path": "docs/architecture/k4-userspace-transition.md",
+      "title": "K4 — Userspace Transition Design",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The ring 3 transition: segments, TSS, syscall entry and the return path.",
+      "words": 606
+    },
+    {
+      "path": "docs/architecture/kernel-internals.md",
+      "title": "Kernel internals and module organisation",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The structure of the kernel: boot, memory, tasks, drivers, and the contracts between them.",
+      "words": 2028,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/linux-compatibility.md",
+      "title": "KLC — Kynox Linux Compatibility layer",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The KLC personality: seven separated contracts, syscall translation, signals, TLS; runs nothing today.",
+      "words": 2934,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/memory-management.md",
+      "title": "Memory management model",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "Physical and virtual memory: the frame manager, the page tables, what unmap returns, and the invariants.",
+      "words": 1637,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/platform-architecture.md",
+      "title": "Kynox — Platform Architecture",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The platform as a whole: layers, public and internal interfaces per subsystem, updates and virtualisation.",
+      "words": 5344,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/security-architecture.md",
+      "title": "Kynox — Security Architecture",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "Capabilities, subjects, revocation, W^X and the security invariants of the system.",
+      "words": 2041,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/user-experiences.md",
+      "title": "Kynox user experiences: one platform, five profiles",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The five user profiles and what each one requires from the system.",
+      "words": 2084,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/architecture/windows-compatibility.md",
+      "title": "KWC — Kynox Windows Compatibility layer",
+      "kind": "architecture",
+      "authority": "planning",
+      "summary": "The KWC personality: PE32+, NT objects, Win32; runs nothing today.",
+      "words": 2437,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/audits/2026-10-31-audit.md",
+      "title": "Kynox audit — 2026-10-31",
+      "kind": "audit",
+      "authority": "audit",
+      "summary": "Audit of the tree, the governance and the alpha gate at 343e9fb.",
+      "words": 4135,
+      "date": "2026-10-31"
+    },
+    {
+      "path": "docs/audits/2026-10-31-kernel-core-audit.md",
+      "title": "Kernel and core systems audit — 2026-10-31",
+      "kind": "audit",
+      "authority": "audit",
+      "summary": "Read-only audit of the kernel and core systems at 343e9fb: classification, ranked defects, evidence level.",
+      "words": 6874,
+      "date": "2026-10-31",
+      "declared_status": "audit record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-kernel-core-fixes.md",
+      "title": "Kernel core fixes — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The defects of the 2026-10-31 audit that were closed without a hypervisor, with the evidence of each.",
+      "words": 1453,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-scheduler-tests.md",
+      "title": "Scheduler tests and preemption — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The host tests of the scheduler policy, and the three preemption defects that writing them exposed.",
+      "words": 1193,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-task-subsystem.md",
+      "title": "The task subsystem: policy, wait queue and mutex — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "Policy split, wait queue and mutex: what was implemented, the tests that prove it and what is still open.",
+      "words": 1492,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/decisions/0001-boot-probes-out-of-kernel-main.md",
+      "title": "ADR-0001 · Extract boot-time probes and reports out of `kernel/main.zig`",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "Boot probes leave kernel/main.zig; deferred until a boot can be compared before and after.",
+      "words": 969,
+      "declared_status": "accepted"
+    },
+    {
+      "path": "docs/decisions/0002-single-virtio-transport.md",
+      "title": "ADR-0002 · One VirtIO implementation: KVDI owns the transport",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "One VirtIO transport: KVDI is the implementation, the legacy copy is scheduled for removal.",
+      "words": 874,
+      "declared_status": "accepted"
+    },
+    {
+      "path": "docs/decisions/0003-legacy-virtio-blk-stub.md",
+      "title": "ADR-0003 · Fate of the legacy `virtio_blk.zig` stub",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "The legacy virtio_blk stub is dead code; removal decided, not executed.",
+      "words": 674,
+      "declared_status": "accepted"
+    },
+    {
+      "path": "docs/decisions/0004-graphics-stack-split.md",
+      "title": "ADR-0004 · Graphics stack split: minimal kernel core, vendor drivers in user space",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "The graphics stack is split into display, core, API and compositor.",
+      "words": 693,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0005-native-graphics-api.md",
+      "title": "ADR-0005 · Native graphics API: one explicit core with optional higher layers",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "KGA is the native API; compatibility sits on top of it and never below.",
+      "words": 720,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0006-userspace-compositor.md",
+      "title": "ADR-0006 · Compositor and window manager as a user-space service",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "The compositor lives in user space; the kernel only presents.",
+      "words": 557,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0007-packaging-sandbox-updates.md",
+      "title": "ADR-0007 · Packaging, sandbox and updates: one signed format, one broker, atomic rollback",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "Packages, sandbox and updates are one design, not three.",
+      "words": 553,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0008-shared-graphics-core.md",
+      "title": "ADR-0008 · One shared graphics execution core behind KGA, KGL and KVK",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "One shared graphics core (KGX) under every API.",
+      "words": 582,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0009-spirv-ingestion.md",
+      "title": "ADR-0009 · SPIR-V as the canonical shader ingestion format",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "SPIR-V is the ingestion format of the shader pipeline.",
+      "words": 602,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/0010-compatibility-execution-model.md",
+      "title": "ADR-0010 · Compatibility execution model: unprivileged personalities, one narrow kernel gate",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "Compatibility runs in isolated personalities, never inside the native ABI.",
+      "words": 752,
+      "declared_status": "accepted for planning"
+    },
+    {
+      "path": "docs/decisions/ADR-K4-001-process-architecture.md",
+      "title": "ADR-K4-001 — Process Architecture: contracts, isolation, and dependency order",
+      "kind": "adr",
+      "authority": "decision",
+      "summary": "The process architecture of K4; its 'missing files' list predates the 2026-11-01 implementation.",
+      "words": 467
+    },
+    {
+      "path": "docs/decisions/README.md",
+      "title": "Architecture decision records",
+      "kind": "adr-index",
+      "authority": "decision",
+      "summary": "The index of the architecture decision records.",
+      "words": 337
+    },
+    {
+      "path": "docs/releases/0.1.0-alpha.1.md",
+      "title": "Kynox One 0.1.0-alpha.1 — release notes",
+      "kind": "release",
+      "authority": "current",
+      "summary": "The alpha release record: what it contains, what was executed, and what it explicitly does not claim.",
+      "words": 1337
+    },
+    {
+      "path": "docs/roadmap/COMPATIBILITY_ROADMAP.md",
+      "title": "Kynox compatibility roadmap",
+      "kind": "roadmap",
+      "authority": "planning",
+      "summary": "The compatibility phases C0 to C11 and the non-promises of the personality work.",
+      "words": 2532,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/roadmap/ERAS.md",
+      "title": "Kynox generations and eras",
+      "kind": "roadmap",
+      "authority": "planning",
+      "summary": "The generation chart: what the name of each era means.",
+      "words": 466
+    },
+    {
+      "path": "docs/roadmap/K4_PROCESS_ROADMAP.md",
+      "title": "K4 — Process Model and Userspace Execution Roadmap",
+      "kind": "roadmap",
+      "authority": "planning",
+      "summary": "The sub-stages of K4, the process and thread work.",
+      "words": 178
+    },
+    {
+      "path": "docs/roadmap/KERNEL_COMPLETION_ROADMAP.md",
+      "title": "Kernel and core systems completion roadmap",
+      "kind": "roadmap",
+      "authority": "planning",
+      "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
+      "words": 9396,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/roadmap/PRODUCT_ROADMAP.md",
+      "title": "Kynox — Product Roadmap",
+      "kind": "roadmap",
+      "authority": "planning",
+      "summary": "The product roadmap and its evidence ladder; states that it raises no maturity percentage.",
+      "words": 2698,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/specs/acpi-platform.md",
+      "title": "ACPI platform discovery",
+      "kind": "specification",
+      "authority": "reference",
+      "summary": "What the kernel requires from ACPI: tables, overrides, the interrupt model.",
+      "words": 1618
+    },
+    {
+      "path": "docs/specs/boot-handoff-spec.md",
+      "title": "KNB → KNK boot handoff contract — v1",
+      "kind": "specification",
+      "authority": "reference",
+      "summary": "The handoff between the UEFI bootloader and the kernel: memory map, framebuffer, markers.",
+      "words": 1304
+    },
+    {
+      "path": "docs/specs/syscall-abi.md",
+      "title": "Kynox native syscall ABI (KX-ABI)",
+      "kind": "specification",
+      "authority": "reference",
+      "summary": "The syscall ABI: numbers, arguments, results and the revision of the table.",
+      "words": 1932
+    },
+    {
+      "path": "docs/strategy/market-landscape.md",
+      "title": "Kynox — Market Landscape and Technology Analysis",
+      "kind": "research",
+      "authority": "planning",
+      "summary": "Nine dated market deep dives, with sources, that justify the chosen opportunities.",
+      "words": 3951,
+      "declared_status": "planning document"
+    },
+    {
+      "path": "docs/validation/qemu.md",
+      "title": "QEMU validation procedure and recorded attempts",
+      "kind": "validation-procedure",
+      "authority": "reference",
+      "summary": "How a QEMU run is performed and recorded, and the table of the attempts that failed in this environment.",
+      "words": 1130
+    },
+    {
+      "path": "llms.txt",
+      "title": "Kynox",
+      "kind": "agent-manifest",
+      "authority": "current",
+      "summary": "Short manifest for agents and crawlers: the documents that are authoritative today, the ones that are history, and the rule that nothing here is a runtime claim.",
+      "words": 398
+    },
+    {
+      "path": "sdk/README.md",
+      "title": "Kynox native SDK",
+      "kind": "reference",
+      "authority": "reference",
+      "summary": "The public boundary of the native SDK: what an application may import, and the ABI it targets.",
+      "words": 555,
+      "declared_status": "in progress"
+    },
+    {
+      "path": "strategy.md",
+      "title": "Kynox — Estratégia de Arquitetura e Evolução",
+      "kind": "strategy",
+      "authority": "planning",
+      "summary": "Product strategy and positioning; the source of the priorities that the roadmaps order.",
+      "words": 4638
+    }
+  ]
+}

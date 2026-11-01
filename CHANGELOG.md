@@ -21,6 +21,31 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — the channel waits in the shared queue, and the documentation has an index for agents
+
+- **The wait queue has its first caller in the kernel.** `kernel/ipc/channel.zig`
+  keeps a fixed array of registered waiters and orders them in
+  `task/wait.zig`: delivery is FIFO (it used to follow the order of the storage
+  array, which is not the order of arrival), the expiry writes the result
+  through the new `WaitQueue.expireWith` hook **before** it wakes the task, and
+  a delivered or expired waiter releases its slot. 4 new tests, 8 in total.
+- **`docs/ai/` is the entry point for an agent.** `docs/ai/README.md` gives the
+  reading order, the authority of each document and the hard rules;
+  `docs/ai/context-pack.md` is the state of the tree in one page;
+  `docs/ai/doc-index.json` is the generated map of all **62** documents with
+  `kind`, `authority`, date, summary and word count. `llms.txt` at the root is
+  the short manifest.
+- **The index is enforced, not decorative.**
+  `tools/scripts/gen-doc-index.py` holds the classification table and
+  `--check` fails when a Markdown file is not classified, when an entry points
+  at a file that does not exist, or when the index on disk differs from the
+  table. It runs inside `zig build test` and inside `docs-check`, and
+  `docs-conformance-tests` parses the index to assert the authorities, the
+  reading order and that the status files are indexed as `current`.
+- Measured: **788 tests in 52/52 steps** (task 47, ipc 9, docs-conformance 24),
+  `zig build` writing the image, `docs-check` resolving every link and every
+  classification. No runtime evidence: no QEMU, no OVMF.
+
 ### Added (2026-11-01) — the task subsystem: pure policy, wait queue, mutex
 
 - **The scheduling policy left the scheduler.** `kernel/task/policy.zig` holds

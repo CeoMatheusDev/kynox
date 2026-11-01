@@ -48,11 +48,11 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**781 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
+| Tests and validation infrastructure | **65%** | Host suite executes and passes (**788 tests**, including a documentation link check and a planning-document guard); QEMU targets exist but have never been recorded; a CI workflow is defined but has never run |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
-The full evidence-based inventory, including gaps and next steps, is maintained in **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** and the machine-readable **[PROJECT_STATUS.json](docs/PROJECT_STATUS.json)**.
+The full evidence-based inventory, including gaps and next steps, is maintained in **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** and the machine-readable **[PROJECT_STATUS.json](docs/PROJECT_STATUS.json)**. Agents start at **[docs/ai/README.md](docs/ai/README.md)**: reading order, the authority of every document, and a one-page context pack.
 
 ### Status labels
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (781) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (788) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 51/51 steps, **781/781 tests passed** (fresh cache; the suite grew from 736 to 748 with the scheduler policy tests and to 781 with the wait queue, the mutex and the policy split) |
+| `zig build test` | success — 52/52 steps, **788/788 tests passed** (fresh cache; the suite grew from 736 to 748 with the scheduler policy tests, to 781 with the wait queue, the mutex and the policy split, and to 788 with the channel integration and the documentation index checks) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

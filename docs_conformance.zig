@@ -44,6 +44,9 @@ const driver_model = @embedFile("docs/architecture/device-driver-model.md");
 const kernel_roadmap = @embedFile("docs/roadmap/KERNEL_COMPLETION_ROADMAP.md");
 const status_json = @embedFile("docs/PROJECT_STATUS.json");
 const adr_index = @embedFile("docs/decisions/README.md");
+const ai_readme = @embedFile("docs/ai/README.md");
+const ai_context = @embedFile("docs/ai/context-pack.md");
+const ai_index = @embedFile("docs/ai/doc-index.json");
 
 const planning_documents = [_]struct { path: []const u8, text: []const u8 }{
     .{ .path = "docs/strategy/market-landscape.md", .text = market },
@@ -284,4 +287,89 @@ test "the kernel documents state that the structure is planned, not built" {
     for (internals_claims) |claim| try expectContains(kernel_internals, claim);
     try expectContains(kernel_internals, "What \"done\" means for the kernel");
     try expectContains(kernel_internals, "Not justified now");
+}
+
+test "the AI bundle tells an agent where to start and what is binding" {
+    // The entry point has to state the reading order and the rule that no
+    // number exists without a command behind it.
+    try expectContains(ai_readme, "## 1. The order to read, and what each step costs");
+    try expectContains(ai_readme, "## 2. Authority: what you may do with a document");
+    try expectContains(ai_readme, "## 3. Hard rules (the ones an agent breaks first)");
+    try expectContains(ai_readme, "A compile is not a run and a host test is not a boot");
+    try expectContains(ai_readme, "**No number without a command.**");
+    try expectContains(ai_readme, "AGENTS.md");
+
+    // The context pack has to keep the sections the guide promises, and it must
+    // never present a runtime result as observed.
+    try expectContains(ai_context, "## 2. Commands and their results");
+    try expectContains(ai_context, "**not executed**");
+    try expectContains(ai_context, "## 5. The open defects that matter");
+    try expectContains(ai_context, "## 6. Invariants that a change must not break");
+
+    // The AI documents are part of the inventory, not a second source of truth.
+    try expectContains(status_json, "docs/ai/README.md");
+    try expectContains(status_json, "docs/ai/context-pack.md");
+    try expectContains(status_json, "docs/ai/doc-index.json");
+}
+
+test "the document index parses, classifies every document and lists the reading order" {
+    const index = std.json.parseFromSlice(std.json.Value, std.testing.allocator, ai_index, .{}) catch {
+        return error.IndexIsNotJson;
+    };
+    defer index.deinit();
+
+    const root = index.value.object;
+
+    const documents = root.get("documents") orelse return error.MissingDocuments;
+    if (documents.array.items.len < 40) return error.TooFewDocuments;
+
+    // The authority of every entry is one of the seven that the guide defines.
+    const authorities = [_][]const u8{ "binding", "current", "record", "audit", "planning", "decision", "reference" };
+    for (documents.array.items) |item| {
+        const entry = item.object;
+        const path = entry.get("path").?.string;
+        const authority = entry.get("authority").?.string;
+        var known = false;
+        for (authorities) |value| {
+            if (std.mem.eql(u8, authority, value)) known = true;
+        }
+        if (!known) {
+            std.debug.print("unknown authority {s} for {s}\n", .{ authority, path });
+            return error.UnknownAuthority;
+        }
+        // The two fields the guide tells an agent to trust are never empty.
+        if (entry.get("summary").?.string.len == 0) return error.MissingSummary;
+        if (path.len == 0) return error.MissingPath;
+    }
+
+    // The reading order names documents that the index holds.
+    const order = root.get("reading_order") orelse return error.MissingReadingOrder;
+    if (order.array.items.len == 0) return error.EmptyReadingOrder;
+    for (order.array.items) |item| {
+        const wanted = item.string;
+        var found = false;
+        for (documents.array.items) |entry| {
+            if (std.mem.eql(u8, entry.object.get("path").?.string, wanted)) found = true;
+        }
+        if (!found) {
+            std.debug.print("reading order names a document that is not indexed: {s}\n", .{wanted});
+            return error.UnindexedReadingStep;
+        }
+    }
+
+    // The status files are in the index, with the authority that makes them the
+    // only source of numbers.
+    const status = [_][]const u8{ "docs/PROJECT_STATUS.md", "docs/PROJECT_STATUS.json", "README.md", "CHANGELOG.md" };
+    for (status) |wanted| {
+        var entry_authority: []const u8 = "";
+        for (documents.array.items) |entry| {
+            if (std.mem.eql(u8, entry.object.get("path").?.string, wanted)) {
+                entry_authority = entry.object.get("authority").?.string;
+            }
+        }
+        if (!std.mem.eql(u8, entry_authority, "current")) {
+            std.debug.print("{s} is not indexed as current\n", .{wanted});
+            return error.StatusNotCurrent;
+        }
+    }
 }

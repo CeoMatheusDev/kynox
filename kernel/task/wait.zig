@@ -90,6 +90,18 @@ pub const Node = struct {
     }
 };
 
+/// What `WaitQueue.expireWith` calls before it wakes a waiter whose deadline
+/// passed.
+///
+/// The node is already out of the queue and marked `expired` when the hook
+/// runs, and the wake happens after the hook returns.
+pub const ExpireHook = *const fn (node: *Node, ctx: ?*anyopaque) void;
+
+fn discardHook(node: *Node, ctx: ?*anyopaque) void {
+    _ = node;
+    _ = ctx;
+}
+
 /// What `WaitQueue.add` did with a node.
 pub const AddResult = enum {
     /// The node is in the queue, and the caller may sleep.
@@ -277,6 +289,18 @@ pub const WaitQueue = struct {
     /// `expired = true`, so that the caller can tell a timeout from a wake.
     /// The function returns how many waits it ended.
     pub fn expire(self: *WaitQueue, now: u64) u32 {
+        return self.expireWith(now, null, discardHook);
+    }
+
+    /// Ends the waits whose deadline has passed, letting the caller write the
+    /// result of the timeout first.
+    ///
+    /// The hook runs **before** the wake, which is what a caller that owns the
+    /// storage of the wait needs: the channel writes the error code into the
+    /// saved context of the task, and a wake that ran first would resume the
+    /// task with the result of the call before it. `expire` is this function
+    /// with a hook that does nothing.
+    pub fn expireWith(self: *WaitQueue, now: u64, ctx: ?*anyopaque, hook: ExpireHook) u32 {
         var expired_now: u32 = 0;
 
         var node = self.head;
@@ -308,6 +332,7 @@ pub const WaitQueue = struct {
             self.expired += 1;
             expired_now += 1;
 
+            hook(current, ctx);
             current.wake(current.task);
         }
 
@@ -609,6 +634,42 @@ test "the counters tell a wake from a cancellation and from a timeout" {
     try testing.expectEqual(@as(u32, 1), one.wakes);
     try testing.expectEqual(@as(u32, 0), two.wakes);
     try testing.expectEqual(@as(u32, 1), three.wakes);
+}
+
+test "the hook of an expiry runs before the wake, and only for the due waits" {
+    const Recorder = struct {
+        result: u64 = 0,
+        order: [4]u8 = @splat(0),
+        steps: usize = 0,
+
+        fn hook(node: *Node, ctx: ?*anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            _ = node;
+            self.order[self.steps] = 'h';
+            self.steps += 1;
+        }
+
+        fn wake(task: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(task));
+            self.order[self.steps] = 'w';
+            self.steps += 1;
+        }
+    };
+
+    var queue: WaitQueue = .{};
+    var recorder: Recorder = .{};
+    var node = Node.init(&recorder, Recorder.wake);
+    node.deadline = 4;
+    _ = queue.add(&node);
+
+    try testing.expectEqual(@as(u32, 0), queue.expireWith(3, &recorder, Recorder.hook));
+    try testing.expectEqual(@as(usize, 0), recorder.steps);
+
+    try testing.expectEqual(@as(u32, 1), queue.expireWith(4, &recorder, Recorder.hook));
+    // The hook wrote the result of the call before the task was woken.
+    try testing.expectEqual(@as(usize, 2), recorder.steps);
+    try testing.expectEqual(@as(u8, 'h'), recorder.order[0]);
+    try testing.expectEqual(@as(u8, 'w'), recorder.order[1]);
 }
 
 test "the queue keeps its shape under random operations" {

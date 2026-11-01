@@ -756,11 +756,21 @@ pub fn build(b: *std.Build) void {
     // Documentation link check: the Markdown is the only reference the
     // project publishes, and a link to a deleted file is invisible in review.
     // The step is part of `test` because it needs no device and no firmware.
-    const docs_step = b.step("docs-check", "Validate the relative links of the Markdown documentation");
+    //
+    // The same step checks the index that the agents read: every Markdown file
+    // of the tree has to be classified in `docs/ai/doc-index.json`, and the
+    // index on disk has to be the one the classification produces. A new
+    // document that nobody classified therefore fails the build instead of
+    // becoming invisible to the next agent that reads the tree.
+    const docs_step = b.step("docs-check", "Validate the Markdown links and the AI document index");
     const docs_check = b.addSystemCommand(&.{ "python3", "scripts/check-docs-links.py", "." });
     docs_check.has_side_effects = true;
     docs_step.dependOn(&docs_check.step);
+    const docs_index_check = b.addSystemCommand(&.{ "python3", "tools/scripts/gen-doc-index.py", "--check" });
+    docs_index_check.has_side_effects = true;
+    docs_step.dependOn(&docs_index_check.step);
     unit_test_step.dependOn(&docs_check.step);
+    unit_test_step.dependOn(&docs_index_check.step);
 
     const check_step = b.step("check", "Run the unit tests and the automated boot test");
     check_step.dependOn(unit_test_step);

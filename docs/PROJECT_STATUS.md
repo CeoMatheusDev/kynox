@@ -45,7 +45,7 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (QEMU/hardware) evidence exists for this snapshot.
 
 **Validation distinction.** On 2026-11-01 the following were executed:
-`zig build` (image written) and `zig build test` (51/51 steps, **781/781 tests**
+`zig build` (image written) and `zig build test` (52/52 steps, **788/788 tests**
 with a fresh cache). `zig build qemu-test`, `qemu-storage-test`,
 `qemu-interactive-test` and `check` were **not executed** — the environment has
 no QEMU, no OVMF and no reachable package mirror. Host test results therefore
@@ -63,7 +63,7 @@ count below is measured after the fix, and the artifact is part of the run.
 |---|---|---|
 | `zig version` | 2026-11-01 | `0.17.0` |
 | `zig build` | 2026-11-01 | success — `kynox-boot.efi` 185,344 B · `kynox-kernel` (debug) · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test --summary all` (fresh cache) | 2026-11-01 | success — 51/51 steps, **781/781 tests** (24 artifacts): kvdi 173 · fs-loader 154 · arch 144 · shared 64 · task 46 · kernel 22 · user-composition 22 · security 22 · docs-conformance 22 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · ipc 5 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
+| `zig build test --summary all` (fresh cache) | 2026-11-01 | success — 52/52 steps, **788/788 tests** (24 artifacts): kvdi 173 · fs-loader 154 · arch 144 · shared 64 · task 47 · kernel 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 · abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check`, the link check, the document-index check and the four QEMU targets **not executed** |
 | `zig build docs-check` | 2026-11-01 | success — every relative link resolves |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
@@ -80,7 +80,7 @@ count below is measured after the fix, and the artifact is part of the run.
 | Virtual memory / address spaces | **50%** | in_progress | Four-level paging, per-process user windows, W^X encoded with negative tests, `isUserRange` validation everywhere; **ownership bit for frames** so an unmap returns the page it owns and leaves a borrowed one, address-space destruction that returns the frames, the private chain and the slot, slot reuse with a per-slot generation | Region abstraction, demand paging, COW, ASLR, TLB shootdown, high-half |
 | ACPI / PCI / APIC | **50%** | in_progress | ACPI RSDP/XSDT/MADT discovery at boot with validated LAPIC base and recorded IOAPICs/overrides, I/O APIC access and redirection-entry programming for the ISA lines (masked), PCI config + BAR + capability walking, LAPIC xAPIC access and IPIs | **I/O APIC entries are programmed masked**; delivery still comes from the 8259 (I/O APIC delivery is an unproven build option); PCI GSI routing and interrupt remapping absent; no QEMU/hardware evidence |
 | SMP / AP startup | **30%** | in_progress | CPU table built from the MADT (APIC ids, BSP by id), AP stacks, trampoline, gated INIT/SIPI path | Trampoline is never copied below 1 MiB, so no AP starts; no same-timer kick per CPU; no IPI beyond INIT/SIPI; no SMP run ever recorded |
-| Scheduler / task switching | **62%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics, an EEVDF policy **in its own pure module** (`task/policy.zig`: `pickNext`, `shouldPreempt`, `quantumFor`, `budgetFor`, `minVruntime`), a wait queue with deadlines and no lost wakeup (`task/wait.zig`) and a mutex with ownership, recursion and direct handoff (`task/mutex.zig`); **46 host tests** in `task-tests` cover the policy, the scheduler, the context, the queue and the mutex. Writing the scheduler tests closed three preemption defects, and the split of the policy out of the scheduler is step 2 of K3 | Effectively BSP-centric; **no lock** and no per-CPU ownership; **the mutex and the wait queue have no caller in the kernel yet**; no idle task; no rwlock, no condition variable, no futex-like primitive; migration, fairness and SMP safety remain |
+| Scheduler / task switching | **62%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics, an EEVDF policy **in its own pure module** (`task/policy.zig`: `pickNext`, `shouldPreempt`, `quantumFor`, `budgetFor`, `minVruntime`), a wait queue with deadlines and no lost wakeup (`task/wait.zig`) and a mutex with ownership, recursion and direct handoff (`task/mutex.zig`); **47 host tests** in `task-tests` cover the policy, the scheduler, the context, the queue and the mutex. Writing the scheduler tests closed three preemption defects, and the split of the policy out of the scheduler is step 2 of K3 | Effectively BSP-centric; **no lock** and no per-CPU ownership; **the mutex and the wait queue have no caller in the kernel yet**; no idle task; no rwlock, no condition variable, no futex-like primitive; migration, fairness and SMP safety remain |
 | User processes / Ring 3 | **60%** | in_progress | User-mode tasks, separate address spaces, two embedded native apps, lifecycle probe | General process API, resource limits, isolation stress |
 | Native syscall ABI | **55%** | in_progress | `syscall`/`iretq` door with MSR programming, 22 calls (12 reserved), pointer validation, SDK wrappers; one normative contract (`shared/syscall_abi.zig`, revision 1) aliased by kernel and SDK; conformance suite against the spec | Door never executed in a VM here; no argument fuzzing; revision checked at build/test time only |
 | IPC | **60%** | in_progress | Bounded channels, blocking receive, receive with timeout, scheduler integration | Shared memory, service discovery, cancellation |
@@ -102,7 +102,7 @@ count below is measured after the fix, and the artifact is part of the run.
 | Linux binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/linux-compatibility.md`, phases C-L0…C5 | Personality gate, syscall translation, signals/futex/TLS, KLD/KLIBC, window bridge |
 | Windows binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/windows-compatibility.md`, phases C-W0…W6 | PE32+ loader, TEB/PEB, KOB handles, SEH/unwind, user32/GDI, COM |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 24 host artifacts (**781 tests**, measured on 2026-11-01) in `zig build test`, including a documentation link check and a planning-document structure guard; the architecture artifact compiles again (144 tests) and `virtio_net.zig` is finally part of a test root; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; no fuzzing; no hardware matrix |
+| Tests / validation infrastructure | **65%** | in_progress | 24 host artifacts (**788 tests**, measured on 2026-11-01) in `zig build test`, including a documentation link check and a planning-document structure guard; the architecture artifact compiles again (144 tests) and `virtio_net.zig` is finally part of a test root; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; no fuzzing; no hardware matrix |
 | Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, per-interrupt-line counters and unhandled-interrupt accounting, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
 | Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, `docs-check`, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | CI defined but never run; toolchain installed by hand; no reproducible-artifact story |
 
@@ -124,7 +124,7 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (781) and QEMU integration scripts.
+- Host unit tests (788) and QEMU integration scripts.
 
 ## Planning documents (not implementation)
 
@@ -149,6 +149,7 @@ this file moved because of them.**
 | [roadmap/PRODUCT_ROADMAP.md](roadmap/PRODUCT_ROADMAP.md) | Stages S0–S15 ordered by dependency, with the P/F/E/H evidence ladder | No stage complete |
 | [architecture/kernel-internals.md](architecture/kernel-internals.md) | Target kernel layering, module contracts, global-state policy, error model, initialisation phases, observability and the coding standards binding on kernel work | The tree still has the structure the audit describes; `main.zig` is the boot order |
 | [architecture/memory-management.md](architecture/memory-management.md) | Frames, address spaces, regions, page-fault policy, heap locking, DMA interface and eight memory invariants | PMM, paging, heap and DMA exist. Unmap now returns the frames the space owns and address spaces are destroyed and their slots reused (invariant M2 has a unit test); regions, demand paging and COW do not exist |
+| [ai/README.md](ai/README.md), [ai/context-pack.md](ai/context-pack.md), [ai/doc-index.json](ai/doc-index.json) | The entry point for an agent: reading order, what each document is allowed to be quoted for, the state of the tree in one page, and the generated index of all 62 documents with their authority | Executed: the index is generated by `tools/scripts/gen-doc-index.py` and checked by `zig build test` (a document that nobody classified fails the build) |
 | [architecture/execution-model.md](architecture/execution-model.md) | Process and thread objects, lifecycle, scheduling policy, synchronisation primitives, time and the user/kernel transition contract | A minimal process object exists; the scheduler has host tests over its policy and 21 more exercise the wait queue and the mutex, but the scheduler still has no lock; no rwlock and no condition variable |
 | [architecture/device-driver-model.md](architecture/device-driver-model.md) | Device, driver and resource objects, interrupt registration, DMA ownership, class interfaces, containment and the per-class test tiers | No driver model. **Interrupt registration now exists** (`interrupt_registry.zig`, one owner per line, counters, spurious accounting, host-tested); device and driver objects do not |
 | [roadmap/KERNEL_COMPLETION_ROADMAP.md](roadmap/KERNEL_COMPLETION_ROADMAP.md) | Fourteen stages K0–K13 in dependency order, each with objective, initial state, files, dependencies, work, completion criteria, tests, QEMU/hardware validation, risks and P/F/E/H promotion; genuine parallelism; blockers | No stage complete and nothing above P. Several required-work items are implemented without a recorded run — see [audits/2026-11-01-kernel-core-fixes.md](audits/2026-11-01-kernel-core-fixes.md) |
@@ -288,7 +289,7 @@ Taken from the audit plan (see the audit for evidence and scope):
     The same applies to [`AUDIT_K3.12.5_REPORT.md`](../AUDIT_K3.12.5_REPORT.md),
     which is kept with a header that says so. **None of those results is
     counted.** The only executed results for this tree are `zig build`,
-    `zig build test` (51/51 steps, 781/781 tests, 2026-11-01) and
+    `zig build test` (52/52 steps, 788/788 tests, 2026-11-01) and
     `docs-check`; the three QEMU targets are **not executed**.
 13. **The architecture test artifact used to be broken, and the inventory said
     otherwise.** Until 2026-11-01 `arch-tests` did not compile (an unnamed
