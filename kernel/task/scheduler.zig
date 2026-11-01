@@ -35,6 +35,7 @@ const segment = @import("../arch/x86_64/segment.zig");
 const smp = @import("../arch/x86_64/smp.zig");
 const channel = @import("../ipc/channel.zig");
 const lock = @import("lock.zig");
+const x86_cpu = @import("../arch/x86_64/cpu.zig");
 const policy = @import("policy.zig");
 const wait_queue = @import("wait.zig");
 const process = @import("process.zig");
@@ -111,6 +112,14 @@ pub const Task = struct {
     /// The priority of the task. Higher values mean higher priority.
     /// The scheduler chooses the ready task with the highest priority.
     priority: u8 = 0,
+    /// Whether the task is the idle task of its CPU.
+    ///
+    /// The idle task exists to be the last resort of the processor: it halts
+    /// instead of returning to whatever an interrupt interrupted. The policy
+    /// chooses it only when no other task can run, whatever its virtual runtime
+    /// says.
+    is_idle: bool = false,
+
     /// The time quantum of the task, in ticks of the scheduler timer.
     ///
     /// When the quantum expires, the task is preempted and returned to the
@@ -181,6 +190,12 @@ pub const Statistics = struct {
     lock_max_depth: u32 = 0,
     /// Releases of the state lock made by a CPU that did not hold it.
     lock_refused_releases: u64 = 0,
+    /// The id of the idle task of this CPU, or -1 while it does not exist.
+    ///
+    /// The idle task is the last resort of the processor: it is what the
+    /// scheduler returns when nothing else can run, and the only reason a
+    /// blocking call can succeed on an otherwise empty queue.
+    idle: i32 = -1,
 };
 
 /// The scheduler of the kernel.
@@ -315,8 +330,74 @@ pub const Scheduler = struct {
         task.state = .running;
         task.priority = 0;
         self.current[0] = task;
-        segment.tss.rsp0 = task.kernel_rsp;
+        segment.tssFor(smp.cpuId()).rsp0 = task.kernel_rsp;
         kynox_kernel_stack_pointer = task.kernel_rsp;
+    }
+
+    /// The stack where the idle task runs, and the kernel stack that the
+    /// handlers of the idle task use.
+    ///
+    /// They live in the scheduler because the idle task is the one task that
+    /// nobody else can create: it has no owner, no process and no address
+    /// space, and it exists for as long as the CPU does.
+    var idle_user_stack: [8 * 1024]u8 align(16) = @splat(0);
+    var idle_kernel_stack: [8 * 1024]u8 align(16) = @splat(0);
+
+    /// Halts the processor until the next interrupt.
+    ///
+    /// This is the body of the idle task. `sti; hlt` is the pair that matters:
+    /// without the `sti` the halt would never return on a processor that
+    /// arrived here with interrupts disabled, and the machine would stop for
+    /// ever instead of idling.
+    fn idleEntry() void {
+        while (true) {
+            x86_cpu.waitForInterrupt();
+        }
+    }
+
+    /// Creates the idle task, if it does not exist yet.
+    ///
+    /// The task is marked `is_idle`, so the policy only chooses it when nothing
+    /// else can run, and it is given the largest virtual runtime that the queue
+    /// allows, so that it is the last candidate even among idle tasks. The
+    /// function is idempotent and returns the existing task on the second call.
+    ///
+    /// The idle task is a task of **ring 3**, exactly like every other task of
+    /// the kernel: its body is user code, and the halt happens inside the
+    /// kernel on the way back from the interrupt. Two reasons, and both are
+    /// structural rather than stylistic:
+    ///
+    /// - the selector of the kernel (`cs`) carries `rpl` 0, and a context switch
+    ///   that returns to it makes the processor ring 0 — the isolation of the
+    ///   other tasks would be lost on the way back to an idle task;
+    /// - the architecture gives no way to switch to the idle task and stay in
+    ///   ring 0 without a return frame that pretends to come from the kernel,
+    ///   which is a frame the kernel would then have to trust.
+    ///
+    /// So the idle task returns to ring 3, halts in the kernel built from the
+    /// page tables of the kernel, and halts there until an interrupt arrives.
+    pub fn ensureIdle(self: *Scheduler) ?*Task {
+        self.lockState();
+        defer self.unlockState();
+
+        for (self.tasks[0..self.count]) |entry| {
+            const task = entry orelse continue;
+            if (task.is_idle) return task;
+        }
+
+        const idle = self.spawnUser(
+            @intFromPtr(&idleEntry),
+            @intFromPtr(&idle_user_stack),
+            idle_user_stack.len,
+            &idle_kernel_stack,
+            0,
+            null,
+            0,
+        ) orelse return null;
+        idle.is_idle = true;
+        idle.vruntime = policy.idleVruntime;
+
+        return idle;
     }
 
     /// Spawns a new task that starts at `entry` with the given stack.
@@ -548,7 +629,7 @@ pub const Scheduler = struct {
         // stack of the task that is going to run is therefore the one that
         // the segment of task state points at, which is the stack of the
         // kernel of the task, and not the stack of the user.
-        segment.tss.rsp0 = next.kernel_rsp;
+        segment.tssFor(smp.cpuId()).rsp0 = next.kernel_rsp;
         kynox_kernel_stack_pointer = next.kernel_rsp;
 
         kynox_current_context = &current.context;
@@ -810,10 +891,12 @@ pub const Scheduler = struct {
 
         var ready: u32 = 0;
         var blocked: u32 = 0;
+        statistics.idle = -1;
         for (self.tasks) |task| {
             const value = task orelse continue;
             if (value.state == .ready) ready += 1;
             if (value.state == .blocked) blocked += 1;
+            if (value.is_idle) statistics.idle = @intCast(value.id);
         }
         statistics.ready = ready;
         statistics.blocked = blocked;
@@ -838,6 +921,14 @@ pub const Scheduler = struct {
         return self.tasks[chosen];
     }
 
+    /// The task that the policy would choose after `current`.
+    ///
+    /// The production path is `findNextReady`, which is private; this accessor
+    /// exists so that a test can ask the same question without switching.
+    fn findNextReadyForTest(self: *const Scheduler, current: *Task) ?*Task {
+        return self.findNextReady(current);
+    }
+
     /// Describes the queue as the policy sees it.
     ///
     /// A slot is eligible when it holds a task, the task is ready, it is not
@@ -858,7 +949,12 @@ pub const Scheduler = struct {
                 if (state == .exiting or state == .reaped) continue;
             }
 
-            entries[index] = .{ .index = index, .vruntime = task.vruntime, .eligible = true };
+            entries[index] = .{
+                .index = index,
+                .vruntime = task.vruntime,
+                .eligible = true,
+                .idle = task.is_idle,
+            };
         }
 
         return entries;
@@ -1482,4 +1578,72 @@ test "a mutex waiter blocks in the scheduler and is handed the lock when it is w
     try testing.expectEqual(mutex_module.Mutex.Release.unlocked, mutex.release(waiter));
     try testing.expect(mutex.isFree());
     try testing.expect(!scheduler.state_lock.isHeld());
+}
+
+test "the idle task exists once, and the policy only runs it when nothing else can" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    // The idle task is created by the scheduler itself: no owner, no process,
+    // no address space.
+    const idle = scheduler.ensureIdle().?;
+    try testing.expect(idle.is_idle);
+    try testing.expectEqual(State.ready, idle.state);
+    try testing.expectEqual(policy.idleVruntime, idle.vruntime);
+    try testing.expectEqual(@as(u32, 1), scheduler.count);
+
+    // A second call returns the same task instead of creating a second one.
+    const again = scheduler.ensureIdle().?;
+    try testing.expectEqual(idle, again);
+    try testing.expectEqual(@as(u32, 1), scheduler.count);
+
+    // A real task is created and made ready: the choice is the real task, even
+    // though the idle task is eligible and its runtime is enormous.
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    const worker = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    worker.vruntime = 0;
+    worker.state = .ready;
+
+    idle.state = .running;
+    scheduler.current[0] = idle;
+    try testing.expectEqual(worker, scheduler.findNextReadyForTest(idle).?);
+
+    // With the real task blocked and the idle task on the processor there is
+    // nobody to switch to, and the idle task keeps running — halting until the
+    // next interrupt is exactly the job. Before the idle task existed this was
+    // the case where the scheduler had nothing to return and the processor
+    // carried on with whatever the interrupt interrupted.
+    worker.state = .blocked;
+    try testing.expectEqual(@as(?*Task, null), scheduler.findNextReadyForTest(idle));
+
+    // The other order: a real task runs and the only candidate is the idle
+    // task, which is what a blocking call needs in order to sleep at all.
+    worker.state = .running;
+    idle.state = .ready;
+    scheduler.current[0] = worker;
+    try testing.expectEqual(idle, scheduler.findNextReadyForTest(worker).?);
+}
+
+test "a task that blocks hands the processor to the idle task instead of failing" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const idle = scheduler.ensureIdle().?;
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    const worker = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    worker.state = .running;
+    worker.quantum = 4;
+    scheduler.current[0] = worker;
+
+    // Before the idle task existed this was the "nobody to switch to" case; now
+    // there is always somebody, and the wait succeeds.
+    var queue: wait_queue.WaitQueue = .{};
+    var node = wait_queue.Node.init(worker, Scheduler.wakeTask);
+    try testing.expect(scheduler.blockCurrentOn(&queue, &node, 0));
+    try testing.expectEqual(State.blocked, worker.state);
+    try testing.expectEqual(idle, scheduler.current[0].?);
+    try testing.expectEqual(State.running, idle.state);
 }

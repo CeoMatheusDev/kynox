@@ -191,7 +191,10 @@ message; no record survives.
    boot keeps it, the production boot does not.
 3. Replace the global TSS with **one TSS per CPU**, allocated with the per-CPU
    area; `rsp0` is updated on privilege transitions of that CPU only. IST stacks
-   become per-CPU as well.
+   become per-CPU as well. *(2026-11-01: done in `segment.zig` — eight segments,
+   each with its own `rsp0`, `ist1` and descriptor table, installed by
+   `installForCpu`; see `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md`.
+   The per-CPU area of item 4 is still missing.)*
 4. Define the per-CPU area now (this is the K2 prerequisite): a fixed struct
    containing `self`, `apic_id`, `current_thread`, `kernel_stack`, `tss`, `idle`,
    `preempt_count`, reached through the GS base *or* through a single accessor
@@ -443,7 +446,10 @@ stage), `kernel/arch/x86_64/task.s`, `kernel/arch/x86_64/spinlock.zig`, new
 3. **Lock the scheduler.** One lock per run queue plus a documented ordering
    against the wait-queue lock. Preemption is disabled while holding it.
 4. **Idle task per CPU** at the lowest priority that `hlt`s. The kernel stops
-   falling off the end of `kmain`.
+   falling off the end of `kmain`. *(2026-11-01: the idle task exists and the
+   policy chooses it only when nothing else can run — one task, not one per CPU,
+   because the scheduler still has one array. See
+   `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md`.)*
 5. **FPU state in the context**: `xsave`/`xrstor` with a per-CPU save area; the
    test writes a distinct pattern per thread and reads it back.
 6. **Wait queues** with the standard predicate loop (`while (!cond) wait`), a

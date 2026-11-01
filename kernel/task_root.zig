@@ -57,6 +57,28 @@ export var kynox_switch_cycles: u64 = 0;
 export var kynox_switch_minimum: u64 = 0;
 export var kynox_syscall_blocked: u64 = 0;
 
+// The instructions that load the tables (GDT and TR) have no register form: the
+// externs of `segment.zig` are defined by `segment.s` in the kernel. The host
+// build has no assembly, so the test binary defines them here. They are only
+// reached through `segment.installForCpu`, which the tests do call (through the
+// entry of an AP), and a stub that does nothing is the honest definition on a
+// processor that has no global descriptor table to load.
+export fn kynox_gdt_load_data(selector: u16) void {
+    _ = selector;
+}
+export fn kynox_gdt_load_code(selector: u16) void {
+    _ = selector;
+}
+export fn kynox_load_gdt(pointer: *align(8) const anyopaque) void {
+    _ = pointer;
+}
+export fn kynox_load_tss(selector: u16) void {
+    _ = selector;
+}
+export fn kynox_store_gdt(pointer: *align(8) anyopaque) void {
+    _ = pointer;
+}
+
 // The unit tests live in the module, and this block is what brings them into
 // the binary. Without it the artifact would be built with zero tests and would
 // pass no matter what.

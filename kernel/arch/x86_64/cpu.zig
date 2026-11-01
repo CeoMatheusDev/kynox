@@ -266,6 +266,17 @@ pub fn halt() void {
     asm volatile ("hlt" ::: .{ .memory = true });
 }
 
+/// Enables interrupts and halts until one arrives.
+///
+/// The pair is the body of an idle loop, and the order is the reason the
+/// function exists: `hlt` with interrupts disabled never returns, and the
+/// window between an interrupt that arrives and the `hlt` that follows it is
+/// closed because `sti` only takes effect after the *next* instruction — the
+/// processor does not deliver an interrupt between the two.
+pub fn waitForInterrupt() void {
+    asm volatile ("sti; hlt" ::: .{ .memory = true });
+}
+
 /// The control word of the x87 unit.
 var control_word: u16 = 0x037F;
 

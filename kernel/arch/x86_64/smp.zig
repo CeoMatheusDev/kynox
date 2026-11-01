@@ -34,6 +34,7 @@ const apic = @import("apic.zig");
 const kynox = @import("kynox_shared");
 const x86_cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
+const segment = @import("segment.zig");
 
 /// Número máximo de CPUs lógicas suportadas.
 pub const max_cpus: u8 = 8;
@@ -231,6 +232,12 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
 
     // Marca a pilha como disponivel para o escalonador.
     ap_stack_top[ap_index] = aligned_top;
+
+    // A CPU recebe a propria tabela de segmentos e o proprio segmento de
+    // estado da tarefa: um `rsp0` global seria a pilha de kernel da CPU que o
+    // escreveu por ultimo. `ist1` aponta para a pilha de double fault desta
+    // CPU, que o gate do vetor 8 ja usa.
+    segment.installForCpu(cpu_id, aligned_top);
 
     // Sinaliza que esta CPU esta online.
     cpu.state = .online;

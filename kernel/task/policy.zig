@@ -41,6 +41,14 @@ const std = @import("std");
 /// the timer interrupt, and the timer cannot allocate.
 pub const max_entries = 32;
 
+/// The virtual runtime that the idle task starts with.
+///
+/// It is the largest value that the arithmetic of the virtual runtime does not
+/// overflow when a slice is added, which makes the idle task the last candidate
+/// of the queue even among idle tasks. It is a constant of the policy and not a
+/// number written at the call site, so that a test can assert it.
+pub const idleVruntime: i64 = std.math.maxInt(i64) / 4;
+
 /// The unit weight of a task.
 ///
 /// A task of weight 1024 earns one tick of virtual runtime per tick of
@@ -65,6 +73,13 @@ pub const Entry = struct {
     /// (it runs, it waits, or it ended), when it is the task that is running,
     /// or when the process of the task is leaving.
     eligible: bool,
+    /// Whether the task is the idle task of the CPU.
+    ///
+    /// The idle task only exists to have something to run when nothing else
+    /// can: the processor halts in it instead of returning from an interrupt to
+    /// whatever it interrupted. It is therefore chosen **only** when no other
+    /// eligible task exists, whatever its virtual runtime says.
+    idle: bool = false,
 };
 
 /// Whether the running task has to leave the processor.
@@ -127,19 +142,33 @@ pub fn pickNext(entries: []const Entry, after: usize) ?usize {
 
     var best: ?usize = null;
     var best_vruntime: i64 = std.math.maxInt(i64);
+    var best_idle: ?usize = null;
+    var best_idle_vruntime: i64 = std.math.maxInt(i64);
 
     var offset: usize = 0;
     while (offset < entries.len) : (offset += 1) {
         const index = (start + offset) % entries.len;
         const entry = entries[index];
         if (!entry.eligible) continue;
+
+        if (entry.idle) {
+            if (best_idle == null or entry.vruntime < best_idle_vruntime) {
+                best_idle = index;
+                best_idle_vruntime = entry.vruntime;
+            }
+            continue;
+        }
+
         if (best == null or entry.vruntime < best_vruntime) {
             best = index;
             best_vruntime = entry.vruntime;
         }
     }
 
-    return best;
+    // The idle task is the last resort: a processor that runs it is a processor
+    // with nothing to do, and giving it the processor while a task could run
+    // would be a task that waits for a halt to end.
+    return best orelse best_idle;
 }
 
 /// The smallest virtual runtime among the eligible entries.
@@ -166,6 +195,11 @@ const testing = std.testing;
 /// An entry built for a test.
 fn slotEntry(index: usize, vruntime: i64, eligible: bool) Entry {
     return .{ .index = index, .vruntime = vruntime, .eligible = eligible };
+}
+
+/// An idle entry built for a test.
+fn idleEntry(index: usize, vruntime: i64) Entry {
+    return .{ .index = index, .vruntime = vruntime, .eligible = true, .idle = true };
 }
 
 test "the quantum only preempts a task that is still running" {
@@ -317,6 +351,51 @@ test "the chosen entry is the smallest of the eligible ones" {
             }
         }
     }
+}
+
+test "the idle task is chosen only when nothing else can run" {
+    // The idle task has the smallest virtual runtime of the queue, and it is
+    // still not chosen while a real task is eligible: its whole purpose is to
+    // be the last resort.
+    const busy = [_]Entry{
+        idleEntry(0, -1000),
+        slotEntry(1, 40, true),
+        slotEntry(2, 10, true),
+    };
+    try testing.expectEqual(@as(?usize, 2), pickNext(&busy, 0));
+
+    // Nothing else can run: the idle task is chosen, which is what lets the
+    // processor halt instead of returning to an interrupted task.
+    const idle_only = [_]Entry{
+        idleEntry(0, 5),
+        slotEntry(1, 1, false), // running
+        slotEntry(2, 2, false), // blocked
+    };
+    try testing.expectEqual(@as(?usize, 0), pickNext(&idle_only, 1));
+
+    // Two idle tasks (one per CPU in a shared description): the ring decides.
+    const two_idle = [_]Entry{
+        idleEntry(0, 3),
+        idleEntry(1, 3),
+    };
+    try testing.expectEqual(@as(?usize, 1), pickNext(&two_idle, 0));
+    try testing.expectEqual(@as(?usize, 0), pickNext(&two_idle, 1));
+}
+
+test "an idle task never displaces a real one, even with a smaller runtime" {
+    var entries: [4]Entry = undefined;
+    entries[0] = idleEntry(0, std.math.minInt(i64) + 1);
+    entries[1] = slotEntry(1, 100, true);
+    entries[2] = slotEntry(2, 200, false);
+    entries[3] = slotEntry(3, 300, true);
+
+    // The smallest eligible real task wins, whatever the idle runtime is.
+    try testing.expectEqual(@as(?usize, 1), pickNext(&entries, 0));
+
+    // With the real tasks blocked, the idle task is the answer.
+    entries[1].eligible = false;
+    entries[3].eligible = false;
+    try testing.expectEqual(@as(?usize, 0), pickNext(&entries, 0));
 }
 
 test "the smallest runtime of a queue is the one a new task inherits" {

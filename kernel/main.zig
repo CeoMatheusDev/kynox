@@ -1020,6 +1020,14 @@ fn installInterrupts() void {
 fn installTaskState() void {
     segment.loadTaskState();
     serial.printLine("[KNK] segments: task state segment loaded", .{});
+    // Defect 2 of the audit of 2026-10-31: a single global segment with a single
+    // `rsp0` made ring 3 on an AP impossible. The segment is now per CPU, and
+    // this line reports the one of the BSP and the stack of its double fault.
+    serial.printLine("[KNK] segments: {d} task state segments, ist1 of the BSP at 0x{x}, table verified {s}", .{
+        segment.max_cpus,
+        segment.doubleFaultStackTop(0),
+        if (segment.verifyForCpu(0)) "yes" else "no",
+    });
 }
 
 /// Returns a page of a process window to the physical memory manager.
@@ -3891,6 +3899,20 @@ fn installSystemCall() void {
 fn installScheduler() void {
     scheduler.scheduler.init(@intFromPtr(&kynox_boot_stack_end), &kernel_stacks[0]);
 
+    // The idle task comes first: it is the last resort of the processor, and a
+    // task that blocks must never find an empty queue. Before it existed, a
+    // blocking call on a processor with no other ready task returned without
+    // switching, and the processor carried on with whatever the interrupt
+    // interrupted.
+    const idle = scheduler.scheduler.ensureIdle() orelse return reportOutOfMemory();
+    serial.printLine("[KNK] idle: task {d} cs=0x{x} ss=0x{x} rip=0x{x} rsp=0x{x}", .{
+        idle.id,
+        idle.context.cs,
+        idle.context.ss,
+        idle.context.rip,
+        idle.context.rsp,
+    });
+
     _ = scheduler.scheduler.spawn(&workerOne, &task_stacks[1], &kernel_stacks[1], 0);
     _ = scheduler.scheduler.spawn(&workerTwo, &task_stacks[2], &kernel_stacks[2], 0);
 
@@ -4945,6 +4967,12 @@ fn reportScheduler() void {
     else
         0;
 
+    // The idle task is reported because it is the answer to "what runs when
+    // nothing runs": if the line says -1, a blocking call on an empty queue
+    // would have no processor to hand over.
+    serial.printLine("[KNK] idle: task {d} of the processor, the last resort of the queue", .{
+        statistics.idle,
+    });
     serial.printLine("[KNK] tasks: {d} ready, {d} blocked, {d} ticks, {d} switches", .{
         statistics.ready,
         statistics.blocked,

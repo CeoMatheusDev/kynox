@@ -15,7 +15,7 @@
 |---|---|
 | Task | `kernel/task/scheduler.zig`: 32 static slots, a state enum, a context pointer, a priority and a tick budget |
 | Context switch | `arch/x86_64/task.s`: saves callee-saved GPRs and `rsp`; **does not save FPU/SSE state** (comment confirms) |
-| Scheduler | EEVDF over the tasks of a CPU (a virtual runtime, a deadline and a weight per task, a quantum drawn from the slice), behind a **state lock with per-CPU ownership** (`task/lock.zig`) that every entry point takes and releases, and that counts its own re-entries because the scheduler calls itself inside one decision; **no idle task**; **59 host tests** in `task-tests` |
+| Scheduler | EEVDF over the tasks of a CPU (a virtual runtime, a deadline and a weight per task, a quantum drawn from the slice), behind a **state lock with per-CPU ownership** (`task/lock.zig`) that every entry point takes and releases, and that counts its own re-entries because the scheduler calls itself inside one decision; **an idle task** that the policy chooses only when no other task is eligible (ring 3, `sti; hlt`, never displaces a real task); **63 host tests** in `task-tests` |
 | Preemption | PIT tick → `scheduler.tick()` → `prepareNext()`; the switch happens on the timer path, at the end of the quantum of the running task, or as soon as the task blocks. A tick with slice left only moves the clock |
 | Threads | a task *is* a thread; no thread group |
 | Processes | no process object. Scheduling slots are used directly as "processes"; `fs` indexes by a process id that must be smaller than `max_processes = 8` |
@@ -27,9 +27,11 @@
 The audit's summary applies: the scheduler is a correct *mechanism* for the
 single-CPU demonstration and an incorrect *system* for anything else. Its policy
 is now covered by 12 host tests (`audits/2026-11-01-scheduler-tests.md`), and
-writing them closed three preemption defects; the lock, the idle task and the
-SMP stress test are still missing, which is why the roadmap keeps the policy
-testable before it is extended.
+writing them closed three preemption defects; the lock followed
+(`audits/2026-11-01-scheduler-lock.md`) and then the idle task and the per-CPU
+segment (`audits/2026-11-01-idle-task-and-per-cpu-tss.md`). The SMP stress test
+is still missing, because no AP has ever run, which is why the roadmap keeps the
+policy testable before it is extended.
 
 ## 2. Objects
 

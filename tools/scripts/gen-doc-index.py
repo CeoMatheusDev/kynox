@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "Per-CPU task state segments and tables with their double-fault stacks, and the idle task of ring 3 that halts when nothing else can run.",
+    },
     "docs/audits/2026-11-01-scheduler-lock.md": {
         "kind": "implementation-record",
         "authority": "record",

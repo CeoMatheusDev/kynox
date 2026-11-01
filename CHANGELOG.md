@@ -21,6 +21,37 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — a segment per processor and an idle task that halts
+
+- **Audit defect 2 closed in code: one TSS per CPU.** `segment.zig` had one
+  `TaskStateSegment`, one GDT table and one `GdtPointer`; it now has eight of
+  each (with eight 16 KiB double-fault stacks), `tssFor(cpu)` clamps instead of
+  indexing outside the table, `installForCpu(cpu, stack_top)` writes `rsp0` and
+  `ist1`, builds the table, loads the GDT and reloads the data and code
+  segments, and `kynox_ap_entry` calls it before an AP enters its loop. The
+  scheduler writes `rsp0` through `segment.tssFor(smp.cpuId())`, and the boot log
+  states the shape (`[KNK] segments: 8 task state segments, …`).
+- **An idle task, and the policy that makes it the last resort.**
+  `Scheduler.ensureIdle()` creates it once — a ring 3 task whose body halts the
+  processor with `sti; hlt` — and `Statistics.idle` reports its id at boot. The
+  policy gained `Entry.idle`: the choice returns the smallest-runtime **real**
+  task whenever one is eligible, whatever the runtime of the idle task is, so an
+  idle task can never displace a task that could run. `policy.idleVruntime` is
+  where its accounting starts.
+- **`cpu.waitForInterrupt()`**: `sti; hlt` as one instruction pair, because `hlt`
+  with interrupts disabled never returns and `sti` only takes effect after the
+  next instruction, which closes the window between the two.
+- **Six new host tests** (806 in total, task 63, arch 146): the `rsp0` of one
+  CPU does not touch the other, the descriptor of a CPU parses back to the base
+  of its own segment, the idle task loses to any real task, two idle tasks are
+  decided by the ring, `ensureIdle` is idempotent over the real queue, and a
+  blocking call on a queue whose only candidate is the idle task succeeds and
+  switches to it.
+- Documentation: `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` (the
+  record), `docs/PROJECT_STATUS.{md,json}` (scheduler 68% → 74%, CPU/interrupts
+  60% → 66%, the measured counts, `K-01`), `README.md`,
+  `docs/architecture/execution-model.md` and `docs/ai/context-pack.md`.
+
 ### Added (2026-11-01) — the scheduler has a state lock with per-CPU ownership
 
 - **`kernel/task/lock.zig`.** The audit's defect 1 was "no lock at all" over state
