@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 821/821 tests passed (24 test artifacts; task-tests 68 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 156, including the per-CPU segment and the AP trampoline; no QEMU target executed)",
+      "result": "success: 52/52 steps, 828/828 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 159, including the per-CPU segment, the AP trampoline and the reschedule refusals; no QEMU target executed)",
       "date": "2026-11-01"
     },
     {
@@ -248,7 +248,7 @@
     "context_pack": "docs/ai/context-pack.md",
     "generator": "tools/scripts/gen-doc-index.py",
     "check": "python3 tools/scripts/gen-doc-index.py --check (part of zig build test and docs-check)",
-    "documents": 66,
+    "documents": 67,
     "authorities": [
       "binding",
       "current",
@@ -422,7 +422,7 @@
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "zig build test (arch-tests, 156 tests)"
+          "zig build test (arch-tests, 159 tests)"
         ],
         "commands": [
           "zig build test --summary all"
@@ -487,7 +487,7 @@
     },
     {
       "id": "smp",
-      "maturity_percent": 52,
+      "maturity_percent": 60,
       "status": "in_progress",
       "evidence": [
         "kernel/arch/x86_64/smp.zig",
@@ -503,29 +503,35 @@
         "one numbering for the CPUs: the index in the CPU table that comes from the MADT indexes the stacks, is passed to the AP in RDI and is what cpuId() returns; a CPU number the table cannot hold is refused before any IPI",
         "the AP sets the EFER bits of the BSP (LME and, when the kernel enabled it, NXE) before it loads the kernel CR3: an NX entry with NXE clear is a reserved bit that faults inside the trampoline, where there is no IDT",
         "an AP that reaches kynox_ap_entry installs its segment, marks itself online and enters the scheduler through a hook (smp.installCpuEntryHook): it adopts a kernel task of its own and gets the idle task of its CPU, so its queue is never empty and current[CPU] is never null",
+        "the reschedule IPI: vector 65 with its gate, its stub and its handler, apic.sendReschedule and smp.reschedule, which refuses the CPU that asks (a self-IPI can be refused by the hardware), an id the table does not have, a CPU that has not registered and a controller that is not mapped",
+        "the boot migrates the second worker to the first online AP (distributeWorkToAps), which is what gives an AP something to run: the tasks of the boot are created by the BSP",
+        "the online count of the CPU table is incremented once per processor: the AP counts itself in registerCpu, and startAps no longer counts it again",
         "AP startup gated on a published trampoline and on the number of discovered processors, with a bounded wait and explicit failure reporting"
       ],
       "limitations": [
         "no AP has ever answered a startup IPI in this environment: the copy, the fields and the order are code and host tests, not an observed second processor",
-        "an AP that did answer installs its segment, adopts a kernel task and waits with sti; hlt: it takes no task, because nothing wakes it (no reschedule IPI) and it has no clock of its own",
+        "no IPI has ever been delivered here: the vector, the gate, the handler and the migration are code and host tests",
+        "an AP has no clock of its own: it is only preempted when another CPU sends it a reschedule",
+        "no TLB shootdown and no migration of a running task",
         "no per-CPU timers/IPIs for scheduling",
         "the page of the trampoline is checked against the firmware memory map, not against the EBDA pointer at 0x40E",
         "no SMP stress test"
       ],
       "pending_work": [
-        "a wake-up path for an AP: the reschedule IPI, or a per-CPU tick source chosen by timer.TickSource",
-        "per-CPU run queues with migration",
+        "TLB shootdown on the same mechanism (address and generation, with an acknowledgement)",
+        "a per-CPU tick source chosen by timer.TickSource, so an AP is not woken only from outside",
+        "migration of a running task",
         "IPI for reschedule and TLB shootdown",
         "record a boot on a machine with more than one processor"
       ],
       "tests": [
-        "arch-tests smp suite: table order, disabled and duplicate processors, BSP by APIC id, empty MADT fallback, max_cpus cap, the unpublished trampoline, an announcement without a copy, one stack per logical CPU and the stack accessor",
+        "arch-tests smp suite: table order, disabled and duplicate processors, BSP by APIC id, empty MADT fallback, max_cpus cap, the unpublished trampoline, an announcement without a copy, one stack per logical CPU, the stack accessor, one count per registered AP, the four refusals of a reschedule and the first online AP",
         "arch-tests trampoline suite: the vector and the page, refused placements, the copy with every field, arming two APs in a row, refused layouts and truncated 32-bit values"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (156 tests, smp table and the trampoline block included)"
+          "arch-tests (159 tests, smp table, the trampoline block and the reschedule included)"
         ],
         "commands": [
           "zig build test"
@@ -537,7 +543,7 @@
     },
     {
       "id": "scheduler",
-      "maturity_percent": 79,
+      "maturity_percent": 83,
       "status": "in_progress",
       "evidence": [
         "kernel/task/scheduler.zig",
@@ -569,12 +575,16 @@
         "the policy chooses the idle task only when no other task is eligible, whatever its virtual runtime (policy.Entry.idle, policy.idleVruntime), so it is the last resort of the queue and never displaces a real task",
         "one idle task per CPU, with its own user and kernel stacks: the last resort of a processor belongs to that processor",
         "an owner per task (Task.cpu): the choice of a CPU skips every task of another processor, so a second CPU cannot take the task, the stack or the idle task of the first; enqueueReady records the owning CPU",
-        "adoptKernelTask: an AP that arrives from the trampoline gets a kernel task of its own (ring 0, its own stack, state running) and becomes current[CPU], so prepareNext has a context to save instead of returning before it reads the queue"
+        "adoptKernelTask: an AP that arrives from the trampoline gets a kernel task of its own (ring 0, its own stack, state running) and becomes current[CPU], so prepareNext has a context to save instead of returning before it reads the queue",
+        "rescheduleCurrent: the handler of the reschedule IPI decides without counting a tick and without charging the slice (decideNext(forced)), so a timeout never depends on another CPU and a task's quantum never shrinks because somebody asked a question",
+        "migrateTo: moves a task to the queue of another CPU (refusing a running task, a terminated one, an id above max_cpus and a move to the current owner), which is the only way a task reaches a processor other than the one that created it",
+        "wakeTask queues the awakened task on the CPU that owns it and requests a reschedule of that CPU when it is another one, instead of silently migrating it to the waker's queue"
       ],
       "limitations": [
         "effectively BSP-centric: no AP has ever run, so the lock is never contended in the kernel (it is contended on the host by four threads)",
         "the idle task is created and reported at boot, but no hlt of this tree has executed here",
-        "an AP that entered the scheduler sleeps: there is no reschedule IPI and no per-CPU clock, so nothing wakes it with work",
+        "an AP has no clock of its own: the reschedule IPI is the only thing that can make it look at its queue, and no IPI has ever been delivered here",
+        "fairness across CPUs: nothing balances the queues, and a running task cannot be migrated",
         "the switch to the idle task has never crossed a real context switch (the host tests stop at the decision)",
         "the mutex has no user in the kernel yet; the end-to-end test is the proof of the chain",
         "statisticsOf reads the state without the lock, by design (diagnostics)",
@@ -584,20 +594,20 @@
       ],
       "pending_work": [
         "trampoline below 1 MiB, so that an AP can run and contend the lock",
-        "a machine to observe the halt, and a wake-up path for an AP",
+        "a machine to observe the halt and an IPI being delivered",
         "a user of the mutex in the kernel",
         "reader/writer lock and condition variable on the same queue",
         "per-CPU run queues with a migration protocol"
       ],
       "tests": [
-        "task-tests (68)",
+        "task-tests (72)",
         "arch-tests (task/context pure parts)",
         "ipc-tests (8 channel tests)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "task-tests (68, including a four-thread lock contention test, an end-to-end mutex/scheduler test, the idle-task choice and the ownership of a task by a CPU)",
+          "task-tests (72, including a four-thread lock contention test, an end-to-end mutex/scheduler test, the idle-task choice, the ownership of a task by a CPU, the reschedule that is not a tick and the migration)",
           "arch-tests (task/context pure parts)",
           "ipc-tests (8 channel tests)"
         ],
@@ -1487,16 +1497,16 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 821 tests, in zig build test",
+        "24 host test artifacts, 828 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "821 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership)",
+        "828 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 63 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 66 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 67 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
       ],
       "limitations": [
         "no CI",
@@ -1512,7 +1522,7 @@
         "host tests for the bootloader"
       ],
       "tests": [
-        "zig build test: 52/52 steps, 821/821 tests"
+        "zig build test: 52/52 steps, 828/828 tests"
       ],
       "validation": {
         "status": "host_tests_passed",
@@ -1725,7 +1735,7 @@
     {
       "id": "K-01",
       "severity": "P1",
-      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, blockCurrentOn gives the mutex its blocking primitive, the idle task is created at boot and chosen only when nothing else can run, and the segment of the CPU (rsp0, ist1, its own table) is installed by the entry of an AP. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the trampoline is now published below 1 MiB, INIT/SIPI are sent, the AP enters the scheduler with a task of its own, but no AP has answered and nothing wakes one with work, and the idle task has never halted here",
+      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, blockCurrentOn gives the mutex its blocking primitive, the idle task is created at boot and chosen only when nothing else can run, and the segment of the CPU (rsp0, ist1, its own table) is installed by the entry of an AP. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the trampoline is now published below 1 MiB, INIT/SIPI are sent, the AP enters the scheduler with a task of its own and a reschedule IPI can wake it with work, but no AP has answered, no IPI has been delivered and the idle task has never halted here",
       "status": "partially_closed"
     },
     {

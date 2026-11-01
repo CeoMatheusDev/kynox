@@ -21,6 +21,41 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — a reschedule IPI, so another CPU can hand over a task
+
+- **The IPI**: `apic.reschedule_vector` (65), `apic.sendReschedule`, the stub of
+  the vector in `interrupt.s`, its gate, and a handler that ends the interrupt
+  and asks the scheduler. It is the answer to the gap of the previous round — a
+  queue belongs to one CPU and the only clock of the system reaches one
+  processor.
+- **A reschedule is not a tick**: `decideNext(forced)` — the IPI handler
+  (`scheduler.rescheduleCurrent`) decides without counting a tick and without
+  charging the slice, so a timeout never depends on another CPU and a quantum
+  never shrinks because somebody asked a question.
+- **`migrateTo(task, cpu)`**: the way a task reaches a processor other than the
+  one that created it, refusing a running task, a terminated one, an id above
+  `max_cpus` and a move to the current owner. At boot, `distributeWorkToAps()`
+  migrates the second worker to the first online AP, and says why when no AP is
+  online.
+- **`smp.reschedule`** returns why it refused: `.same_cpu`, `.unknown_cpu`,
+  `.not_online`, `.no_apic`, or `.sent` (counted); every refusal happens before
+  the controller is written.
+- **A wake that lands on another CPU** now queues the task on the CPU that owns
+  it and requests a reschedule of that CPU, instead of silently migrating the
+  task to the queue of the waker.
+- **A counter defect fixed**: `startAps` and `registerCpu` both incremented the
+  online count, so two processors were reported as three. The AP counts itself
+  once, and a host test asserts it.
+- **Seven new host tests** (828 in total, `task-tests` 72, `arch-tests` 159): the
+  reschedule that switches without moving the quantum or the clock, the
+  reschedule with nothing to run, the migration with its four refusals, the wake
+  of a task of another CPU, one count per registered AP, the refusals of
+  `smp.reschedule` and the first online AP.
+- Documentation: `docs/audits/2026-11-01-reschedule-ipi.md`,
+  `docs/PROJECT_STATUS.{md,json}` (scheduler 79% → 83%, SMP 52% → 60%), the
+  counts, `README.md`, `docs/ai/context-pack.md`,
+  `docs/architecture/execution-model.md` and the K2 annotation of the roadmap.
+
 ### Added (2026-11-01) — every task names the CPU that owns it
 
 - **`Task.cpu`**: the ownership the scheduler only pretended to have. The choice

@@ -215,6 +215,68 @@ pub fn cpuCount() u8 {
     return online_cpu_count;
 }
 
+/// O resultado de um pedido de reschedule.
+///
+/// Nao e um booleano porque cada recusa e um motivo diferente, e o boot diz
+/// qual: a CPU errada, uma CPU que nao esta online, ou um APIC local que nao
+/// foi mapeado (o que, no host, e o caso normal).
+pub const RescheduleOutcome = enum {
+    /// A IPI foi entregue ao controlador.
+    sent,
+    /// O destino e a CPU que fez o pedido: nao ha o que acordar.
+    same_cpu,
+    /// O numero nao existe na tabela de CPUs.
+    unknown_cpu,
+    /// A CPU existe e nao esta online: ela nao pode receber a IPI.
+    not_online,
+    /// O APIC local nao esta mapeado, entao o controlador nao pode ser escrito.
+    no_apic,
+};
+
+var reschedule_requests: u64 = 0;
+
+/// Acorda uma CPU para ela reavaliar a propria fila.
+///
+/// A fila de uma CPU pertence a ela (`scheduler.Task.cpu`), e uma CPU sem relogio
+/// proprio dorme em `sti; hlt`. Quando uma tarefa dessa CPU fica pronta por causa
+/// de outra CPU, alguem tem de acordar a dona: e esta funcao.
+///
+/// Os tres destinos que nao podem receber a IPI sao recusados **antes** de
+/// escrever no controlador: a CPU que pergunta por si mesma (a IPI para o
+/// proprio APIC id pode ser recusada pelo hardware, e o pedido seria uma
+/// interrupcao para nada), um numero que a tabela nao tem, e uma CPU que existe
+/// mas ainda nao esta `online` — mandar uma IPI fixa para um processador em modo
+/// real ou desligado e entregar um vetor a quem nao tem IDT.
+pub fn reschedule(cpu_index: u8) RescheduleOutcome {
+    if (cpu_index >= max_cpus or cpu_index >= discovered_cpu_count) return .unknown_cpu;
+    if (cpu_index == cpuId()) return .same_cpu;
+    if (cpus[cpu_index].state != .online) return .not_online;
+    if (!apic.isMapped()) return .no_apic;
+
+    apic.sendReschedule(cpus[cpu_index].apic_id);
+    reschedule_requests += 1;
+    return .sent;
+}
+
+/// The first application processor that is online, or null.
+///
+/// It is the destination of the first migration: an AP with an empty queue and
+/// no work is a processor that halts, and the tasks of the boot are created by
+/// the BSP.
+pub fn firstOnlineAp() ?u8 {
+    var index: u8 = 0;
+    while (index < discovered_cpu_count) : (index += 1) {
+        if (index == bsp_index) continue;
+        if (cpus[index].state == .online) return index;
+    }
+    return null;
+}
+
+/// Quantas IPIs de reschedule foram realmente entregues.
+pub fn rescheduleRequests() u64 {
+    return reschedule_requests;
+}
+
 /// O que o kernel faz quando uma CPU chega em `kynox_ap_entry`.
 ///
 /// Esta tabela existe para o `smp.zig` nao importar o escalonador: o
@@ -492,7 +554,9 @@ pub fn startAps() void {
         apic.sendSipiTwice(apic_id, @intCast(trampoline_base >> 12));
 
         if (waitForOnline(index, 50_000_000)) {
-            online_cpu_count = @min(online_cpu_count + 1, max_cpus);
+            // The counter is not incremented here: the AP incremented it when it
+            // registered itself (`registerCpu`), and a second increment would
+            // report one more processor than the machine has.
             kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} online", .{ index, apic_id });
         } else {
             kynox.serial.printLine("[KNK] smp: AP cpu={d} apic id={d} did not answer before the deadline", .{
@@ -508,6 +572,76 @@ pub fn startAps() void {
 /// nada executa esta copia no lugar em que ela foi ligada.
 pub fn apTrampolineInfo() [*]const u8 {
     return trampoline.imageAddress();
+}
+
+test "the first online AP is the one that is not the BSP" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+        .{ .apic_id = 9, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    // No AP has registered: there is nobody to migrate to.
+    try std.testing.expectEqual(@as(?u8, null), firstOnlineAp());
+
+    _ = registerCpu(2, 9);
+    try std.testing.expectEqual(@as(u8, 2), firstOnlineAp().?);
+
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 1), firstOnlineAp().?);
+}
+
+test "an AP that registers itself is counted once" {
+    // `configureFromMadt` leaves the APs `initializing`, and the counter of
+    // online processors starts at one (the BSP). The AP increments it when it
+    // registers, and nothing else may: a second increment reports one more
+    // processor than the machine has.
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    try std.testing.expectEqual(@as(u8, 1), cpuCount());
+    try std.testing.expectEqual(CpuState.initializing, cpus[1].state);
+
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 2), cpuCount());
+
+    // A second registration of the same CPU changes nothing.
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(@as(u8, 2), cpuCount());
+}
+
+test "a reschedule asks for the CPU that can receive it, and refuses the others" {
+    const processors = [_]acpi.Processor{
+        .{ .apic_id = 0, .enabled = true },
+        .{ .apic_id = 7, .enabled = true },
+    };
+    _ = configureFromMadt(&processors, 0);
+    defer _ = configureFromMadt(&[_]acpi.Processor{}, 0);
+
+    const before = rescheduleRequests();
+
+    // The CPU that asks is not woken by an IPI to itself.
+    try std.testing.expectEqual(RescheduleOutcome.same_cpu, reschedule(0));
+    // A number that the table does not have.
+    try std.testing.expectEqual(RescheduleOutcome.unknown_cpu, reschedule(2));
+    try std.testing.expectEqual(RescheduleOutcome.unknown_cpu, reschedule(max_cpus));
+    // The AP exists and has not registered: an IPI to a processor that is not in
+    // long mode delivers a vector to a processor with no table of vectors.
+    try std.testing.expectEqual(RescheduleOutcome.not_online, reschedule(1));
+
+    // Online, but the local APIC is not mapped on this host: the controller
+    // cannot be written, and the request is refused instead of faulting.
+    _ = registerCpu(1, 7);
+    try std.testing.expectEqual(RescheduleOutcome.no_apic, reschedule(1));
+
+    // Nothing was delivered, so the counter that reports delivery did not move.
+    try std.testing.expectEqual(before, rescheduleRequests());
 }
 
 test "the stack of a CPU is handed out for the numbers the table has" {

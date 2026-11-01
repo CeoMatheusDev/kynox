@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-reschedule-ipi.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The reschedule IPI (vector 65), the decision that is not a tick, the migration of a task to another CPU and the wake that lands on a foreign queue.",
+    },
     "docs/audits/2026-11-01-cpu-affinity.md": {
         "kind": "implementation-record",
         "authority": "record",

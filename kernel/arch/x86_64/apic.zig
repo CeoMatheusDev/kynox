@@ -305,6 +305,24 @@ pub fn timerPeriodic(divisor: u32) void {
     write32(ApicOffset.timer_icr, divisor);
 }
 
+/// The vector of the reschedule IPI.
+///
+/// One vector per CPU, delivered as a fixed IPI: the processor that receives it
+/// re-evaluates its own queue instead of waiting for the next tick of a clock it
+/// may not even have. The number is above the local timer (64), which is the
+/// only other vector the kernel uses beyond the hardware range.
+pub const reschedule_vector: u8 = 65;
+
+/// Sends a reschedule IPI to one CPU (physical destination, fixed delivery).
+///
+/// The caller checks the destination (`smp.reschedule` does): an IPI to a
+/// processor that is not in long mode yet lands in whatever that processor is
+/// doing, and to its own APIC id it is a message to itself that the hardware
+/// may refuse.
+pub fn sendReschedule(apic_id: u32) void {
+    sendIpi(apic_id, 0, reschedule_vector);
+}
+
 /// Envia uma IPI para uma CPU de destino (modo fisico).
 ///
 /// `apic_id` e o ID de APIC local da CPU de destino. `delivery_mode` e o

@@ -12,14 +12,14 @@
     "reference": "a specification or a procedure the code must satisfy"
   },
   "counts": {
-    "documents": 66,
+    "documents": 67,
     "by_authority": {
       "binding": 2,
       "audit": 5,
       "current": 9,
       "planning": 24,
       "reference": 7,
-      "record": 7,
+      "record": 8,
       "decision": 12
     }
   },
@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 5309
+      "words": 5644
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 2571
+      "words": 2647
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 7614
+      "words": 7929
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 4724
+      "words": 4848
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1299
+      "words": 1329
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -178,7 +178,7 @@
       "kind": "architecture",
       "authority": "planning",
       "summary": "Processes, threads, scheduling, synchronisation, time and the user/kernel transition: the model and its state today.",
-      "words": 1807,
+      "words": 1834,
       "declared_status": "planning document"
     },
     {
@@ -350,6 +350,16 @@
       "authority": "record",
       "summary": "The defects of the 2026-10-31 audit that were closed without a hypervisor, with the evidence of each.",
       "words": 1453,
+      "date": "2026-11-01",
+      "declared_status": "implementation record"
+    },
+    {
+      "path": "docs/audits/2026-11-01-reschedule-ipi.md",
+      "title": "The reschedule IPI and the migration of a task — 2026-11-01",
+      "kind": "implementation-record",
+      "authority": "record",
+      "summary": "The reschedule IPI (vector 65), the decision that is not a tick, the migration of a task to another CPU and the wake that lands on a foreign queue.",
+      "words": 1658,
       "date": "2026-11-01",
       "declared_status": "implementation record"
     },
@@ -528,7 +538,7 @@
       "kind": "roadmap",
       "authority": "planning",
       "summary": "The fourteen stages of the kernel, K0 to K13, with the required work and completion criteria of each; the plan of record for kernel work.",
-      "words": 9533,
+      "words": 9567,
       "declared_status": "planning document"
     },
     {

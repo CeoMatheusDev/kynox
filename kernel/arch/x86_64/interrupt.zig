@@ -179,6 +179,11 @@ pub fn install() void {
     // The APIC local timer uses vector 64 (aligned with assembly INTERRUPT_ENTRY 64).
     setGate(64, @intFromPtr(&kynox_interrupt_64));
 
+    // The reschedule IPI. A processor that receives it re-evaluates its own
+    // queue: it is how a task that became ready on another CPU gets a processor
+    // without waiting for a clock that may not exist on that CPU.
+    setGate(apic.reschedule_vector, @intFromPtr(&kynox_interrupt_65));
+
     // The vectors that are not handled point at a stub that reports them.
     const unexpected = stubFor(255);
     for (exception_count + hardware_interrupt_count..entry_count) |vector| {
@@ -461,6 +466,17 @@ export fn kynox_interrupt_handler(vector: u64, frame: *const Registers) callconv
         return if (must_switch) 1 else 0;
     }
 
+    // The reschedule IPI: the processor asks its own queue again, without
+    // counting a tick (it is not a clock, and the tick of the system belongs to
+    // one source) and without moving the quantum of the task that runs.
+    if (vector == @as(u64, apic.reschedule_vector)) {
+        apic.eoi();
+
+        const scheduler = @import("../../task/scheduler.zig");
+        const must_switch = scheduler.scheduler.rescheduleCurrent();
+        return if (must_switch) 1 else 0;
+    }
+
     return 0;
 }
 
@@ -523,3 +539,4 @@ extern var kynox_interrupt_45: u8;
 extern var kynox_interrupt_46: u8;
 extern var kynox_interrupt_47: u8;
 extern var kynox_interrupt_64: u8;
+extern var kynox_interrupt_65: u8;

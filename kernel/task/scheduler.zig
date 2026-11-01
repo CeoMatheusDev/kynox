@@ -200,6 +200,15 @@ pub const Statistics = struct {
     lock_max_depth: u32 = 0,
     /// Releases of the state lock made by a CPU that did not hold it.
     lock_refused_releases: u64 = 0,
+    /// Reschedules requested by a wake that landed on another CPU.
+    ///
+    /// A task that becomes ready on CPU 1 while CPU 0 runs the waker is useless
+    /// to CPU 0: the queue that holds it belongs to CPU 1, and CPU 1 is asleep
+    /// in `sti; hlt`. The waker therefore asks for an IPI, and this counter is
+    /// how many times that happened.
+    wake_reschedules: u64 = 0,
+    /// Reschedules served by `rescheduleCurrent` (the IPI handler).
+    reschedules: u64 = 0,
     /// How many CPUs have a task of their own (`adoptKernelTask`).
     ///
     /// It is the number of processors that entered the scheduler, and not the
@@ -426,6 +435,39 @@ pub const Scheduler = struct {
         return idle;
     }
 
+    /// Moves a task to the queue of another CPU.
+    ///
+    /// This is the only way a task reaches a processor other than the one that
+    /// created it, and it is what makes an application processor useful: the
+    /// tasks of the boot are created by the BSP, so without a migration an AP
+    /// would have an idle task and nothing else.
+    ///
+    /// The task has to be **ready** or **blocked**: a running task is on a
+    /// processor and would keep running there while its owner changed, and a
+    /// terminated one is not scheduled again. The queueing goes through
+    /// `enqueueReady`, which records the new owner, and the destination CPU is
+    /// kicked when it is not this one — its queue just stopped being empty.
+    pub fn migrateTo(self: *Scheduler, task: *Task, cpu_id: u8) bool {
+        self.lockState();
+        defer self.unlockState();
+
+        if (cpu_id >= smp.max_cpus) return false;
+        if (task.cpu == cpu_id) return false;
+        if (task.state == .running or task.state == .terminated) return false;
+
+        const was_ready = task.state == .ready;
+        task.cpu = cpu_id;
+
+        if (was_ready) {
+            self.enqueueReady(task, cpu_id);
+            if (cpu_id != smp.cpuId()) {
+                _ = smp.reschedule(cpu_id);
+            }
+        }
+
+        return true;
+    }
+
     /// Gives the calling CPU a task of its own.
     ///
     /// An application processor arrives from the trampoline in ring 0, on a
@@ -603,6 +645,30 @@ pub const Scheduler = struct {
     /// chosen and prepared. The difference is that the blocking is not a
     /// tick of the timer, and therefore the tick counter does not move.
     fn prepareNext(self: *Scheduler) bool {
+        return self.decideNext(false);
+    }
+
+    /// Re-evaluates the queue of this CPU because another CPU asked for it.
+    ///
+    /// This is the handler of the reschedule IPI, and it is **not** a tick: the
+    /// tick of the system belongs to one clock (`timer.TickSource`), so counting
+    /// this as one would make the timeouts of the waiting tasks depend on how
+    /// often another processor happened to wake somebody. The quantum does not
+    /// move either: the task keeps the slice it has and leaves only if another
+    /// task of this CPU can run now.
+    pub fn rescheduleCurrent(self: *Scheduler) bool {
+        self.lockState();
+        defer self.unlockState();
+        self.statistics.reschedules += 1;
+        return self.decideNext(true);
+    }
+
+    /// Chooses the next task, and prepares the switch when there is one.
+    ///
+    /// `forced` is the difference between a tick and a reschedule: a tick only
+    /// takes the processor from the task when its quantum ended, a reschedule
+    /// takes it as soon as another task of this CPU is ready.
+    fn decideNext(self: *Scheduler, forced: bool) bool {
         const current = self.current[smp.cpuId()] orelse return false;
 
         // Decrement the quantum of the current task, and preempt it if it
@@ -624,7 +690,11 @@ pub const Scheduler = struct {
         var must_switch = current.state != .running;
         var preempted = false;
 
-        if (policy.shouldPreempt(current.state == .running, current.quantum)) {
+        // A reschedule does not consume the slice: the quantum is the exchange
+        // rate between processor time and the policy, and only a tick may move
+        // it. A decision taken because another CPU asked for it leaves the
+        // quantum exactly where the last tick left it.
+        if (!forced and policy.shouldPreempt(current.state == .running, current.quantum)) {
             current.quantum -= 1;
             if (current.quantum == 0) {
                 // The current task has exhausted its quantum: return it to
@@ -635,6 +705,12 @@ pub const Scheduler = struct {
                 must_switch = true;
                 preempted = true;
             }
+        }
+
+        // A reschedule does not touch the quantum: the task leaves because
+        // somebody else can run, not because its slice ended.
+        if (!must_switch and forced) {
+            must_switch = self.findNextReady(current) != null;
         }
 
         if (!must_switch) return false;
@@ -894,8 +970,19 @@ pub const Scheduler = struct {
         const value: *Task = @ptrCast(@alignCast(task));
         if (value.state == .terminated) return;
         value.state = .ready;
+
+        // The task goes back to the queue of the CPU that owns it, which is not
+        // necessarily the CPU that runs the waker. When it is not, that CPU has
+        // to be told: it is asleep in `sti; hlt`, and no clock of this system
+        // will wake it for this task.
+        //
         // K3.12.2 fix: enqueue the ready task; previously missing.
-        scheduler.enqueueReady(value, smp.cpuId());
+        scheduler.enqueueReady(value, value.cpu);
+        if (value.cpu != smp.cpuId()) {
+            if (smp.reschedule(value.cpu) == .sent) {
+                scheduler.statistics.wake_reschedules += 1;
+            }
+        }
     }
 
     /// Blocks the current task waiting for an input event.
@@ -1859,4 +1946,122 @@ test "queueing a task on a CPU makes that CPU its owner" {
     scheduler.enqueueReady(task, 3);
     try testing.expectEqual(@as(u8, 3), task.cpu);
     try testing.expectEqual(@as(u32, 1), scheduler.readyCount(3));
+}
+
+test "a reschedule switches to a ready task without moving the quantum or the clock" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    // Each task has its own stacks: the canary of a task lives at the bottom of
+    // its kernel stack, and two tasks sharing one would overwrite it.
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    var other_stack: [1024]u8 align(16) = undefined;
+    var other_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const running = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    const waiting = scheduler.spawn(noopEntry, other_stack[0..], other_kernel_stack[0..], 0).?;
+
+    running.state = .running;
+    running.quantum = 5;
+    scheduler.current[0] = running;
+
+    waiting.state = .ready;
+    waiting.cpu = 0;
+    waiting.vruntime = -500;
+
+    // A tick would leave the task alone: its quantum has not ended, and the
+    // clock of the system is the only thing that may count time.
+    try testing.expect(!scheduler.tick(0));
+    try testing.expectEqual(@as(u64, 1), scheduler.statisticsOf().ticks);
+
+    // A reschedule is not a tick: it does not count time, it does not move the
+    // quantum, and it hands the processor to the task that can run.
+    try testing.expect(scheduler.rescheduleCurrent());
+    try testing.expectEqual(@as(u64, 1), scheduler.statisticsOf().ticks);
+    try testing.expectEqual(@as(u64, 1), scheduler.statisticsOf().reschedules);
+    try testing.expectEqual(waiting, scheduler.current[0].?);
+    try testing.expectEqual(State.running, waiting.state);
+    try testing.expectEqual(State.ready, running.state);
+    // The tick moved the slice by one and the reschedule did not: four, not
+    // three, and not five.
+    try testing.expectEqual(@as(u16, 4), running.quantum);
+}
+
+test "a reschedule with nothing to run keeps the task and its quantum" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const only = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    only.state = .running;
+    only.quantum = 3;
+    scheduler.current[0] = only;
+
+    try testing.expect(!scheduler.rescheduleCurrent());
+    try testing.expectEqual(only, scheduler.current[0].?);
+    try testing.expectEqual(State.running, only.state);
+    try testing.expectEqual(@as(u16, 3), only.quantum);
+    try testing.expectEqual(@as(u64, 1), scheduler.statisticsOf().reschedules);
+}
+
+test "a task moves to another CPU and leaves the queue of the one that had it" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    var other_stack: [1024]u8 align(16) = undefined;
+    var other_kernel_stack: [1024]u8 align(16) = undefined;
+
+    const moving = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    moving.state = .ready;
+
+    const here = scheduler.spawn(noopEntry, other_stack[0..], other_kernel_stack[0..], 0).?;
+    here.state = .running;
+    here.cpu = 0;
+    scheduler.current[0] = here;
+
+    // CPU 0 chooses it while it belongs to CPU 0.
+    try testing.expectEqual(moving, scheduler.findNextReadyForTest(here).?);
+
+    // After the migration the queue of CPU 1 holds it, and CPU 0 cannot see it.
+    try testing.expect(scheduler.migrateTo(moving, 1));
+    try testing.expectEqual(@as(u8, 1), moving.cpu);
+    try testing.expectEqual(@as(?*Task, null), scheduler.findNextReadyForTest(here));
+
+    // A running task is on a processor: it cannot change owner underneath it,
+    // and a task that ends is not scheduled again anywhere.
+    try testing.expect(!scheduler.migrateTo(here, 1));
+    moving.state = .terminated;
+    try testing.expect(!scheduler.migrateTo(moving, 0));
+
+    // A number that the table does not have is refused, and asking for the CPU
+    // that already owns the task changes nothing.
+    moving.state = .ready;
+    try testing.expect(!scheduler.migrateTo(moving, smp.max_cpus));
+    try testing.expect(!scheduler.migrateTo(moving, 1));
+}
+
+test "a wake that lands on another CPU asks for that CPU and does not queue here" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const other = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    other.cpu = 1;
+    other.state = .blocked;
+
+    Scheduler.wakeTask(other);
+
+    try testing.expectEqual(State.ready, other.state);
+    // The ownership did not change: the task stayed on the CPU that owns it.
+    try testing.expectEqual(@as(u8, 1), other.cpu);
+    // The host has no APIC and no second processor online, so no IPI was
+    // delivered, and the counter of delivered reschedules did not move.
+    try testing.expectEqual(@as(u64, 0), scheduler.statisticsOf().wake_reschedules);
 }

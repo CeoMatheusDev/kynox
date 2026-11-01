@@ -794,6 +794,7 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     installSmp();
     installIoApic();
     smp.startAps();
+    distributeWorkToAps();
 
     // The main task waits until the workers have been scheduled a few
     // times, which proves that the scheduler works.
@@ -2739,6 +2740,32 @@ fn installSmp() void {
     serial.printLine("[KNK] smp: AP stacks initialized (max_cpus={d})", .{smp.max_cpus});
 }
 
+/// Gives the first online application processor something to run.
+///
+/// A processor with an empty queue halts, and the tasks of the boot are created
+/// by the BSP: without a migration an AP would have an idle task and nothing
+/// else, whatever the reschedule IPI could do for it. The worker that is moved
+/// is one of the two of the boot, and the migration would be pointless on a
+/// machine with one processor, so the reason is logged instead of a silent
+/// success.
+fn distributeWorkToAps() void {
+    const ap = smp.firstOnlineAp() orelse {
+        serial.printLine("[KNK] smp: no AP online; the workers stay on the BSP", .{});
+        return;
+    };
+
+    const task = ap_worker orelse {
+        serial.printLine("[KNK] smp: cpu={d} online, but no worker to migrate", .{ap});
+        return;
+    };
+
+    if (scheduler.scheduler.migrateTo(task, ap)) {
+        serial.printLine("[KNK] smp: worker task {d} moved to cpu={d}", .{ task.id, ap });
+    } else {
+        serial.printLine("[KNK] smp: worker task {d} stayed on the BSP (migration refused)", .{task.id});
+    }
+}
+
 /// Puts an application processor into the scheduler.
 ///
 /// Called by `kynox_ap_entry` on the processor itself, after it installed its
@@ -2793,6 +2820,13 @@ fn enterCpuScheduler(cpu_index: u8, kernel_stack: []u8) void {
 ///
 /// A failure does not stop the boot: the BSP keeps running alone, and
 /// `startAps` reports that no AP was started and why.
+/// The worker that the boot migrates to an application processor.
+///
+/// It is null when the spawn failed, and it stays on the BSP when no AP answers:
+/// a migration to a processor that is not online would take the task out of the
+/// only queue that has a processor.
+var ap_worker: ?*scheduler.Task = null;
+
 fn installApTrampoline() void {
     const address = ap_trampoline.base_address;
     const count = @min(boot_info.memory_map_entries, max_memory_descriptors);
@@ -4022,7 +4056,10 @@ fn installScheduler() void {
     });
 
     _ = scheduler.scheduler.spawn(&workerOne, &task_stacks[1], &kernel_stacks[1], 0);
-    _ = scheduler.scheduler.spawn(&workerTwo, &task_stacks[2], &kernel_stacks[2], 0);
+    // The second worker is the one that can be moved to an application
+    // processor: the pointer is kept so that the boot has something to migrate
+    // once an AP is online.
+    ap_worker = scheduler.scheduler.spawn(&workerTwo, &task_stacks[2], &kernel_stacks[2], 0);
 
     // The tasks of the user mode have a stack of their own for the user and
     // another for the kernel, where the handlers run. Each process runs in
@@ -5085,6 +5122,14 @@ fn reportScheduler() void {
     // on a machine with a single processor, and one per AP that answered.
     serial.printLine("[KNK] tasks: {d} CPU(s) entered the scheduler", .{
         statistics.entered_cpus,
+    });
+    // The reschedule path: how often a wake landed on another CPU and asked it
+    // to look at its own queue, how many IPIs were delivered, and how many
+    // decisions the IPI handler took.
+    serial.printLine("[KNK] tasks: {d} reschedules served, {d} asked by a wake, {d} IPIs delivered", .{
+        statistics.reschedules,
+        statistics.wake_reschedules,
+        smp.rescheduleRequests(),
     });
     serial.printLine("[KNK] tasks: {d} ready, {d} blocked, {d} ticks, {d} switches", .{
         statistics.ready,

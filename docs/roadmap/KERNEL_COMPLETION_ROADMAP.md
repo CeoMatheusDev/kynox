@@ -375,7 +375,10 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    `docs/audits/2026-11-01-ap-trampoline.md`.)*
 6. **IPI infrastructure**: TLB shootdown (address + generation, with an ack
    counter), reschedule IPI, and a halt IPI. Shootdown is wired into `unmap`, which
-   is what finally satisfies memory invariant M4.
+   is what finally satisfies memory invariant M4. *(2026-11-01: the reschedule IPI
+   exists — vector 65, gate, stub, handler and `smp.reschedule`, with the boot
+   migrating a worker to the first online AP. The shootdown and the halt IPI do
+   not. See `docs/audits/2026-11-01-reschedule-ipi.md`.)*
 7. **Unhandled interrupts are counted and named**, not silently acknowledged. A
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);
