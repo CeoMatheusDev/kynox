@@ -1190,3 +1190,33 @@ test "a reserved kernel range is shared with a process address space" {
     try testing.expect(translate(dma_base) == null);
     try testing.expect(translateIn(space, dma_base) == null);
 }
+
+/// K4.9 full reap: destroy address space (stub; full table walk + free required).
+pub fn destroyAddressSpace() void {
+    // Full release of PML4/PDPT/PD/PT entries for the process.
+    // Currently stub; requires full page-table walk and physical-page reclaim.
+}
+
+/// K4.9 reap completo: destrói todas as entradas das tabelas do processo (PML4/PDPT/PD/PT walk).
+pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
+    // Walk: PML4 (level4) entries → PDPT (level3) → PD (level2) → PT (level1).
+    // Clear all entries; physical page reclaim ainda requer PMM (pending).
+    if (space.root) |r| {
+        for (0..512) |i| r.entries[i] = 0;
+    }
+    if (space.level3) |l3| {
+        for (0..512) |i| l3.entries[i] = 0;
+    }
+    if (space.level2) |l2| {
+        for (0..512) |i| l2.entries[i] = 0;
+    }
+    if (space.level1) |l1| {
+        for (0..512) |i| l1.entries[i] = 0;
+    }
+}
+
+/// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
+pub fn reclaimPhysicalPages(space: *AddressSpace) void {
+    // Reclaim físico: requer PMM revogação por página física mapeada.
+    // Stub: página física ainda não liberada automaticamente; intervenção manual/garbage collection pendente.
+}
