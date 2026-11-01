@@ -181,6 +181,14 @@ pub fn materialize(
             .executable = false,
         }, &allocated, &mapped_virtual, &mapped_count);
     }
+
+    // A imagem está completa: as páginas passam a pertencer ao espaço. Até
+    // aqui o `errdefer` acima era o dono delas, e é por isso que a
+    // transferência acontece no fim — uma falha no meio do caminho continua
+    // liberando o que foi alocado, sem depender do paginador.
+    for (mapped_virtual[0..mapped_count]) |virtual| {
+        paging.takeOwnership(space, virtual) catch return error.NotMapped;
+    }
 }
 
 /// Aloca, mapeia e zera uma página do usuário.

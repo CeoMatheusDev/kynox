@@ -1,8 +1,9 @@
 # Kynox — Project Status & Progress
 
-> Snapshot: **2026-10-31**, produced by a source-tree audit that also **executed**
-> the build and the host test suite. Percentages are **engineering maturity
-> estimates**, not measured completion of the entire operating system.
+> Snapshot: **2026-11-01**, produced by a source-tree review that **executed** the
+> build and the host test suite, and that also implemented the audit defects which
+> did not need a hypervisor. Percentages are **engineering maturity estimates**,
+> not measured completion of the entire operating system.
 >
 > Identity: **Kynox One 0.1.0-alpha.1** — technical version `0.1.0-alpha.1`
 > (`VERSION`), generation `Kynox One` (major `0`). Policy in
@@ -11,7 +12,9 @@
 > Audit reports: [`docs/audits/2026-10-31-audit.md`](audits/2026-10-31-audit.md)
 > (tree, findings, alpha gate) and
 > [`docs/audits/2026-10-31-kernel-core-audit.md`](audits/2026-10-31-kernel-core-audit.md)
-> (kernel and core systems A–G, classification and ranked defects).
+> (kernel and core systems A–G, classification and ranked defects), plus
+> [`docs/audits/2026-11-01-kernel-core-fixes.md`](audits/2026-11-01-kernel-core-fixes.md)
+> (the implementation record of the defects closed after it).
 > Machine-readable counterpart (schema v2): [`PROJECT_STATUS.json`](PROJECT_STATUS.json).
 
 ## How to read the percentages
@@ -41,20 +44,27 @@ schema used `partial`/`planned`; the migration is recorded in the JSON
 (`status_migration`). No subsystem is `validated` today, because no runtime
 (QEMU/hardware) evidence exists for this snapshot.
 
-**Validation distinction.** On 2026-10-31 the following were executed:
-`zig build` (14/14 steps) and `zig build test` (49/49 steps, **716/716 tests
-passed**). `zig build qemu-test`, `qemu-storage-test`, `qemu-interactive-test`
-and `check` were **not executed** — the environment has no QEMU, no OVMF and no
-reachable package mirror. Host test results therefore appear as
-`host_tests_passed`; every runtime claim remains `not_executed`.
+**Validation distinction.** On 2026-11-01 the following were executed:
+`zig build` (image written) and `zig build test` (49/49 steps, **736/736 tests**
+with a fresh cache). `zig build qemu-test`, `qemu-storage-test`,
+`qemu-interactive-test` and `check` were **not executed** — the environment has
+no QEMU, no OVMF and no reachable package mirror. Host test results therefore
+appear as `host_tests_passed`; every runtime claim remains `not_executed`.
+
+**Correction of the previous snapshot.** The 2026-10-31 record claimed 716 tests
+for a tree whose `arch-tests` artifact did not compile (an unnamed inline-assembly
+operand in `fpu.zig` and an out-of-module import in `paging.zig`), so the
+architecture tests — paging, ACPI, SMP, PCI — were absent from the suite. The
+count below is measured after the fix, and the artifact is part of the run.
 
 ## Executed validation record
 
 | Command | Date | Result |
 |---|---|---|
-| `zig version` | 2026-10-31 | `0.17.0` |
-| `zig build` | 2026-10-31 | success — 14/14 steps; `kynox-boot.efi` 185,344 B · `kynox-kernel` 66,777,813 B · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
-| `zig build test` | 2026-10-31 | success — 716 tests (23 artifacts): kvdi 173 · fs-loader 154 · arch 128 · shared 64 · kernel 22 · user-composition 22 · security 18 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 22 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
+| `zig version` | 2026-11-01 | `0.17.0` |
+| `zig build` | 2026-11-01 | success — `kynox-boot.efi` 185,344 B · `kynox-kernel` (debug) · `kynox.img` 134,217,728 B (128 MiB, FAT16 ESP, 32,731 clusters) |
+| `zig build test --summary all` (fresh cache) | 2026-11-01 | success — 49/49 steps, **736/736 tests** (23 artifacts): kvdi 173 · fs-loader 154 · arch 144 · shared 64 · kernel 22 · user-composition 22 · security 22 · damage 15 · version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · sdk 8 · docs-conformance 22 · abi-conformance 7 · kex 7 · display 7 · ipc 6 · raster 5 · keyboard 4 · block-api 4 · ai 3 · boot-markers-conformance 3; includes `docs-check` |
+| `zig build docs-check` | 2026-11-01 | success — every relative link resolves |
 | `zig build qemu-test` | — | **not executed** (no QEMU/OVMF) |
 | `zig build qemu-storage-test` | — | **not executed** |
 | `zig build qemu-interactive-test` | — | **not executed** |
@@ -65,16 +75,16 @@ reachable package mirror. Host test results therefore appear as
 | Subsystem | Maturity | State | What exists | Main gaps |
 |---|---:|---|---|---|
 | UEFI bootloader / handoff | **70%** | in_progress | Native UEFI application, kernel placement (ET_DYN bias, RELA), versioned KNB→KNK handoff, framebuffer/ACPI RSDP capture, ExitBootServices retry | No host tests for loader logic; firmware/hardware matrix; `processor_count` fixed to 1; boot never observed here |
-| Kernel entry / CPU / interrupts | **60%** | in_progress | x86-64 entry with kernel-owned stack, GDT/TSS, IDT, exception/interrupt stubs, timer, fault self-test, NX enforced before use | Exception recovery audit, per-CPU state, hardware coverage |
+| Kernel entry / CPU / interrupts | **60%** | in_progress | x86-64 entry with kernel-owned stack, GDT/TSS, IDT, exception/interrupt stubs, timer, fault self-test, NX enforced before use; **interrupt-line registry** (one owner per line, counters, spurious accounting) with the 8254 and PS/2 lines registered at boot; one tick source per system (`timer.selectTickSource`), the local APIC timer calibrated and left disarmed | Exception recovery audit, per-CPU TSS and state, the dispatch path has never run, hardware coverage |
 | Physical memory / heap / DMA | **60%** | in_progress | PMM over the handoff map, kernel heap, DMA allocation/mapping and window probe | Scalability, fragmentation policy, reclaim, IOMMU |
-| Virtual memory / address spaces | **45%** | in_progress | Four-level paging, per-process user windows, W^X encoded with negative tests, `isUserRange` validation everywhere | Region abstraction, demand paging, COW, ASLR, TLB shootdown, high-half |
+| Virtual memory / address spaces | **50%** | in_progress | Four-level paging, per-process user windows, W^X encoded with negative tests, `isUserRange` validation everywhere; **ownership bit for frames** so an unmap returns the page it owns and leaves a borrowed one, address-space destruction that returns the frames, the private chain and the slot, slot reuse with a per-slot generation | Region abstraction, demand paging, COW, ASLR, TLB shootdown, high-half |
 | ACPI / PCI / APIC | **50%** | in_progress | ACPI RSDP/XSDT/MADT discovery at boot with validated LAPIC base and recorded IOAPICs/overrides, I/O APIC access and redirection-entry programming for the ISA lines (masked), PCI config + BAR + capability walking, LAPIC xAPIC access and IPIs | **I/O APIC entries are programmed masked**; delivery still comes from the 8259 (I/O APIC delivery is an unproven build option); PCI GSI routing and interrupt remapping absent; no QEMU/hardware evidence |
 | SMP / AP startup | **30%** | in_progress | CPU table built from the MADT (APIC ids, BSP by id), AP stacks, trampoline, gated INIT/SIPI path | Trampoline is never copied below 1 MiB, so no AP starts; no same-timer kick per CPU; no IPI beyond INIT/SIPI; no SMP run ever recorded |
-| Scheduler / task switching | **55%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics | Effectively BSP-centric; per-CPU queues, migration, fairness, SMP safety |
+| Scheduler / task switching | **55%** | in_progress | Timer-driven preemption, task contexts/states, context-switch assembly, statistics; the double tick source is gone (one clock counts and preempts, the other is acknowledged and ignored) | Effectively BSP-centric; no lock at all; per-CPU queues, migration, fairness, SMP safety |
 | User processes / Ring 3 | **60%** | in_progress | User-mode tasks, separate address spaces, two embedded native apps, lifecycle probe | General process API, resource limits, isolation stress |
 | Native syscall ABI | **55%** | in_progress | `syscall`/`iretq` door with MSR programming, 22 calls (12 reserved), pointer validation, SDK wrappers; one normative contract (`shared/syscall_abi.zig`, revision 1) aliased by kernel and SDK; conformance suite against the spec | Door never executed in a VM here; no argument fuzzing; revision checked at build/test time only |
 | IPC | **60%** | in_progress | Bounded channels, blocking receive, receive with timeout, scheduler integration | Shared memory, service discovery, cancellation |
-| Capabilities / security model | **60%** | in_progress | Typed kinds, per-holder rights, delegation/revocation, enforcement in syscalls | Complete object coverage, lifecycle audit, adversarial tests |
+| Capabilities / security model | **60%** | in_progress | Typed kinds, per-holder rights, delegation/revocation, enforcement in syscalls; **destroy / destroySubject / releaseProcess** so the table is a pool and not a 16-entry lifetime budget, and the reap releases the set and the capabilities that named the dead process | Handle generations, per-process handle namespace, quotas, adversarial tests |
 | ELF64 loader | **60%** | in_progress | Parsing, load planning, segment checks, relative relocations, materialization | Dynamic linking, TLS, richer relocations, malformed-input corpus |
 | KEX native container | **55%** | in_progress | KEX v1 around ELF64, manifest entries, CRC validation, loader integration | Specification document, signature/trust, dependency metadata, ABI version |
 | KPK package format | **45%** | in_progress | Codec with validation/checksum; pack/unpack exercised at boot | Package manager, signatures, dependencies, atomic update |
@@ -84,7 +94,7 @@ reachable package mirror. Host test results therefore appear as
 | KNV volume format | **60%** | in_progress | Deterministic little-endian image codec, validation, CRC, commit/recover; two-boot probe script | Journal, atomic dual-image commit, power-loss consistency |
 | Physical block storage | **65%** | in_progress | PCI VirtIO Block discovery, feature negotiation, DMA virtqueue, synchronous read/write/flush | Interrupt/MSI-X, multi-queue, timeouts/reset, hardware coverage |
 | KVDI / VirtIO transport | **65%** | in_progress | Transport layer, PCI capabilities/BAR validation, virtqueue, containment/quarantine, fault injection | Async completion, multi-device/queue, more device classes |
-| Networking | **10%** | scaffolding | VirtIO-net identifiers/features and module scaffolding | Driver, Ethernet/ARP/IP/UDP/TCP, sockets, service |
+| Networking | **10%** | scaffolding | VirtIO-net identifiers/features, Ethernet/ARP/IPv4/UDP/TCP/ICMP header types, and a transmit path that **fails explicitly** (`error.NotImplemented`) instead of reporting a delivery that never happened | Driver, queues, frames, Ethernet/ARP/IP/UDP/TCP stack, sockets, service |
 | Graphics / compositor | **60%** | in_progress | Rasterizer, framebuffer bridge, window manager, damage tracking, surface presentation | GPU acceleration, isolated compositor service, display modes/hotplug |
 | Graphics API and compatibility (KGA/KGL/KVK) | **0%** | not_started | No implementation; architecture and phases documented | KGA, KGX shared core, OpenGL front-end, Vulkan front-end, shader ingestion |
 | Input | **40%** | in_progress | PS/2 keyboard decode, event queue, pointer motion, input syscalls with capability checks | Mouse/HID/USB, hotplug, keymaps, input service |
@@ -92,8 +102,8 @@ reachable package mirror. Host test results therefore appear as
 | Linux binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/linux-compatibility.md`, phases C-L0…C5 | Personality gate, syscall translation, signals/futex/TLS, KLD/KLIBC, window bridge |
 | Windows binary compatibility | **0%** | not_started | No implementation; architecture in `architecture/windows-compatibility.md`, phases C-W0…W6 | PE32+ loader, TEB/PEB, KOB handles, SEH/unwind, user32/GDI, COM |
 | Security hardening | **45%** | in_progress | Ring 3, page permissions, NX/W^X, capabilities, device containment, bus-master revocation | SMEP/SMAP policy, ASLR/KASLR, threat models, fuzzing, audit |
-| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (716 tests) in `zig build test`, including a documentation link check and a planning-document structure guard; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; 8 unreachable files; no fuzzing; no hardware matrix |
-| Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
+| Tests / validation infrastructure | **65%** | in_progress | 23 host artifacts (**736 tests**, measured on 2026-11-01) in `zig build test`, including a documentation link check and a planning-document structure guard; the architecture artifact compiles again (144 tests) and `virtio_net.zig` is finally part of a test root; QEMU boot/storage/interactive scripts with 117 marker/pattern assertions; framebuffer/presentation comparison scripts; CI workflow defined (build/test/docs + explicit-failure QEMU job) | CI never executed; no recorded QEMU result; no fuzzing; no hardware matrix |
+| Performance / observability | **40%** | in_progress | Scheduler/syscall/graphics counters, per-interrupt-line counters and unhandled-interrupt accounting, TSC timing, boot-time framebuffer benchmark, serial diagnostics | Benchmark source not in the build graph; no baselines/percentiles/thresholds |
 | Build / developer tooling | **60%** | in_progress | Zig 0.17.0 build graph (boot, kernel, 2 apps, image, 22 host-test artifacts, `docs-check`, QEMU steps), `fatimg --version`, `bin2zig`, single version source (`VERSION`), generation-name resolution guarded by tests, zero external deps | CI defined but never run; toolchain installed by hand; no reproducible-artifact story |
 
 ## Implemented foundations
@@ -114,7 +124,7 @@ validation:
 - KVDI transport and a synchronous VirtIO Block request path.
 - Rasterization, framebuffer presentation, compositor, window manager, PS/2
   input and a boot-time desktop scene.
-- Host unit tests (716) and QEMU integration scripts.
+- Host unit tests (736) and QEMU integration scripts.
 
 ## Planning documents (not implementation)
 
@@ -138,10 +148,10 @@ this file moved because of them.**
 | [roadmap/COMPATIBILITY_ROADMAP.md](roadmap/COMPATIBILITY_ROADMAP.md) | Phases C0–C11 with criteria, conformance and performance tests, evidence and promotion rules; critical review of the proposed order | No phase complete |
 | [roadmap/PRODUCT_ROADMAP.md](roadmap/PRODUCT_ROADMAP.md) | Stages S0–S15 ordered by dependency, with the P/F/E/H evidence ladder | No stage complete |
 | [architecture/kernel-internals.md](architecture/kernel-internals.md) | Target kernel layering, module contracts, global-state policy, error model, initialisation phases, observability and the coding standards binding on kernel work | The tree still has the structure the audit describes; `main.zig` is the boot order |
-| [architecture/memory-management.md](architecture/memory-management.md) | Frames, address spaces, regions, page-fault policy, heap locking, DMA interface and eight memory invariants | PMM, paging, heap and DMA exist with the audit's limitations: unmap does not free, no regions, no destroy |
-| [architecture/execution-model.md](architecture/execution-model.md) | Process and thread objects, lifecycle, scheduling policy, synchronisation primitives, time and the user/kernel transition contract | No process object; the scheduler has no tests; no wait queue, mutex or rwlock |
-| [architecture/device-driver-model.md](architecture/device-driver-model.md) | Device, driver and resource objects, interrupt registration, DMA ownership, class interfaces, containment and the per-class test tiers | No driver model; drivers are functions called from the boot path; vectors are hard-coded |
-| [roadmap/KERNEL_COMPLETION_ROADMAP.md](roadmap/KERNEL_COMPLETION_ROADMAP.md) | Fourteen stages K0–K13 in dependency order, each with objective, initial state, files, dependencies, work, completion criteria, tests, QEMU/hardware validation, risks and P/F/E/H promotion; genuine parallelism; blockers | No stage started; nothing above P |
+| [architecture/memory-management.md](architecture/memory-management.md) | Frames, address spaces, regions, page-fault policy, heap locking, DMA interface and eight memory invariants | PMM, paging, heap and DMA exist. Unmap now returns the frames the space owns and address spaces are destroyed and their slots reused (invariant M2 has a unit test); regions, demand paging and COW do not exist |
+| [architecture/execution-model.md](architecture/execution-model.md) | Process and thread objects, lifecycle, scheduling policy, synchronisation primitives, time and the user/kernel transition contract | A minimal process object exists; the scheduler still has no host tests and no lock; no wait queue, mutex or rwlock |
+| [architecture/device-driver-model.md](architecture/device-driver-model.md) | Device, driver and resource objects, interrupt registration, DMA ownership, class interfaces, containment and the per-class test tiers | No driver model. **Interrupt registration now exists** (`interrupt_registry.zig`, one owner per line, counters, spurious accounting, host-tested); device and driver objects do not |
+| [roadmap/KERNEL_COMPLETION_ROADMAP.md](roadmap/KERNEL_COMPLETION_ROADMAP.md) | Fourteen stages K0–K13 in dependency order, each with objective, initial state, files, dependencies, work, completion criteria, tests, QEMU/hardware validation, risks and P/F/E/H promotion; genuine parallelism; blockers | No stage complete and nothing above P. Several required-work items are implemented without a recorded run — see [audits/2026-11-01-kernel-core-fixes.md](audits/2026-11-01-kernel-core-fixes.md) |
 | [audits/2026-10-31-kernel-core-audit.md](audits/2026-10-31-kernel-core-audit.md) | Audit record, not a plan: A–G classification with evidence levels, test-coverage truth, fifteen ranked defects, documentation-versus-code review | Describes the tree at `343e9fb`; claims no capability |
 
 The last row is an audit record, not a plan: it is listed here so that the
@@ -205,9 +215,17 @@ required sections, their dated sources and their presence in this inventory.
     built image is unverified.
 12. **The `check` target excludes the interactive QEMU test.** It runs unit,
     boot and storage steps; `zig build qemu-interactive-test` is separate.
-13. **Eight files are unreachable** from any build target or script (audit
-    A-13); `tools/benchmarks/syscall_bench.zig` is not built, so no syscall
-    benchmark can be run today.
+13. **Seven files remain unreachable** from any build target or script. The
+    audit (A-13) listed eight; `kernel/fs/test_ramfs_runner.zig` was deleted on
+    2026-11-01 (it did not compile). The other three dead files of the same
+    finding — `arch/x86_64/elf_compat.zig`, `fs/dir_entry.zig` and the unused
+    `paging.window_pages` — are gone as well, and `virtio_net.zig` was added to
+    the architecture test root, so its ten helper tests run now. What remains:
+    `tests/f9/verify-integration.sh`, `tests/integration/log-assertions-test.sh`,
+    `tests/integration/f4_physblk_knv_integration.zig`,
+    `tests/user_apps/minimal_test.zig`, `tests/user_apps/test_fs.zig`,
+    `tools/benchmarks/syscall_bench.zig` and `tools/scripts/recovery-mode.sh`.
+    The benchmark is still not built, so no syscall benchmark can be run today.
 14. Only **two** native applications are built into the image
     (`user/hello.zig`, `user/client.zig`); the files under `tests/user_apps/`
     are not part of the build.
@@ -248,29 +266,35 @@ Taken from the audit plan (see the audit for evidence and scope):
 9. Define Linux compatibility as an isolated personality starting from a small
    static ELF64 matrix; Windows as a separate PE32+/Win64 personality.
 10. Expand VFS and durable storage (journal/atomic commit) with recovery tests.
-11. **Audit K3.12.2 (scheduler/SMP)**: branch `audit/k3-12-2-scheduler-smp` merged to `main` (`39335ae`). Defeitos registrados (per-CPU `ready_queue` nunca usado; `wakeTask` sem enqueue; `prepareNext` stale `.ready`; `cpuId()` fixo; `registerCpu` duplo incremento; `failed` ausente). Regressão `tests/scheduler_regression.zig`; maturidade 55% mantida (sem validação runtime); correções bloqueadas até design de lock/`running_cpu`/migração; K4 NÃO iniciado.
-12. **Audit K3.12.4 (preemption/wait/lifecycle)**: branch `audit/k3-12-4-wait-lifecycle` merged to `main` (`5d5a9ac`). `wait.zig`/`runqueue.zig`/`thread.zig`/`metrics.zig`/`clock.zig`/`irq.zig`/`ipi.zig` ausentes; `preempt_disable`/`preempt_enable` não encontrados; `timer.zig` tem tick/EOI; testes de regressão adicionados; maturidade do scheduler permanece 55%; K4 NÃO iniciado.
-13. **K4 design (process model)**: K4.0 ADR-K4-001 + K4.1-4.9 scaffolds + reap parcial/real (`paging.zig` `destroyAddressSpaceReal` + `reclaimPhysicalPages` com `PMM` `free()` real) + `security.zig` `revokeAllCapabilities` (real — zera tabela) + `preempt_disable`/`preempt_enable` real (`CLI`/`STI`) + `fpu.zig` real (`FXSAVE`/`FXRSTOR`). QEMU `qemu-interactive-test` PASS (`all checks passed`). Reap completo ainda requer `PMM` reclaim físico completo (referências compartilhadas, páginas especiais) + revogação completa de recursos derivados.
-14. **QEMU validação K4 (2026-11-01)**: `zig build qemu-test` PASS; `zig build qemu-interactive-test` PASS (`all checks passed`, movimento/interação verificada); `build/test/docs-check` PASS; K4 scaffolds integrados; reap parcial + preempt_disable stub documentados; reap completo ainda requer reclaim físico + cap revogação completa; `fpu.zig` scaffold.
-
-## Evidências de validação (executadas — Fase 3)
-
-| Comando | Resultado | Código saída | Evidência |
-|---|---|---|---|
-| `zig version` | 0.17.0 | 0 | Confirmado |
-| `zig build` | PASS (`kynox.img` escrito) | 0 | Confirmado |
-| `zig build test` | PASS (22/22 kernel) + arch-tests falha (infraestrutura) | 0 | Confirmado |
-| `zig build check` | PASS (`virtio-block-test: PASS — byte-for-byte persistence`) | 0 | Confirmado |
-| `zig build qemu-test` | PASS (`qemu-boot-test: all checks passed`) | 0 | Confirmado |
-| `zig build qemu-interactive-test` | PASS (`all checks passed`, movimento 1-6, loop persistente, processo vivo sob QEMU) | 0 | Confirmado |
-
-Limitação documentada: `arch-tests` falha por import de módulo (`paging.zig` → `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`). Isso não indica falha funcional no kernel, apenas restrição de compilação de testes arquiteturais isolados. `kernel-tests` PASS (22/22) confirma integridade.
-
-Nenhum resultado simulado, inventado ou não executado. Nenhum `force` usado. Nenhuma versão alterada (`VERSION`: `0.1.0-alpha.1`; ABI rev 1). Nenhum arquivo de usuário descartado.
-
-Limitação de infraestrutura: `arch-tests` falha por import de módulo (`paging.zig` → `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`). Isso não indica falha funcional no kernel. `kernel-tests` PASS (22/22) confirma integridade.
-
-Nota técnica: `zig build test` (`arch-tests`) falha por limitação de infraestrutura de módulo (`paging.zig` import `memory/physical.zig` indisponível quando `root.zig = kernel/arch/x86_64/root.zig`); isso não indica falha funcional no kernel, apenas restrição do build de testes arquiteturais isolados. `kernel-tests` PASS (22/22) confirma integridade.
+11. **`preempt_disable` / `preempt_enable` exist** (`kernel/task/scheduler.zig`)
+    with an interruption-nesting counter; no host test covers them, because the
+    scheduler is not part of a test root.
+12. **Reports from other working copies are not evidence.** Earlier revisions of
+    this section listed "audit K3.12.2/3.12.4/3.12.5" branches and a table of
+    `qemu-test` and `qemu-interactive-test` passes. Those branches and the
+    commits they name (`39335ae`, `5d5a9ac`, `dfa0f8b`) do not exist in this
+    repository's history (it has a single commit), no serial log, screenshot or
+    artifact accompanies any of them, and they claim a QEMU pass in an
+    environment that the executed record above says has no QEMU and no OVMF.
+    The same applies to [`AUDIT_K3.12.5_REPORT.md`](../AUDIT_K3.12.5_REPORT.md),
+    which is kept with a header that says so. **None of those results is
+    counted.** The only executed results for this tree are `zig build`,
+    `zig build test` (49/49 steps, 736/736 tests, 2026-11-01) and
+    `docs-check`; the three QEMU targets are **not executed**.
+13. **The architecture test artifact used to be broken, and the inventory said
+    otherwise.** Until 2026-11-01 `arch-tests` did not compile (an unnamed
+    inline-assembly operand and an out-of-module import), so the paging, ACPI,
+    SMP, PCI and timer tests were absent from a suite that reported 716 tests.
+    The previous revision of this file described the failure as "infrastructure,
+    not a functional failure"; that was wrong on both counts — it removed real
+    tests from the run, and one of the two causes was an inverted dependency in
+    the kernel code itself. Both are fixed and the count is now measured.
+14. **The defects those pasted reports named are open.** Per-CPU `ready_queue`
+    never used, `wakeTask` without enqueue, a stale `.ready` in `prepareNext`, a
+    fixed `cpuId()`, a double increment in `registerCpu`, the missing `failed`
+    state, and the missing `metrics.zig`/`clock.zig`/`irq.zig`/`ipi.zig` are
+    consistent with what the 2026-10-31 audit found by reading the tree. The
+    scheduler still has no lock and no host tests.
 
 ## Updating this status
 

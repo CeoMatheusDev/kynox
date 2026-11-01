@@ -21,6 +21,53 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Fixed (2026-11-01) — host-verified, not runtime-verified
+
+- **The host suite was not running the architecture tests.** `fpu.zig` used
+  unnamed inline-assembly operands and `paging.zig` imported a file outside its
+  module path, so `arch-tests` did not compile and paging, ACPI, SMP and PCI
+  tests were missing from the suite that reported 716 tests. After the fix the
+  measured total is **736 tests in 49/49 steps** (`arch-tests` 144).
+- **Unmap now returns the frame it owns.** A software ownership bit
+  (`paging.Flags.owned`) records the frames the space obtained from the manager;
+  `takeOwnership` is applied when an image is fully materialised, and
+  `unmapUserPageIn` releases only those frames. A borrowed page stays allocated,
+  and without a release callback an owned entry is preserved with
+  `error.ReleaseUnavailable` instead of being lost.
+- **Address spaces are destroyed and their slots reused.**
+  `destroyAddressSpaceReal` releases the frames, clears the private chain,
+  forgets the active space and frees the slot; `createAddressSpace` reuses a free
+  slot with a new generation, and `spaceByIdentity(id, generation)` refuses a
+  stale identity. `spaces_created` and `liveSpaceCount` expose the state.
+- **Capabilities have a lifecycle.** `capability.destroy`, `destroySubject` and
+  `releaseProcess` free table entries and take the handle from every holder;
+  `process.reapFull` releases the set of a reaped process and destroys the
+  capabilities that named it. The no-op `security.revokeCapabilities` stub is
+  removed. The 16-entry table is now a pool instead of a lifetime limit.
+- **Interrupt lines have owners.** New `kernel/arch/x86_64/interrupt_registry.zig`
+  (one owner per line, refusal of a second registration, per-line counters,
+  unhandled-line accounting) with host tests. `interrupt.zig` dispatches through
+  it, and the kernel registers the 8254 and PS/2 lines before interrupts are
+  enabled. **The dispatch path itself has not run.**
+- **One tick source.** `timer.TickSource` and `selectTickSource` make one clock
+  the owner of the tick and of the preemption; the other is acknowledged and
+  ignored. The local APIC timer is still calibrated and is now left disarmed
+  while the 8254 owns the tick, so intervals are no longer counted twice.
+- **`net_transmit` fails explicitly** with `error.NotImplemented` instead of
+  reporting a transmission that never happened, and `virtio_net.zig` joined the
+  architecture test root (its ten header-layout tests had never been compiled).
+- **Dead files removed:** `kernel/arch/x86_64/elf_compat.zig`,
+  `kernel/fs/dir_entry.zig`, `kernel/fs/test_ramfs_runner.zig` (which did not
+  compile and had two tests in no test root) and the unused
+  `paging.window_pages`.
+- **Two module cycles closed:** `apic.zig` imported `timer.zig` without using a
+  symbol; the import is gone.
+- Documentation corrected in the same change:
+  `docs/PROJECT_STATUS.md`/`.json` (new snapshot, measured counts, closed and
+  open defects), `README.md`, `docs/architecture/memory-management.md`, and a new
+  implementation record `docs/audits/2026-11-01-kernel-core-fixes.md`.
+  `virtual_memory` moved from 45% to 50%; no other percentage moved.
+
 ### Added
 
 - `docs/strategy/market-landscape.md` — market structure, nine technology

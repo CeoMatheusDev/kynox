@@ -950,7 +950,44 @@ fn installSegments() void {
     serial.printLine("[KNK] segments: gdt installed and verified", .{});
 }
 
-/// Installs the interrupt descriptor table of the kernel.
+/// The handler of the line of the 8254.
+///
+/// It lives in the kernel, and not in `interrupt.zig`, because it is policy: the
+/// driver of the interrupt controller must not know the scheduler. The work of
+/// one tick is the clock of the timer, the expiry of the waits of the input, and
+/// the decision of the scheduler; the registry only knows that somebody owns the
+/// line.
+fn pitTick(vector: u64) bool {
+    _ = vector;
+
+    const owns_tick = timer.drivesScheduler(.pit);
+    timer.onTick(.pit);
+    if (!owns_tick) return false;
+
+    syscall.inputWaitTick();
+
+    return scheduler.scheduler.tick(syscall.failure(syscall.Error.timeout));
+}
+
+/// The handler of the line of the PS/2 controller.
+///
+/// The controller delivers one byte per interrupt; the decoder of the keyboard
+/// turns the bytes into events and hands them to the queue of the interrupt
+/// context.
+fn ps2Interrupt(vector: u64) bool {
+    _ = vector;
+    ps2.onInterrupt();
+    return false;
+}
+
+/// Installs the interrupt descriptor table of the kernel and the owners of the
+/// lines that the platform delivers.
+///
+/// The registration happens before any interrupt can arrive: the timer enables
+/// the interrupts later, and a line that fires before its owner exists is
+/// counted as unhandled instead of being dispatched to a guess. The two lines
+/// below are the only ones that the 8259 forwards today; a driver that comes
+/// next registers its own line and does not edit the dispatcher.
 fn installInterrupts() void {
     interrupt.install();
 
@@ -959,13 +996,43 @@ fn installInterrupts() void {
         port.haltForever();
     }
 
-    serial.printLine("[KNK] interrupts: idt installed and verified", .{});
+    const timer_line: u64 = interrupt.first_hardware_vector;
+    const keyboard_line: u64 = interrupt.first_hardware_vector + 1;
+
+    interrupt.register(timer_line, "8254", pitTick) catch |err| {
+        serial.printLine("[KNK] FATAL: the timer line could not be registered ({s})", .{@errorName(err)});
+        port.haltForever();
+    };
+    interrupt.register(keyboard_line, "ps2", ps2Interrupt) catch |err| {
+        serial.printLine("[KNK] FATAL: the keyboard line could not be registered ({s})", .{@errorName(err)});
+        port.haltForever();
+    };
+
+    serial.printLine("[KNK] interrupts: idt installed and verified, lines {d} ({s}) and {d} ({s}) registered", .{
+        timer_line,
+        interrupt.registeredName(timer_line) orelse "none",
+        keyboard_line,
+        interrupt.registeredName(keyboard_line) orelse "none",
+    });
 }
 
 /// Loads the task state segment of the kernel.
 fn installTaskState() void {
     segment.loadTaskState();
     serial.printLine("[KNK] segments: task state segment loaded", .{});
+}
+
+/// Returns a page of a process window to the physical memory manager.
+///
+/// The page tables describe physical addresses; they do not know whether an
+/// address came from the manager. The callback is the only place that can
+/// answer that, so the tables ask it instead of importing the manager, and the
+/// checks below refuse the addresses that the manager never handed out.
+fn releasePhysicalPage(address: u64) void {
+    if (address < physical.minimum_address) return;
+    if (address >= physical.managed_address_space) return;
+    if (address % paging.page_size != 0) return;
+    physical.manager.free(address);
 }
 
 /// Prepares the physical memory manager.
@@ -978,6 +1045,11 @@ fn installMemoryManager() void {
     physical.manager.reserve(@intFromPtr(&memory_map), @sizeOf(@TypeOf(memory_map)));
     physical.manager.reserve(@intFromPtr(&heap_region), heap_region.len);
     physical.manager.reserve(@intFromPtr(&physical.manager.bitmap), physical.manager.bitmap.len);
+
+    // The page tables release the pages of a reaped process through this
+    // callback. It is installed here, after the manager exists, and the
+    // tables never see the manager itself.
+    paging.installPageReleaseHook(&releasePhysicalPage);
 
     const statistics = physical.manager.statistics;
     serial.printLine("[KNK] memory: {d} pages, {d} used, {d} free", .{
@@ -2772,7 +2844,19 @@ fn installTimer() void {
         perf_tsc_hz = @intCast(@as(u128, elapsed_tsc) * timer.ticksPerSecond() / elapsed_ticks);
     }
 
-    serial.printLine("[KNK] timer: {d} Hz, {d} ticks", .{ timer.ticksPerSecond(), timer.ticks() });
+    // Only one clock may drive the scheduler and the system clock. The 8254 is
+    // the source that this boot path programs first, and its delivery through
+    // the 8259 is the only one that the boot sequence exercises; the local
+    // APIC timer stays calibrated and disarmed until the periodic delivery of
+    // its vector has a recorded run. The choice lives in the timer module, and
+    // the two interrupt paths ask it before they preempt.
+    timer.selectTickSource(.pit);
+
+    serial.printLine("[KNK] timer: {d} Hz, {d} ticks, source={s}", .{
+        timer.ticksPerSecond(),
+        timer.ticks(),
+        @tagName(timer.tickSource()),
+    });
     serial.printLine("[KNK] perf: timestamp counter {d} Hz", .{perf_tsc_hz});
 
     // F15.3: reserve two seconds for repeated PS/2 redraw measurements.\n    // Event consumption remains interrupt-driven, not a busy polling loop.\n    // F6.9: event pump por 50 ticks, em vez de consumir toda a fila

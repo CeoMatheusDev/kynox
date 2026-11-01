@@ -86,12 +86,6 @@ test "securityLimitsRejectOversize" {
     try std.testing.expectError(error.TotalTooLarge, validateTotal(1024, 1024, Limits{ .max_total_bytes = 1024 }));
 }
 
-/// K4.9 reap: revoga todas as capabilities do processo (stub; caminho completo ainda pendente).
-pub fn revokeCapabilities() void {
-    // Revogação global (sem tabela específica): no-op seguro.
-    // Use revokeAllCapabilities(table) para revogação por tabela.
-}
-
 /// Revoga uma capability por handle (real — marca como revogada).
 /// Implementação: zera a entrada na tabela; handles derivados são invalidados
 /// porque a tabela é a fonte de verdade (linearização).

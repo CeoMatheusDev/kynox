@@ -1,7 +1,11 @@
 # Kernel and core systems completion roadmap
 
 - Status: **planning document**. No stage below is started. Nothing in this
-  document is an implementation claim.
+  document is an implementation claim. Work done after it was written is
+  recorded, with its evidence level, in
+  [`../audits/2026-11-01-kernel-core-fixes.md`](../audits/2026-11-01-kernel-core-fixes.md);
+  this document keeps the initial state that the audit measured, so that the
+  plan is not rewritten to match what happened.
 - Date: 2026-10-31. Identity: **Kynox One 0.1.0-alpha.1** (this roadmap does not
   change the version, and no stage completion implies a version change).
 - Basis: [`../audits/2026-10-31-kernel-core-audit.md`](../audits/2026-10-31-kernel-core-audit.md)

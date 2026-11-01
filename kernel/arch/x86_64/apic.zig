@@ -33,7 +33,9 @@
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
-const timer = @import("timer.zig");
+// The APIC does not import the timer: the timer programs the local timer
+// through this module, and the import that used to be here was unused and
+// closed a cycle (apic <-> timer, audit defect 7).
 
 /// Endereco base padrao do APIC local (mapeamento de memoria).
 ///

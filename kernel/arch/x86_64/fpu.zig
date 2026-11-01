@@ -24,7 +24,7 @@ pub fn readXcr0() u64 {
     asm volatile ("xgetbv"
         : [low] "={eax}" (low),
           [high] "={edx}" (high),
-        : "{ecx}" (0),
+        : [index] "{ecx}" (0),
     );
     return (@as(u64, high) << 32) | low;
 }
@@ -57,8 +57,8 @@ pub fn xsave(buf: []u8, mask: u64) void {
     asm volatile ("xsave (%[buf])"
         :
         : [buf] "r" (buf.ptr),
-          "{eax}" (low),
-          "{edx}" (high),
+          [low] "{eax}" (low),
+          [high] "{edx}" (high),
         : "memory"
     );
 }
@@ -71,8 +71,8 @@ pub fn xrstor(buf: []u8, mask: u64) void {
     asm volatile ("xrstor (%[buf])"
         :
         : [buf] "r" (buf.ptr),
-          "{eax}" (low),
-          "{edx}" (high),
+          [low] "{eax}" (low),
+          [high] "{edx}" (high),
         : "memory"
     );
 }

@@ -132,19 +132,33 @@ pub fn freeProcess(p: *Process) void {
         }
     }
 }
-// K4.9 reap: destrói AddressSpace via paging.zig; capabilities revogadas; ainda parcial (paging.zig destruição completa pendente)
-
-/// K4.9 reap: calls paging destruction and revokes capabilities (stub for full revocation).
+/// Reaps a process: releases its address space, its pages and its
+/// capabilities, then returns the process slot to the pool.
+///
+/// The order is the one the tables require. `destroyAddressSpaceReal` returns
+/// the pages of the window to the manager while the entries still name them,
+/// clears the private tables, and releases the slot with a new identifier, so
+/// an identifier that a caller kept from the reaped process resolves to
+/// nothing.
+///
+/// The capabilities go with the space: a process that no longer exists cannot
+/// hold a permission, and the caller that kept a handle may not use it on the
+/// next process that receives the same slot.
 pub fn reapFull(p: *Process, handle: ProcessHandle) bool {
     const pag = @import("../arch/x86_64/paging.zig");
+    const capability = @import("../security/capability.zig");
+
     if (p.space) |space| {
-        pag.destroyAddressSpaceReal(space);
-        pag.reclaimPhysicalPages(space);
+        // The set of capabilities of a process is indexed by the identifier of
+        // its space, and it has to go while the identifier still names the
+        // process: after the slot is handed out again the same index belongs to
+        // another process.
+        _ = capability.releaseProcess(space.id);
+        _ = pag.destroyAddressSpaceReal(space);
+        p.space = null;
     } else {
         pag.destroyAddressSpace();
     }
-    const security = @import("../ai/security.zig");
-    security.revokeCapabilities();
-    // Capabilities revocation: requires full revocation path (stub).
+
     return p.reapProcess(handle);
 }

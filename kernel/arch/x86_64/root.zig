@@ -27,6 +27,8 @@ pub const apic = @import("apic.zig");
 pub const ioapic = @import("ioapic.zig");
 pub const acpi = @import("acpi.zig");
 pub const fpu = @import("fpu.zig");
+pub const timer = @import("timer.zig");
+pub const interrupt_registry = @import("interrupt_registry.zig");
 
 // The unit tests of the modules live in the modules themselves, and this
 // block is what brings them into the test binary.
@@ -46,5 +48,8 @@ test {
     _ = @import("pci.zig");
     _ = @import("virtio.zig");
     _ = @import("virtio_blk.zig");
+    _ = @import("virtio_net.zig");
     _ = @import("fpu.zig");
+    _ = @import("timer.zig");
+    _ = @import("interrupt_registry.zig");
 }
