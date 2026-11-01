@@ -48,6 +48,8 @@ pub const CpuState = enum {
     initializing,
     /// A CPU foi desligada.
     offline,
+    /// A CPU falhou (falha de inicialização, erro de hardware).
+    failed,
 };
 
 /// Dados privados de uma CPU lógica.
@@ -149,6 +151,8 @@ pub fn cpuCount() u8 {
 pub fn registerCpu(id: u8, apic_id: u32) ?*Cpu {
     if (id >= max_cpus) return null;
     const cpu = &cpus[id];
+    // K3.12.2 fix: prevent double-increment on cpu 0 or re-registration.
+    if (cpu.state == .online or cpu.state == .failed) return cpu;
     cpu.* = .{
         .id = id,
         .apic_id = apic_id,
