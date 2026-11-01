@@ -396,6 +396,13 @@ new `kernel/arch/x86_64/ipi.zig` and `kernel/devices/irq.zig`.
    spurious vector has its own counter.
 8. **MSI programming** for devices that advertise the capability (needed by K7);
    the parsed-but-unused capability from the audit is the starting point.
+   *(2026-11-01: the capability is programmed — message address/data, the 32- and
+   64-bit register layouts, an allocation that must be a power of two, the enable
+   bit last and every refusal before the first write — with the boot reporting the
+   candidate message and `-Dmsi-delivery=true` as the switch, because enabling MSI
+   disables INTx of the function. What remains is MSI-X, a driver that consumes a
+   device vector, and an MSI actually delivered. See
+   `docs/audits/2026-11-01-msi-programming.md`.)*
 
 **Completion criteria.**
 - Exactly one component calls `scheduler.tick()`; the call site is listed in the

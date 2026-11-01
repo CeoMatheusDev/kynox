@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-msi-programming.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "MSI: the message a device writes to interrupt, the layout of its registers (32/64-bit, masking), the order of the writes, the refusal that leaves the capability untouched, and the build flag that decides whether it is programmed.",
+    },
     "docs/audits/2026-11-01-bda-and-ebda.md": {
         "kind": "implementation-record",
         "authority": "record",

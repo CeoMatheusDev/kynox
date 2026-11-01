@@ -173,11 +173,15 @@ pub const ConfigAccess = struct {
     read_fn: *const fn (ctx: *anyopaque, offset: u8) u32,
     write_fn: *const fn (ctx: *anyopaque, offset: u8, value: u32) void,
 
-    fn read(self: ConfigAccess, offset: u8) u32 {
+    /// Le um DWORD. Publico porque quem programa um registrador de um
+    /// dispositivo (a mensagem de MSI, em `msi.zig`) precisa do mesmo acesso que
+    /// a sondagem de BAR usa, e nao de um segundo caminho para as portas.
+    pub fn read(self: ConfigAccess, offset: u8) u32 {
         return self.read_fn(self.ctx, offset);
     }
 
-    fn write(self: ConfigAccess, offset: u8, value: u32) void {
+    /// Escreve um DWORD. Ver `read`.
+    pub fn write(self: ConfigAccess, offset: u8, value: u32) void {
         self.write_fn(self.ctx, offset, value);
     }
 };

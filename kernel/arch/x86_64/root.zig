@@ -25,6 +25,7 @@ pub const spinlock = @import("spinlock.zig");
 pub const smp = @import("smp.zig");
 pub const tlb = @import("tlb.zig");
 pub const bda = @import("bda.zig");
+pub const msi = @import("msi.zig");
 pub const ap_trampoline = @import("ap_trampoline.zig");
 pub const apic = @import("apic.zig");
 pub const ioapic = @import("ioapic.zig");
@@ -69,6 +70,7 @@ test {
     _ = @import("smp.zig");
     _ = @import("tlb.zig");
     _ = @import("bda.zig");
+    _ = @import("msi.zig");
     _ = @import("ap_trampoline.zig");
     _ = @import("apic.zig");
     _ = @import("ioapic.zig");

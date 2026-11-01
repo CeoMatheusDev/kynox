@@ -39,6 +39,7 @@ const memmap = kynox.memmap;
 const port = kynox.port;
 const fatal = @import("fatal.zig");
 const bda = @import("arch/x86_64/bda.zig");
+const msi = @import("arch/x86_64/msi.zig");
 const serial = kynox.serial;
 const usermode = kynox.usermode;
 const compositor_abi = kynox.compositor;
@@ -749,6 +750,13 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // com cache desabilitado.
     bringUpVirtioDevices();
     verifyVirtioBlockPersistenceProbe();
+
+    // A interrupcao que o dispositivo entrega por escrita na memoria. O
+    // relatorio diz o que cada funcao oferece e, quando `-Dmsi-delivery=true`
+    // foi pedido, o que foi escrito na capability. Programar a capability
+    // desliga a INTx daquele dispositivo, e e por isso que o padrao e nao
+    // programar: a entrega das linhas ISA continua no 8259.
+    reportPciInterrupts();
 
     // F7 base: leitura real do espaco de configuracao PCI no bus 0. A sonda
     // nao habilita o dispositivo nem assume um driver; ela existe para
@@ -2164,6 +2172,106 @@ fn programVirtqueue(
     );
 
     return true;
+}
+
+/// O vetor que o kernel daria ao primeiro dispositivo com MSI.
+///
+/// Ele vem depois de todos os vetores que o kernel usa (0..47, 64..67), e e o
+/// unico que este incremento reserva: um dispositivo por enquanto, declarado, em
+/// vez de um vetor escolhido por conta propria em cada driver.
+const first_device_vector: u8 = msi.first_device_vector;
+
+/// Reporta, por funcao PCI da ponte 0, o que ela oferece para interromper.
+///
+/// Duas capabilities interessam: a de MSI (0x05), que este modulo programa, e a
+/// de MSI-X (0x11), que usa uma tabela na memoria e nao e programada aqui — o
+/// relatorio diz qual das duas existe em vez de dizer apenas "nao".
+///
+/// Com `-Dmsi-delivery=true` a capability e programada de verdade, e a linha
+/// diz o endereco e o dado que foram escritos. Sem a opcao, so o que **seria**
+/// escrito aparece: programar desliga a INTx daquele dispositivo, e um driver que
+/// ainda depende da linha classica ficaria sem interrupcao.
+fn reportPciInterrupts() void {
+    var with_msi: u32 = 0;
+    var with_msix: u32 = 0;
+    var programmed: u32 = 0;
+
+    var device: u8 = 0;
+    while (device < 32) : (device += 1) {
+        const vendor = pci.readConfigWord(0, device, 0, 0x00);
+        if (vendor == 0xFFFF) continue;
+
+        const location: pci.Function = .{ .bus = 0, .device = device, .function = 0 };
+        const reader = pci.functionReader(&location);
+
+        const msi_capability = msi.find(reader);
+        const msix = pci.findCapability(reader, msi.capability_id_msix) catch null;
+
+        if (msi_capability == null and msix == null) continue;
+
+        const device_id = pci.readConfigWord(0, device, 0, 0x02);
+        if (msix != null) with_msix += 1;
+
+        const found = msi_capability orelse {
+            serial.printLine("[KNK] msi: 00:{d}.0 device=0x{x} offers MSI-X only (table in memory; not programmed here)", .{
+                device, device_id,
+            });
+            continue;
+        };
+        with_msi += 1;
+
+        const control: u16 = @truncate(pci.readConfigDword(0, device, 0, found.offset) >> 16);
+        const capable = msi.capableVectors(control);
+        const message = msi.build(smp.cpuId(), first_device_vector) catch |err| {
+            serial.printLine("[KNK] msi: 00:{d}.0 could not build a message: {s}", .{ device, @errorName(err) });
+            continue;
+        };
+
+        if (!config.msi_delivery) {
+            serial.printLine(
+                "[KNK] msi: 00:{d}.0 device=0x{x} MSI capable ({d} vector(s)) address=0x{x} data=0x{x} (not programmed: -Dmsi-delivery=false)",
+                .{ device, device_id, capable, message.address, message.data },
+            );
+            continue;
+        }
+
+        msi_location = location;
+        const access: pci.ConfigAccess = .{
+            .ctx = @ptrCast(&msi_location),
+            .read_fn = msiReadDword,
+            .write_fn = msiWriteDword,
+        };
+        const result = msi.programWith(access, found, smp.cpuId(), first_device_vector, 1) catch |err| {
+            serial.printLine("[KNK] msi: 00:{d}.0 the capability was refused ({s}); INTx stays", .{
+                device, @errorName(err),
+            });
+            continue;
+        };
+
+        programmed += 1;
+        serial.printLine(
+            "[KNK] msi: 00:{d}.0 device=0x{x} programmed: address=0x{x} data=0x{x} control=0x{x}",
+            .{ device, device_id, result.message.address, result.message.data, result.control },
+        );
+    }
+
+    serial.printLine("[KNK] msi: {d} function(s) with MSI, {d} with MSI-X only, {d} programmed", .{
+        with_msi, with_msix, programmed,
+    });
+}
+
+/// Leitura de um DWORD do espaco de configuracao para a programacao da MSI.
+///
+/// O alvo mora em `msi_location` porque `pci.ConfigAccess` nao carrega contexto
+/// proprio: a funcao recebe so o ponteiro opaco.
+var msi_location: pci.Function = .{ .bus = 0, .device = 0, .function = 0 };
+
+fn msiReadDword(_: *anyopaque, offset: u8) u32 {
+    return pci.readConfigDword(msi_location.bus, msi_location.device, msi_location.function, offset);
+}
+
+fn msiWriteDword(_: *anyopaque, offset: u8, value: u32) void {
+    pci.writeConfigDword(msi_location.bus, msi_location.device, msi_location.function, offset, value);
 }
 
 /// Percorre a lista de capabilities e devolve quantas vendor-specific foram

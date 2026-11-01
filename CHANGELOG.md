@@ -21,6 +21,38 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — MSI: a interrupção que o dispositivo entrega por escrita
+
+- **O buraco**: a capability de MSI (0x05) era percorrida, classificada e
+  ignorada — o kernel lia "este dispositivo suporta MSI" e a interrupção continuava
+  chegando pela linha do 8259.
+- **`kernel/arch/x86_64/msi.zig`**: a mensagem
+  (`0xFEE0_0000 | (apic_id << 12)` e o vetor no dado), o layout dos registradores
+  para capabilities de 32 e de 64 bits com e sem máscara por vetor, a alocação de
+  vetores (potência de dois que o dispositivo oferece, recusando em vez de
+  arredondar) e a programação com o bit de habilitação **por último**, como a
+  especificação manda.
+- **Os vetores do kernel são do kernel**: um dispositivo só pode receber vetor a
+  partir de 68; os de 0 a 47 e de 64 a 67 são recusados, porque entregar o vetor 8
+  a uma placa faria o kernel tratar um pacote como falha dupla.
+- **Uma recusa não deixa nada pela metade**: layout, mensagem e alocação são
+  validados antes da primeira escrita, e o teste compara os 256 bytes da imagem
+  antes e depois de três recusas.
+- **Um estouro de `u8` corrigido antes de sair**: uma capability no fim do espaço
+  somava 12 a 0xF8 e voltava ao começo em silêncio; a aritmética passou a ser
+  feita no tamanho do espaço, com a verificação de que o último registrador cabe.
+- **O relatório do boot** (`reportPciInterrupts`) diz, por função, o que ela
+  oferece e o que **seria** escrito; com `-Dmsi-delivery=true` a capability é
+  programada de verdade, porque habilitar a MSI **desliga a INTx** da função e um
+  driver que ainda depende da linha perderia a interrupção.
+- **Dez testes de host** (860 no total, `arch-tests` 191): a mensagem, os vetores
+  reservados, a codificação do `Message Control`, a alocação, os quatro layouts,
+  a capability no fim do espaço, a programação de 32 e de 64 bits, a recusa que
+  não escreve e a descoberta pela lista.
+- Documentação: `docs/audits/2026-11-01-msi-programming.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`acpi_pci_apic` 50% → 57%), `README.md`,
+  `docs/ai/context-pack.md` e o item 8 do K2 no roadmap.
+
 ### Added (2026-11-01) — o trampolim respeita o dado do firmware
 
 - **O buraco**: a região abaixo de 1 MiB era considerada livre porque o mapa do

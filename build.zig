@@ -209,6 +209,22 @@ pub fn build(b: *std.Build) void {
         ) orelse false,
     );
 
+    // `zig build -Dmsi-delivery=true` compiles the path that programs the MSI
+    // capability of a device. The default leaves it alone: programming the
+    // capability disables INTx of that function (the specification requires it),
+    // and a driver that still depends on the classic line would lose its
+    // interrupt. Both paths exist so the choice is a build flag and not a
+    // silent edit.
+    kernel_options.addOption(
+        bool,
+        "msi_delivery",
+        b.option(
+            bool,
+            "msi-delivery",
+            "Program the MSI capability of the devices and enable it (needs a recorded QEMU boot)",
+        ) orelse false,
+    );
+
     const kernel_module = b.createModule(.{
         .root_source_file = b.path("kernel/main.zig"),
         .target = kernel_target,
