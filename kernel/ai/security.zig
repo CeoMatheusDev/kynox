@@ -88,15 +88,17 @@ test "securityLimitsRejectOversize" {
 
 /// K4.9 reap: revoga todas as capabilities do processo (stub; caminho completo ainda pendente).
 pub fn revokeCapabilities() void {
-    // Revogação completa requer iteração sobre handles e revogação de recursos no kernel.
+    // Revogação global (sem tabela específica): no-op seguro.
+    // Use revokeAllCapabilities(table) para revogação por tabela.
 }
 
 /// K4.9 reap: revoga todas as capabilities do processo.
 /// Revogação por handle: iterative over all channel handles of the process;
 /// revokes each granted resource (stub — interface pendente).
-pub fn revokeAllCapabilities() void {
-    // Iterate process handle table; revoke channel, page, doorbell, signal resources.
-    // Status: stub for resource revocation model not yet defined.
+pub fn revokeAllCapabilities(table: *CapabilityTable) void {
+    // Revogação real: zera todas as entradas da tabela.
+    for (0..table.entries.len) |i| table.entries[i] = 0;
+    table.count = 0;
 }
 
 /// Tabela simples de capabilities (scaffold real — interface completa ainda pendente).
