@@ -85,3 +85,8 @@ test "securityLimitsRejectOversize" {
     // Total acima do limite
     try std.testing.expectError(error.TotalTooLarge, validateTotal(1024, 1024, Limits{ .max_total_bytes = 1024 }));
 }
+
+/// K4.9 reap: revoga todas as capabilities do processo (stub; caminho completo ainda pendente).
+pub fn revokeCapabilities() void {
+    // Revogação completa requer iteração sobre handles e revogação de recursos no kernel.
+}

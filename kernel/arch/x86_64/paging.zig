@@ -1190,3 +1190,9 @@ test "a reserved kernel range is shared with a process address space" {
     try testing.expect(translate(dma_base) == null);
     try testing.expect(translateIn(space, dma_base) == null);
 }
+
+/// K4.9 full reap: destroy address space (stub; full table walk + free required).
+pub fn destroyAddressSpace() void {
+    // Full release of PML4/PDPT/PD/PT entries for the process.
+    // Currently stub; requires full page-table walk and physical-page reclaim.
+}

@@ -102,3 +102,13 @@ pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
     return null; // deferred to full allocation mechanism
 }
 // K4.9 reap: destrói AddressSpace via paging.zig; capabilities revogadas; ainda parcial (paging.zig destruição completa pendente)
+
+/// K4.9 reap: calls paging destruction and revokes capabilities (stub for full revocation).
+pub fn reapFull(p: *Process, handle: ProcessHandle) bool {
+    const paging = @import("../arch/x86_64/paging.zig");
+    paging.destroyAddressSpace();
+    const security = @import("../ai/security.zig");
+    security.revokeCapabilities();
+    // Capabilities revocation: requires full revocation path (stub).
+    return p.reapProcess(handle);
+}
