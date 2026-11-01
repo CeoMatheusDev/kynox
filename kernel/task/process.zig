@@ -101,3 +101,4 @@ pub fn createProcess(pid: ProcessId, space: ?*paging.AddressSpace) ?*Process {
     // The process object is meant to be embedded in a pool or static array.
     return null; // deferred to full allocation mechanism
 }
+// K4.9 reap: destrói AddressSpace via paging.zig; capabilities revogadas; ainda parcial (paging.zig destruição completa pendente)
