@@ -449,11 +449,15 @@ stage), `kernel/arch/x86_64/task.s`, `kernel/arch/x86_64/spinlock.zig`, new
    owns the queues and the lock.
 3. **Lock the scheduler.** One lock per run queue plus a documented ordering
    against the wait-queue lock. Preemption is disabled while holding it.
+   *(2026-11-01: one state lock with per-CPU ownership covers every entry point,
+   and each task names the CPU that owns it — a machine-wide lock, not one per
+   queue. See `docs/audits/2026-11-01-scheduler-lock.md` and
+   `docs/audits/2026-11-01-cpu-affinity.md`.)*
 4. **Idle task per CPU** at the lowest priority that `hlt`s. The kernel stops
-   falling off the end of `kmain`. *(2026-11-01: the idle task exists and the
-   policy chooses it only when nothing else can run — one task, not one per CPU,
-   because the scheduler still has one array. See
-   `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md`.)*
+   falling off the end of `kmain`. *(2026-11-01: done — one idle task per CPU,
+   with its own stacks, chosen only when nothing else of that CPU can run. See
+   `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` and
+   `docs/audits/2026-11-01-cpu-affinity.md`.)*
 5. **FPU state in the context**: `xsave`/`xrstor` with a per-CPU save area; the
    test writes a distinct pattern per thread and reads it back.
 6. **Wait queues** with the standard predicate loop (`while (!cond) wait`), a

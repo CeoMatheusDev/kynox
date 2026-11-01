@@ -2725,6 +2725,10 @@ fn installSmp() void {
         apic_id, lapic_base,
     });
 
+    // O que um AP faz quando chega ao kernel: uma tarefa propria, a tarefa
+    // ociosa da CPU e o retorno ao laco de espera com interrupcoes ligadas.
+    smp.installCpuEntryHook(&enterCpuScheduler);
+
     // A tabela de CPUs vem da MADT. Antes este passo assumia ids sequenciais
     // (BSP=0, APs=1..n); agora cada processador habilitado vira uma entrada
     // com o APIC id que o firmware publicou, e o BSP e encontrado pelo id.
@@ -2733,6 +2737,44 @@ fn installSmp() void {
         known, smp.bspCpuIndex(), smp.apCount(),
     });
     serial.printLine("[KNK] smp: AP stacks initialized (max_cpus={d})", .{smp.max_cpus});
+}
+
+/// Puts an application processor into the scheduler.
+///
+/// Called by `kynox_ap_entry` on the processor itself, after it installed its
+/// own segment. Two things happen, and each one is a precondition of the next:
+///
+///   1. the CPU gets a **task of its own** (`adoptKernelTask`). A switch saves
+///      the context of the task that leaves, and the only thing an AP has to
+///      save at this point is itself. Without the task, `current[cpu]` is null,
+///      `prepareNext` returns before it looks at the queue, and the processor
+///      waits with work ready beside it;
+///   2. the CPU gets its **idle task** (`ensureIdle`), which is the last resort
+///      of that queue and belongs to that CPU only.
+///
+/// Then the AP returns to its loop, which waits with `sti; hlt`: interrupts are
+/// enabled by the loop, not here, and an interrupt that arrives before it is
+/// simply pending.
+///
+/// What this does **not** do: it does not arm a clock for the AP. The kernel has
+/// one tick source by policy (`timer.TickSource`), and the local timer of the
+/// BSP is calibrated and left disarmed while the 8254 owns the tick. An AP wakes
+/// only on an interrupt addressed to it, and nothing sends one yet — the
+/// reschedule IPI is the next step. The AP enters the scheduler and sleeps; it
+/// does not yet take a task.
+fn enterCpuScheduler(cpu_index: u8, kernel_stack: []u8) void {
+    const top = @intFromPtr(kernel_stack.ptr) + kernel_stack.len;
+    const task = scheduler.scheduler.adoptKernelTask(cpu_index, top & ~@as(u64, 0xF), kernel_stack) orelse {
+        serial.printLine("[KNK] smp: cpu={d} arrived with no room for its task; it waits without a queue", .{cpu_index});
+        return;
+    };
+
+    const idle = scheduler.scheduler.ensureIdle(cpu_index);
+    serial.printLine("[KNK] smp: cpu={d} entered the scheduler as task {d}, idle task {d}", .{
+        cpu_index,
+        task.id,
+        if (idle) |value| @as(i64, @intCast(value.id)) else @as(i64, -1),
+    });
 }
 
 /// Publishes the trampoline of the APs in the low page that a startup IPI names.
@@ -3970,7 +4012,7 @@ fn installScheduler() void {
     // blocking call on a processor with no other ready task returned without
     // switching, and the processor carried on with whatever the interrupt
     // interrupted.
-    const idle = scheduler.scheduler.ensureIdle() orelse return reportOutOfMemory();
+    const idle = scheduler.scheduler.ensureIdle(smp.cpuId()) orelse return reportOutOfMemory();
     serial.printLine("[KNK] idle: task {d} cs=0x{x} ss=0x{x} rip=0x{x} rsp=0x{x}", .{
         idle.id,
         idle.context.cs,
@@ -5038,6 +5080,11 @@ fn reportScheduler() void {
     // would have no processor to hand over.
     serial.printLine("[KNK] idle: task {d} of the processor, the last resort of the queue", .{
         statistics.idle,
+    });
+    // How many processors entered the scheduler with a task of their own. One
+    // on a machine with a single processor, and one per AP that answered.
+    serial.printLine("[KNK] tasks: {d} CPU(s) entered the scheduler", .{
+        statistics.entered_cpus,
     });
     serial.printLine("[KNK] tasks: {d} ready, {d} blocked, {d} ticks, {d} switches", .{
         statistics.ready,

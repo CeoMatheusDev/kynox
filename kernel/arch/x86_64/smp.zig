@@ -215,6 +215,31 @@ pub fn cpuCount() u8 {
     return online_cpu_count;
 }
 
+/// O que o kernel faz quando uma CPU chega em `kynox_ap_entry`.
+///
+/// Esta tabela existe para o `smp.zig` nao importar o escalonador: o
+/// escalonador ja importa `smp` (para `cpuId` e `max_cpus`), e um import
+/// circular entre os dois modulos amarraria a arquitetura ao escalonador. O
+/// kernel instala a funcao no boot, e o AP a chama depois de instalar o proprio
+/// segmento.
+pub const CpuEntryHook = *const fn (cpu_index: u8, kernel_stack: []u8) void;
+
+var cpu_entry_hook: ?CpuEntryHook = null;
+
+/// Instala a funcao que poe uma CPU no escalonador.
+///
+/// Uma funcao nula e o estado de quem nao quer APs no escalonador: o AP instala
+/// o segmento, marca-se online e espera.
+pub fn installCpuEntryHook(hook: ?CpuEntryHook) void {
+    cpu_entry_hook = hook;
+}
+
+/// A pilha de kernel de uma CPU logica, ou nula quando o numero nao existe.
+pub fn stackOf(cpu_index: u8) ?[]u8 {
+    if (cpu_index >= max_cpus) return null;
+    return ap_stacks[cpu_index][0..];
+}
+
 /// Registra uma CPU na tabela. Chamado durante a inicialização do BSP
 /// e, futuramente, durante o boot de cada AP.
 pub fn registerCpu(id: u8, apic_id: u32) ?*Cpu {
@@ -321,6 +346,12 @@ pub export fn kynox_ap_entry(cpu_id: u8) void {
 
     // Sinaliza que esta CPU esta online.
     cpu.state = .online;
+
+    // A CPU entra no escalonador com uma tarefa propria, se o kernel instalou a
+    // funcao. Sem ela, `current` desta CPU fica nulo, `prepareNext` retorna
+    // antes de olhar a fila, e o AP espera para sempre com trabalho pronto ao
+    // lado.
+    if (cpu_entry_hook) |hook| hook(cpu_id, stack[0..]);
 
     // Entra no loop da CPU: aguarda por trabalho do escalonador.
     // O escalonador ainda e monoprocessador; quando o suporte a multiprocessador
@@ -477,6 +508,19 @@ pub fn startAps() void {
 /// nada executa esta copia no lugar em que ela foi ligada.
 pub fn apTrampolineInfo() [*]const u8 {
     return trampoline.imageAddress();
+}
+
+test "the stack of a CPU is handed out for the numbers the table has" {
+    // The entry of an AP gives its stack to the scheduler, which needs a slice
+    // and not a pointer: the number it receives is the index of the CPU table,
+    // and a number above the limit has no stack at all.
+    const first = stackOf(0).?;
+    const second = stackOf(1).?;
+
+    try std.testing.expectEqual(@as(usize, 16 * 1024), first.len);
+    try std.testing.expectEqual(@as(usize, 16 * 1024), second.len);
+    try std.testing.expect(first.ptr != second.ptr);
+    try std.testing.expectEqual(@as(?[]u8, null), stackOf(max_cpus));
 }
 
 test "the trampoline is not published until the block is copied into the page" {

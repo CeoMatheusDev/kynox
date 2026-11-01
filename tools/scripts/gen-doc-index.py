@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-01-cpu-affinity.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "Which CPU owns a task: the affinity field the choice respects, one idle task per CPU, and the kernel task that an AP adopts when it enters the scheduler.",
+    },
     "docs/audits/2026-11-01-ap-trampoline.md": {
         "kind": "implementation-record",
         "authority": "record",

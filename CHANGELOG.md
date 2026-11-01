@@ -21,6 +21,37 @@ the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current
 identity: **Kynox One 0.1.0-alpha.1**. No tag exists.
 
+### Added (2026-11-01) — every task names the CPU that owns it
+
+- **`Task.cpu`**: the ownership the scheduler only pretended to have. The choice
+  of a CPU used to scan **every** ready task in the pool, so a second processor
+  would have taken a task of the BSP — its idle task included — and the two would
+  have shared one stack and one saved context. `describeQueue` now skips every
+  task of another CPU, and `enqueueReady` records the CPU that queues a task, so
+  ownership travels with the queueing.
+- **One idle task per CPU** (`ensureIdle(cpu)`), each with its own 8 KiB user
+  stack and 8 KiB kernel stack, clamped above `max_cpus` before anything is
+  created.
+- **`adoptKernelTask(cpu, stack_top, stack)`**: an AP arrives from the trampoline
+  in ring 0 with no task, and `prepareNext` starts with `current[cpu] orelse
+  return false`. The processor now gets a kernel task of its own (state
+  `running`, its own stack, not queued), so a switch has a context to save.
+  `smp.installCpuEntryHook` is how it does that without `smp.zig` importing the
+  scheduler (which imports `smp`), and the boot prints
+  `[KNK] smp: cpu=N entered the scheduler as task X, idle task Y` plus
+  `[KNK] tasks: N CPU(s) entered the scheduler`.
+- **Six new host tests** (821 in total, `task-tests` 68, `arch-tests` 156): a
+  task of another CPU is never chosen, the idle task of a CPU is not the last
+  resort of another, one idle task per CPU and idempotent per CPU, the task an AP
+  adopts, ownership following `enqueueReady`, and the stack accessor of a CPU.
+- **Correction**: `docs/audits/2026-11-01-idle-task-and-per-cpu-tss.md` claimed
+  that every task of the kernel is ring 3. It is not: `spawn` creates ring 0
+  kernel threads. The record carries the correction.
+- Documentation: `docs/audits/2026-11-01-cpu-affinity.md`,
+  `docs/PROJECT_STATUS.{md,json}` (scheduler 74% → 79%, SMP 44% → 52%), the
+  counts, `README.md`, `docs/ai/context-pack.md`,
+  `docs/architecture/execution-model.md` and the K3 annotations.
+
 ### Added (2026-11-01) — the trampoline of the APs is published below 1 MiB
 
 - **`kernel/arch/x86_64/ap_trampoline.zig`**: the block of `ap_trampoline.s` as

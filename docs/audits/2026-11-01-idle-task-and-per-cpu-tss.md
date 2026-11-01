@@ -82,7 +82,11 @@ it interrupted.
 and `Statistics.idle` reports its id at boot (`-1` when absent). Three decisions
 are worth stating:
 
-**It is a ring 3 task.** Every task of this kernel is. Returning to a context
+**It is a ring 3 task.** *(Correction, same day: "every task of this kernel is"
+is false — `spawn` creates ring 0 kernel threads, and the boot workers are those.
+The idle task is ring 3 because it is created with `spawnUser` and its body is
+user code, which is a choice; see
+[`2026-11-01-cpu-affinity.md`](2026-11-01-cpu-affinity.md) §7.)* Returning to a context
 whose `cs` carries `rpl` 0 would leave the processor in ring 0 for the next
 interrupt, and there is no way to switch *into* ring 0 that does not pretend the
 frame came from the kernel. So the idle task has a user stack, a kernel stack of

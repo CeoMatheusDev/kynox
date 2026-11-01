@@ -112,6 +112,16 @@ pub const Task = struct {
     /// The priority of the task. Higher values mean higher priority.
     /// The scheduler chooses the ready task with the highest priority.
     priority: u8 = 0,
+    /// The CPU that owns the task.
+    ///
+    /// The scheduler keeps one queue and one `current` per CPU, and this field
+    /// is what ties a task to one of them. Before it existed, the choice on a
+    /// CPU looked at **every** ready task in the pool: a second processor would
+    /// have taken a task of the BSP — its idle task included — and the two CPUs
+    /// would have shared a stack and a saved context. A task is created on the
+    /// CPU that creates it, and `enqueueReady` records the CPU that queues it.
+    cpu: u8 = 0,
+
     /// Whether the task is the idle task of its CPU.
     ///
     /// The idle task exists to be the last resort of the processor: it halts
@@ -190,6 +200,12 @@ pub const Statistics = struct {
     lock_max_depth: u32 = 0,
     /// Releases of the state lock made by a CPU that did not hold it.
     lock_refused_releases: u64 = 0,
+    /// How many CPUs have a task of their own (`adoptKernelTask`).
+    ///
+    /// It is the number of processors that entered the scheduler, and not the
+    /// number of processors that the MADT described: an AP that never answered
+    /// a startup IPI is not one of them.
+    entered_cpus: u8 = 0,
     /// The id of the idle task of this CPU, or -1 while it does not exist.
     ///
     /// The idle task is the last resort of the processor: it is what the
@@ -271,6 +287,10 @@ pub const Scheduler = struct {
         defer self.unlockState();
         if (cpu_id >= smp.max_cpus) return;
         if (self.ready_count[cpu_id] >= max_tasks) return;
+        // A task belongs to the CPU whose queue holds it: the choice of another
+        // CPU never sees it, and the ownership travels with the queueing
+        // (a task woken by an interrupt of CPU 1 is chosen by CPU 1).
+        task.cpu = cpu_id;
         self.ready_queue[cpu_id][self.ready_count[cpu_id]] = task;
         self.ready_count[cpu_id] += 1;
     }
@@ -340,8 +360,8 @@ pub const Scheduler = struct {
     /// They live in the scheduler because the idle task is the one task that
     /// nobody else can create: it has no owner, no process and no address
     /// space, and it exists for as long as the CPU does.
-    var idle_user_stack: [8 * 1024]u8 align(16) = @splat(0);
-    var idle_kernel_stack: [8 * 1024]u8 align(16) = @splat(0);
+    var idle_user_stacks: [smp.max_cpus][8 * 1024]u8 align(16) = @splat(@splat(0));
+    var idle_kernel_stacks: [smp.max_cpus][8 * 1024]u8 align(16) = @splat(@splat(0));
 
     /// Halts the processor until the next interrupt.
     ///
@@ -362,42 +382,92 @@ pub const Scheduler = struct {
     /// allows, so that it is the last candidate even among idle tasks. The
     /// function is idempotent and returns the existing task on the second call.
     ///
-    /// The idle task is a task of **ring 3**, exactly like every other task of
-    /// the kernel: its body is user code, and the halt happens inside the
-    /// kernel on the way back from the interrupt. Two reasons, and both are
-    /// structural rather than stylistic:
+    /// The idle task is created in **ring 3** (`spawnUser`), which is not the
+    /// same thing as "every task is ring 3": `spawn` creates a task of the
+    /// kernel, in ring 0, and the workers of the boot are those. The idle task
+    /// is ring 3 because its body is user code and the halt happens in the
+    /// kernel on the way back from the interrupt — the task itself owns
+    /// nothing, so it is given the weakest privilege the switch knows how to
+    /// return to.
     ///
-    /// - the selector of the kernel (`cs`) carries `rpl` 0, and a context switch
-    ///   that returns to it makes the processor ring 0 — the isolation of the
-    ///   other tasks would be lost on the way back to an idle task;
-    /// - the architecture gives no way to switch to the idle task and stay in
-    ///   ring 0 without a return frame that pretends to come from the kernel,
-    ///   which is a frame the kernel would then have to trust.
-    ///
-    /// So the idle task returns to ring 3, halts in the kernel built from the
-    /// page tables of the kernel, and halts there until an interrupt arrives.
-    pub fn ensureIdle(self: *Scheduler) ?*Task {
+    /// Each CPU has one: the last resort of a processor has to belong to that
+    /// processor, or the other CPU would take it and this one would have an
+    /// empty queue at the moment it has nothing to run.
+    pub fn ensureIdle(self: *Scheduler, cpu_id: u8) ?*Task {
         self.lockState();
         defer self.unlockState();
 
+        // A number that the table of CPUs does not have is clamped instead of
+        // indexing outside it: the processor is the last one, which is better
+        // than a task of no CPU at all.
+        const slot = @min(cpu_id, smp.max_cpus - 1);
+
+        // One idle task per CPU: the last resort of a processor has to be a
+        // task of that processor, or the other CPU would take it and the queue
+        // of this one would be empty at the moment it has nothing to run.
         for (self.tasks[0..self.count]) |entry| {
             const task = entry orelse continue;
-            if (task.is_idle) return task;
+            if (task.is_idle and task.cpu == slot) return task;
         }
 
         const idle = self.spawnUser(
             @intFromPtr(&idleEntry),
-            @intFromPtr(&idle_user_stack),
-            idle_user_stack.len,
-            &idle_kernel_stack,
+            @intFromPtr(&idle_user_stacks[slot]),
+            idle_user_stacks[slot].len,
+            &idle_kernel_stacks[slot],
             0,
             null,
             0,
         ) orelse return null;
         idle.is_idle = true;
+        idle.cpu = slot;
         idle.vruntime = policy.idleVruntime;
 
         return idle;
+    }
+
+    /// Gives the calling CPU a task of its own.
+    ///
+    /// An application processor arrives from the trampoline in ring 0, on a
+    /// stack that the BSP filled in, and with no task at all. A context switch
+    /// saves the outgoing context, and the only thing the AP has to save is
+    /// itself: without this task, `current[cpu]` is null, `prepareNext` returns
+    /// false before it looks at the queue, and the queue of the CPU is never
+    /// consulted — the AP would halt for ever with work waiting for it.
+    ///
+    /// The task is the kernel thread of the CPU: ring 0, the stack the
+    /// trampoline gave it, and the state `running`. It is **not** put in the
+    /// ready queue, because it is already running; it becomes ready only when a
+    /// switch takes the processor from it, which is what `prepareNext` does when
+    /// it finds a task of this CPU.
+    ///
+    /// The function is a no-op that returns the existing task when the CPU
+    /// already has one, and returns null when the pool is full.
+    pub fn adoptKernelTask(self: *Scheduler, cpu_id: u8, kernel_stack_top: u64, stack: []u8) ?*Task {
+        self.lockState();
+        defer self.unlockState();
+
+        if (cpu_id >= smp.max_cpus) return null;
+        if (self.current[cpu_id]) |existing| return existing;
+
+        const task = self.allocate() orelse return null;
+        task.cpu = cpu_id;
+        task.state = .running;
+        task.stack = stack;
+        task.kernel_rsp = kernel_stack_top;
+        task.quantum = 0;
+        task.context = .{
+            .rsp = kernel_stack_top,
+            .rflags = 0x202,
+            .rip = 0,
+            .cs = kernel_code_selector,
+            .ss = kernel_data_selector,
+        };
+
+        self.current[cpu_id] = task;
+        self.statistics.entered_cpus = self.statistics.entered_cpus +| 1;
+
+        return task;
     }
 
     /// Spawns a new task that starts at `entry` with the given stack.
@@ -896,7 +966,7 @@ pub const Scheduler = struct {
             const value = task orelse continue;
             if (value.state == .ready) ready += 1;
             if (value.state == .blocked) blocked += 1;
-            if (value.is_idle) statistics.idle = @intCast(value.id);
+            if (value.is_idle and value.cpu == smp.cpuId()) statistics.idle = @intCast(value.id);
         }
         statistics.ready = ready;
         statistics.blocked = blocked;
@@ -937,6 +1007,7 @@ pub const Scheduler = struct {
     /// scheduled, because their address space is on its way out.
     fn describeQueue(self: *const Scheduler, current: *Task) [max_tasks]policy.Entry {
         var entries: [max_tasks]policy.Entry = undefined;
+        const this_cpu = current.cpu;
 
         for (self.tasks, 0..) |slot, index| {
             entries[index] = .{ .index = index, .vruntime = 0, .eligible = false };
@@ -944,6 +1015,10 @@ pub const Scheduler = struct {
             const task = slot orelse continue;
             if (task == current) continue;
             if (task.state != .ready) continue;
+            // The queue of a CPU holds the tasks of that CPU. A task of
+            // another processor is not a candidate here: choosing it would
+            // give one stack and one saved context to two processors.
+            if (task.cpu != this_cpu) continue;
             if (task.process_ref) |process_ref| {
                 const state = process_ref.state;
                 if (state == .exiting or state == .reaped) continue;
@@ -977,7 +1052,12 @@ pub const Scheduler = struct {
         self.count += 1;
 
         const task = &self.storage[index];
-        task.* = .{ .id = self.next_id, .state = .ready, .quantum = 16 };
+        task.* = .{
+            .id = self.next_id,
+            .state = .ready,
+            .quantum = 16,
+            .cpu = smp.cpuId(),
+        };
         self.next_id += 1;
         self.tasks[index] = task;
 
@@ -1586,14 +1666,14 @@ test "the idle task exists once, and the policy only runs it when nothing else c
 
     // The idle task is created by the scheduler itself: no owner, no process,
     // no address space.
-    const idle = scheduler.ensureIdle().?;
+    const idle = scheduler.ensureIdle(0).?;
     try testing.expect(idle.is_idle);
     try testing.expectEqual(State.ready, idle.state);
     try testing.expectEqual(policy.idleVruntime, idle.vruntime);
     try testing.expectEqual(@as(u32, 1), scheduler.count);
 
     // A second call returns the same task instead of creating a second one.
-    const again = scheduler.ensureIdle().?;
+    const again = scheduler.ensureIdle(0).?;
     try testing.expectEqual(idle, again);
     try testing.expectEqual(@as(u32, 1), scheduler.count);
 
@@ -1629,7 +1709,7 @@ test "a task that blocks hands the processor to the idle task instead of failing
     resetSchedulerForTest();
     defer resetSchedulerForTest();
 
-    const idle = scheduler.ensureIdle().?;
+    const idle = scheduler.ensureIdle(0).?;
 
     var stack: [1024]u8 align(16) = undefined;
     var kernel_stack: [1024]u8 align(16) = undefined;
@@ -1646,4 +1726,137 @@ test "a task that blocks hands the processor to the idle task instead of failing
     try testing.expectEqual(State.blocked, worker.state);
     try testing.expectEqual(idle, scheduler.current[0].?);
     try testing.expectEqual(State.running, idle.state);
+}
+
+test "a task belongs to one CPU and the other CPU never chooses it" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const here = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    const elsewhere = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+
+    // The task of the other CPU is ready, and eligible by every other rule:
+    // smaller runtime, not the current one, not blocked, not leaving.
+    elsewhere.cpu = 1;
+    elsewhere.vruntime = -1000;
+    elsewhere.state = .ready;
+    here.cpu = 0;
+    here.state = .running;
+    scheduler.current[0] = here;
+    scheduler.current[1] = null;
+
+    // CPU 0 does not see it: choosing it would give one stack and one saved
+    // context to two processors.
+    try testing.expectEqual(@as(?*Task, null), scheduler.findNextReadyForTest(here));
+
+    // The same task, moved to this CPU, is chosen.
+    elsewhere.cpu = 0;
+    try testing.expectEqual(elsewhere, scheduler.findNextReadyForTest(here).?);
+}
+
+test "the idle task of a CPU is not the last resort of another CPU" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const idle_of_one = scheduler.ensureIdle(1).?;
+    try testing.expectEqual(@as(u8, 1), idle_of_one.cpu);
+    try testing.expect(idle_of_one.is_idle);
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    const here = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    here.cpu = 0;
+    here.state = .running;
+    scheduler.current[0] = here;
+
+    // Nothing of CPU 0 can run, and the idle task of CPU 1 is ready: CPU 0 has
+    // nobody to switch to, which is the truth. Taking the idle task of the
+    // other processor would give it two processors and its own queue none.
+    try testing.expectEqual(@as(?*Task, null), scheduler.findNextReadyForTest(here));
+
+    // With its own idle task it has a last resort.
+    const idle_of_zero = scheduler.ensureIdle(0).?;
+    try testing.expectEqual(@as(u8, 0), idle_of_zero.cpu);
+    try testing.expectEqual(idle_of_zero, scheduler.findNextReadyForTest(here).?);
+}
+
+test "each CPU has one idle task, and asking twice returns the same one" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const zero = scheduler.ensureIdle(0).?;
+    const one = scheduler.ensureIdle(1).?;
+
+    try testing.expect(zero != one);
+    try testing.expect(zero.is_idle and one.is_idle);
+    try testing.expectEqual(@as(u8, 0), zero.cpu);
+    try testing.expectEqual(@as(u8, 1), one.cpu);
+    try testing.expectEqual(@as(u32, 2), scheduler.count);
+
+    // The stacks are not shared: two idle tasks on one stack would overwrite
+    // each other's frames the moment both processors halted.
+    try testing.expect(zero.kernel_rsp != one.kernel_rsp);
+
+    try testing.expectEqual(zero, scheduler.ensureIdle(0).?);
+    try testing.expectEqual(one, scheduler.ensureIdle(1).?);
+    try testing.expectEqual(@as(u32, 2), scheduler.count);
+
+    // A number that the table does not have is clamped to the last CPU
+    // instead of indexing outside it.
+    const clamped = scheduler.ensureIdle(smp.max_cpus + 4).?;
+    try testing.expectEqual(@as(u8, smp.max_cpus - 1), clamped.cpu);
+}
+
+test "an AP that enters the scheduler gets a task of its own" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    const top = @intFromPtr(&kernel_stack) + kernel_stack.len;
+
+    const ap = scheduler.adoptKernelTask(1, top, kernel_stack[0..]).?;
+    try testing.expectEqual(@as(u8, 1), ap.cpu);
+    try testing.expectEqual(State.running, ap.state);
+    try testing.expectEqual(top, ap.kernel_rsp);
+    try testing.expectEqual(kernel_code_selector, ap.context.cs);
+    try testing.expectEqual(ap, scheduler.current[1].?);
+    try testing.expectEqual(@as(u8, 1), scheduler.statisticsOf().entered_cpus);
+
+    // The task of the processor is not in its queue: it is already running,
+    // and a queue would offer it to itself.
+    try testing.expectEqual(@as(u32, 0), scheduler.readyCount(1));
+
+    // A second entry returns the task that already runs there instead of
+    // creating a second one.
+    try testing.expectEqual(ap, scheduler.adoptKernelTask(1, top, kernel_stack[0..]).?);
+    try testing.expectEqual(@as(u32, 1), scheduler.count);
+    try testing.expectEqual(@as(u8, 1), scheduler.statisticsOf().entered_cpus);
+
+    // A CPU number that the table does not have is refused.
+    try testing.expectEqual(@as(?*Task, null), scheduler.adoptKernelTask(smp.max_cpus, top, kernel_stack[0..]));
+
+    // With a task of its own, the processor can choose work: a ready task of
+    // CPU 1 is a candidate, and the adopted task is the one it leaves.
+    var stack: [1024]u8 align(16) = undefined;
+    const worker = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    worker.cpu = 1;
+    worker.state = .ready;
+    try testing.expectEqual(worker, scheduler.findNextReadyForTest(ap).?);
+}
+
+test "queueing a task on a CPU makes that CPU its owner" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+    const task = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    try testing.expectEqual(@as(u8, 0), task.cpu);
+
+    scheduler.enqueueReady(task, 3);
+    try testing.expectEqual(@as(u8, 3), task.cpu);
+    try testing.expectEqual(@as(u32, 1), scheduler.readyCount(3));
 }
