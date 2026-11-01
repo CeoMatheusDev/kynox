@@ -1201,7 +1201,6 @@ pub fn destroyAddressSpace() void {
 pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
     // Walk: PML4 (level4) entries → PDPT (level3) → PD (level2) → PT (level1).
     // Clear all entries; physical page reclaim ainda requer PMM (pending).
-    const PageTable = extern struct { entries: [512]u64 = @splat(0) };
     if (space.root) |r| {
         for (0..512) |i| r.entries[i] = 0;
     }
