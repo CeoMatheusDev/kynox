@@ -758,15 +758,27 @@ pub extern var kynox_syscall_blocked: u64;
 extern fn kynox_capture_context(task_context: *Context) callconv(.c) void;
 
 
-/// K4.9 / K3.12.2: preempt_disable real — desabilita interrupções (CLI).
+/// K4.9 / K3.12.2: preempt_disable real — desabilita interrupções (CLI) com contador por CPU.
 pub fn preempt_disable() void {
-    // CLI: disable maskable interrupts; requires matching STI.
-    // Counter per-CPU still partial (SMP full integration pending).
+    // CLI: disable maskable interrupts.
     asm volatile ("cli");
+    // Increment per-CPU preemption counter (nesting safe).
+    const id = @import("../arch/x86_64/smp.zig").cpuId();
+    preempt_counter[id] += 1;
 }
 
-/// K4.9 / K3.12.2: preempt_enable real — restaura interrupções (STI).
+/// K4.9 / K3.12.2: preempt_enable real — restaura interrupções (STI) com nesting.
 pub fn preempt_enable() void {
-    // STI: enable maskable interrupts; must match CLI.
-    asm volatile ("sti");
+    const id = @import("../arch/x86_64/smp.zig").cpuId();
+    // Underflow protection.
+    if (preempt_counter[id] > 0) {
+        preempt_counter[id] -= 1;
+    }
+    // Only re-enable interrupts if counter reaches zero.
+    if (preempt_counter[id] == 0) {
+        asm volatile ("sti");
+    }
 }
+
+/// Per-CPU preemption counter (max 255 nesting depth).
+var preempt_counter: [256]u8 = @splat(0);

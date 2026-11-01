@@ -1217,7 +1217,7 @@ pub fn destroyAddressSpaceReal(space: *AddressSpace) void {
 
 /// K4.9 reap real: reclaim físico das páginas do AddressSpace (interface para PMM; ainda parcial).
 pub fn reclaimPhysicalPages(space: *AddressSpace) void {
-    const physical = @import("memory/physical.zig");
+    const physical = @import("../../memory/physical.zig");
     // Reclaim físico REAL: percorre as tabelas privadas do processo
     // e libera cada página física via PMM.free().
     // Kernel mappings (root) são compartilhados e não liberados.
@@ -1257,5 +1257,4 @@ pub fn reclaimPhysicalPages(space: *AddressSpace) void {
             l1.entries[i] = 0;
         }
     }
-    _ = space;
 }
