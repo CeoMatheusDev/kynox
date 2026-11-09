@@ -510,6 +510,13 @@ stage), `kernel/arch/x86_64/task.s`, `kernel/arch/x86_64/spinlock.zig`, new
    counter that asserts the order.
 10. **Fix the task-slot leak**: `terminateCurrent` no longer strands a slot; exit
     is a state transition and the slot is released by the reaper.
+    *(2026-11-08: done — `Scheduler.reap` hands the slot of a terminated task
+    back to the pool and `allocate` reuses the hole; the request comes from
+    `terminateCurrent`/`killCurrent` and the collection from the tick, because a
+    task cannot free the slot it is running on. Seven host tests. See
+    `docs/audits/2026-11-08-task-slot-reaper.md`. Still open: nothing of this has
+    run on a machine, and the address space of a user process that ends is never
+    destroyed — `process.reapFull` exists and no boot path calls it.)*
 
 **Completion criteria.**
 - The scheduler has host tests for its policy and at least one QEMU integration

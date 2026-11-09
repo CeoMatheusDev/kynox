@@ -16,6 +16,143 @@ Rules used for this file:
 
 ## [Unreleased]
 
+### Fixed (2026-11-08, terceira rodada) — o page fault em 0xfee00020 que matava o boot
+
+- **O diagnóstico, finalmente com texto.** A rede de segurança da anotação
+  publicou o console do CI:
+  `EXCEPTION 14: page fault`, `faulting address: 0xfee00020`, `cs=0x8` (modo
+  kernel, portanto fatal). `0xfee00020` é o registrador do **identificador do
+  APIC local**.
+- **A causa** é a ordem do boot, que violava uma regra escrita no próprio
+  código: `createAddressSpace` copia os níveis superiores das tabelas do kernel,
+  então o que o kernel mapeia **depois** dessa cópia não existe nos espaços já
+  criados. `installSmp` mapeia o APIC local e rodava **depois** de
+  `installUserTask`/`installNativeProcess`/`installToolchainProcess`/
+  `installClientProcess`. Com o espaço do processo ativo, ler o próprio APIC id
+  atravessava a tabela de nível 2 privada e não achava a entrada de nível 1.
+  `buildPageTables` e `installMmioWindow` já documentavam a regra para o DMA e o
+  MMIO; o LAPIC era o caso que faltava.
+- **Correção em duas partes**: (1) os espaços dos processos passam a ser criados
+  depois de `installSmp`, com o motivo escrito nos dois lugares; (2)
+  `paging.mapDevicePageIn(space, virtual, physical)` para mapear um dispositivo
+  depois de os espaços existirem — completa a cadeia no espaço, recusa o bloco
+  privado do processo e a página que o kernel não mapeia.
+- **Dois testes novos** (`arch` 212 → **214**): um reproduz o defeito (a página
+  em `translate` e ausente em `translateIn`, e o conserto) e outro fixa as duas
+  recusas.
+- **Três defeitos da primeira versão da função**, corrigidos antes de aceitá-la:
+  `tableOf` sobre entrada ausente (panic no host), ordem dos erros trocando o
+  diagnóstico, e uma alocação de tabela redundante que quebrava a partilha.
+- **Validado sem cache**: `rm -rf .zig-cache zig-out`, `zig build` ok, `zig build
+  test --summary all` = 52/52 passos, **890/890 testes**.
+
+### Added (2026-11-08, segunda rodada) — a falha de runtime passa a deixar evidência
+
+- **O buraco**: os três scripts de integração criam `mktemp -d` e apagam tudo no
+  `trap`, enquanto o workflow publicava `docs/validation/logs/` — um caminho que
+  nenhum script escrevia. O artefato `qemu-logs` da execução do CI na PR #5 tem
+  **807 bytes**: nada. Uma falha de boot não deixava console, nem stderr do
+  emulador, nem captura de tela, e a anotação do CI carrega só o fim do log do
+  passo. A informação que diria *por que* o teste falhou era destruída pelo
+  próprio teste.
+- **`--evidence-dir=<path>`** nos três scripts, ligado ao `build.zig` por
+  `-Devidence-dir=`, default `docs/validation/logs` (o caminho que o CI publica).
+  O `trap` é instalado e o diretório criado **antes** de qualquer recusa de
+  ambiente, então "não há firmware" também deixa resumo.
+- **`summary.txt` escrito primeiro**: data, resultado e status de saída, duração,
+  timeout, imagem, firmware, emulador e uma linha `failed_check:` por asserção
+  que falhou. Depois vêm o console serial, o stderr do emulador e a captura.
+- **Numa falha, as últimas 20 linhas do console** são repetidas no log do passo —
+  exatamente o trecho que a anotação do CI preserva.
+- **`.gitignore`** ignora os arquivos de execução (`*.log`, `*.stderr`, `*.ppm`,
+  `summary.txt`) e preserva o registro escrito à mão. **CI**: o artefato passa a
+  `if-no-files-found: error`; um artefato vazio é um falso negativo e o job tem
+  de dizê-lo.
+- **Um bug pego na revisão**: no `interactive-qemu.sh` o `mkdir` do diretório de
+  evidência ficou antes do laço que lê `--evidence-dir`, e o `trap` tentava
+  escrever num diretório com o nome vazio da variável. O setup foi movido para
+  depois do parsing e o `cleanup_qemu` órfão, removido.
+- **Medido**: sem OVMF e sem QEMU, os três scripts deixam `summary.txt` com
+  `result: fail (exit status 2)` e `firmware_code: not found`; o trap preserva o
+  status real (um harness com `exit 7` escreve `exit status 7`); o array de
+  checks vazio não quebra sob `set -u`; `git status docs/validation/logs/` fica
+  vazio depois de uma execução.
+- **A anotação do CI passa a carregar o diagnóstico.** A execução seguinte
+  confirmou a evidência pelo número — o artefato foi de **807** para **86 240
+  bytes** e o passo "Runtime evidence" passou — mas o log do passo continua
+  inalcançável daqui: ele redireciona para um host cujo TLS é recusado. A
+  anotação é servida pela API e chegou, apontando a linha **70 257** com a
+  mensagem genérica "exit code 1"; um número de linha sem o texto não é
+  diagnóstico. `tests/integration/ci-annotate.sh` escreve o comando de fluxo
+  `::error title=...::mensagem` que vira anotação: os checks que falharam e as
+  últimas 12 linhas do console nos três scripts, mais uma anotação para cada
+  recusa de ambiente (sem OVMF, sem QEMU, sem `timeout(1)`). Fora do GitHub
+  Actions o helper não faz nada, e `%`, CR e LF são escapados.
+- **A anotação não saiu, e isso localiza a falha.** A execução de `eb279e5`
+  falhou no "Automated boot" sem nenhuma anotação do script — só o `::error`
+  genérico do runner. Com isso, os caminhos que se descrevem (checks que
+  falham, falta de firmware, falta do emulador) **não** foram o que aconteceu:
+  sobram o boot que termina sem nenhuma saída serial (linha 620) e um comando
+  qualquer que falha sob `set -e` fora dos blocos tratados.
+- **Rede de segurança no `trap`**: `ci_annotate_failed_exit` lê o status na
+  primeira linha do trap e, quando nenhuma anotação específica saiu, publica
+  `QEMU boot: the run stopped (exit N)` com as últimas 12 linhas do console. A
+  ordem importa — um comando no meio do trap substituiria `$?` pelo próprio, e
+  por isso o status é capturado uma vez, numa função `on_exit`.
+- **Reproduzido** com um `qemu-system-x86_64` falso que não escreve nada:
+  `FAIL: serial log is empty (qemu exit status 0)` e a anotação da rede,
+  `...(exit 1)...<no console>`, com `result: fail (exit status 1)` no resumo.
+- **O que continua desconhecido**: por que o boot falha nos 18 min. O log do
+  passo e o artefato ficam em hosts que este ambiente não alcança. A correção é
+  o que faz a próxima execução carregar a resposta.
+
+### Added (2026-11-08) — o slot da tarefa que terminou volta ao pool
+
+- **O buraco**: `allocate` era um contador que só crescia, e `terminateCurrent`
+  marcava a tarefa como `terminated` e parava ali. Nada devolvia o índice, então
+  `count` era ao mesmo tempo "quantas tarefas existem", "quantas já existiram" e
+  "onde fica o próximo slot" — três coisas que só coincidem enquanto nenhuma
+  tarefa termina. Na 33ª tarefa da vida da máquina `allocate` devolvia `null`
+  com três tarefas vivas, e o boot reportava falta de memória.
+- **Por que a coleta não acontece no término**: `terminateCurrent` roda na pilha
+  de kernel da tarefa que está terminando, e o slot que se quer liberar contém
+  `kernel_rsp`, `stack` e o `context` salvos. Liberar ali é *use-after-free* com
+  outro nome. Quem libera é outro contexto — é o que `execution-model.md` já
+  exigia e o que faltava implementar.
+- **`Scheduler.reap`**: uma lista encadeada intrusiva (`Task.reap_next`,
+  `reap_queued`, `Scheduler.reap_head`, `reap_count`) — o nó mora na tarefa, então
+  pedir para ser coletado nunca aloca. `requestReap` é chamado por
+  `terminateCurrent` e `killCurrent`; `reap` roda a partir de `tick`, que é o
+  único contexto que não é a tarefa coletada.
+- **Três condições seguram o slot**: a tarefa está `terminated`, nenhuma CPU a
+  está executando (`isRunning`), e a canária da pilha de kernel ainda é a que ela
+  recebeu. As duas primeiras são correção; a terceira é evidência — uma pilha
+  sobrescrita é um defeito, e reutilizar o slot o apagaria.
+- **`allocate` varre o buraco**: usa o primeiro `null` de `tasks[0..count]` e só
+  cresce o prefixo quando não há buraco. Um slot abaixo do topo volta a ser
+  usado sem mexer no limite.
+- **`releaseSlot` purga as filas de prontos** antes de liberar: a fila guarda o
+  ponteiro, e o ponteiro é o que o slot vira. Sem a limpeza, uma tarefa
+  enfileirada que termina e é coletada faria a nova tarefa do mesmo slot rodar
+  duas vezes.
+- **Um bug que o teste achou**: a primeira limpeza reutilizava o índice de
+  escrita no laço que zera as entradas, e a contagem da fila voltava ao valor
+  antigo (`expected 1, found 2`). A correção guarda o novo tamanho antes do laço.
+- **`statistics.tasks` passa a dizer a verdade**: conta as entradas não nulas e
+  não devolve `count`; `statistics.reaped` e `pending_reap` entram no relatório
+  do boot numa linha própria.
+- **Sete testes de host** (888 no total, `task-tests` 72 → 79): 33 vidas de tarefa
+  em sequência com um pool de 32, o slot de uma tarefa em execução recusado, a
+  coleta pelo tick, a tarefa de idle imune, a fila que pula a terminada, o
+  identificador que não volta, e o slot recriado sem deixar ponteiro na fila.
+- **`.github/workflows/ci.yml`**: a verificação de firmware usava `ls` com sete
+  caminhos, e `ls` falha quando **qualquer** um não existe — o job `runtime`
+  falhava em toda distro que não instala o OVMF em todos eles. Um laço que para
+  no primeiro par CODE/VARS existente substitui o `ls`.
+- Documentação: `docs/audits/2026-11-08-task-slot-reaper.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`scheduler` 83% → 84%, `tests_validation`
+  65% → 66%), `docs/ai/context-pack.md` e o item 10 do K3 no roadmap.
+
 Repository audit, governance and documentation for the first alpha, followed by
 the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current

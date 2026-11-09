@@ -26,6 +26,7 @@
 //! justified with data.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const cpu = @import("../arch/x86_64/cpu.zig");
 const kynox = @import("kynox_shared");
 
@@ -103,6 +104,20 @@ pub const Task = struct {
     space: ?*paging.AddressSpace = null,
     /// The process that owns this thread (null for kernel-only threads).
     process_ref: ?*process.Process = null,
+    /// The next task in the list of the reaper.
+    ///
+    /// The link lives in the task, so that a task that ends never allocates to
+    /// be collected, and the reaper has a single list to walk however the task
+    /// ended (an ordinary exit or an exception of the user mode). A plain link
+    /// and not a `wait_queue.Node`: nothing sleeps in this list and nobody is
+    /// woken through it, so the node of the wait queue — with its wake routine
+    /// and its remembered wake — would be machinery that never runs.
+    reap_next: ?*Task = null,
+    /// Whether the task is in the list of the reaper right now.
+    ///
+    /// It is what makes a second request from the same task a no-op, and what
+    /// stops the collection of a task that already went back to the pool.
+    reap_queued: bool = false,
     /// The state of the task.
     state: State = .ready,
     /// The code with which the task ended.
@@ -209,6 +224,18 @@ pub const Statistics = struct {
     wake_reschedules: u64 = 0,
     /// Reschedules served by `rescheduleCurrent` (the IPI handler).
     reschedules: u64 = 0,
+    /// Tasks whose slot went back to the pool because they ended.
+    ///
+    /// A task that terminates leaves its slot in the storage, and the slot is
+    /// what bounds `max_tasks`. Without this counter the only sign of a leak
+    /// would be the creation that returns null after 32 processes have run
+    /// their whole life.
+    reaped: u64 = 0,
+    /// Tasks that ended and are waiting for a processor to collect them.
+    ///
+    /// A task cannot return a slot that belongs to the code it is running: it
+    /// asks for the reaper and the reaper frees it in another context.
+    pending_reap: u32 = 0,
     /// How many CPUs have a task of their own (`adoptKernelTask`).
     ///
     /// It is the number of processors that entered the scheduler, and not the
@@ -247,6 +274,15 @@ pub const Scheduler = struct {
 
     /// Numero de tarefas prontas em cada fila.
     ready_count: [smp.max_cpus]u32 = @splat(0),
+    /// The tasks that ended and whose slot is waiting for the reaper.
+    ///
+    /// A task marks itself terminated and asks a processor to collect it; the
+    /// slot cannot be handed back by the task itself, because the slot holds
+    /// the stacks that the task is running on. The link lives in the task
+    /// (`reap_next`), so the list never allocates.
+    reap_head: ?*Task = null,
+    /// How many tasks are in the list of the reaper.
+    reap_count: u32 = 0,
     /// The identifier of the next task that is created.
     next_id: u32 = 0,
     /// The state of the scheduler.
@@ -311,15 +347,30 @@ pub const Scheduler = struct {
         self.lockState();
         defer self.unlockState();
         if (cpu_id >= smp.max_cpus) return null;
-        if (self.ready_count[cpu_id] == 0) return null;
-        const task = self.ready_queue[cpu_id][0];
+
+        // A task that ended is taken out of the queue on the way, and the walk
+        // goes on: a terminated task that a wake enqueued before it ended is
+        // not a task anybody may choose, and it must not hide the ready ones
+        // behind it either.
+        while (self.ready_count[cpu_id] > 0) {
+            const task = self.ready_queue[cpu_id][0];
+            self.shiftQueue(cpu_id);
+            if (task) |value| {
+                if (value.state == .terminated) continue;
+            }
+            return task;
+        }
+        return null;
+    }
+
+    /// Removes the first entry of the queue of a CPU.
+    fn shiftQueue(self: *Scheduler, cpu_id: u8) void {
         var index: u32 = 0;
         while (index + 1 < self.ready_count[cpu_id]) : (index += 1) {
             self.ready_queue[cpu_id][index] = self.ready_queue[cpu_id][index + 1];
         }
         self.ready_count[cpu_id] -= 1;
         self.ready_queue[cpu_id][self.ready_count[cpu_id]] = null;
-        return task;
     }
 
     /// Numero de tarefas prontas na fila de uma CPU.
@@ -635,6 +686,12 @@ pub const Scheduler = struct {
         self.statistics.ticks += 1;
         _ = channel.expireAll(self.statistics.ticks, timeout_result);
 
+        // The slots of the tasks that ended go back to the pool here, and not
+        // when they end: the code of a task runs on the slot that would be
+        // released. This is the only context that collects them, and it is the
+        // path of the clock, which runs on every processor.
+        _ = self.reap();
+
         return self.prepareNext();
     }
 
@@ -889,6 +946,7 @@ pub const Scheduler = struct {
         task.exit_code = 1;
         self.releaseProcessFilesIfLast(task);
         self.statistics.killed += 1;
+        self.requestReap(task);
     }
 
     /// Blocks the current task on a wait queue, with an optional deadline.
@@ -1024,6 +1082,7 @@ pub const Scheduler = struct {
         current.state = .terminated;
         current.exit_code = code;
         self.releaseProcessFilesIfLast(current);
+        self.requestReap(current);
     }
 
     /// The state of the scheduler, with the measurements of the switches.
@@ -1044,17 +1103,21 @@ pub const Scheduler = struct {
         statistics.lock_reentries = self.state_lock.reentries;
         statistics.lock_max_depth = self.state_lock.max_depth;
         statistics.lock_refused_releases = self.state_lock.refused_releases;
-        statistics.tasks = self.count;
-
+        // The tasks that exist, not the tasks that ever existed: a slot that
+        // the reaper handed back is not a task, and `count` is the high-water
+        // mark of the list, which a reaped slot may sit below.
+        var existing: u32 = 0;
         var ready: u32 = 0;
         var blocked: u32 = 0;
         statistics.idle = -1;
         for (self.tasks) |task| {
             const value = task orelse continue;
+            existing += 1;
             if (value.state == .ready) ready += 1;
             if (value.state == .blocked) blocked += 1;
             if (value.is_idle and value.cpu == smp.cpuId()) statistics.idle = @intCast(value.id);
         }
+        statistics.tasks = existing;
         statistics.ready = ready;
         statistics.blocked = blocked;
 
@@ -1131,12 +1194,24 @@ pub const Scheduler = struct {
         return 0;
     }
 
-    /// Reserves a task of the storage of the scheduler.
+    /// Reserves a slot of the storage of the scheduler.
+    ///
+    /// The first free slot is used, and not the one after the last task that
+    /// was created: a task that ended hands its slot back (`reap`), and a
+    /// counter that only grew would turn the 33rd task of the life of the
+    /// machine into a creation that fails, however few tasks exist at that
+    /// moment. `max_tasks` bounds the tasks that exist **at the same time**,
+    /// which is what the storage holds, and not the tasks that ever existed.
+    ///
+    /// The walk covers `0..count`, which is the prefix of the list that was
+    /// ever handed out: a slot above it has never been used, and the first of
+    /// them is the answer when no hole exists below.
     fn allocate(self: *Scheduler) ?*Task {
-        if (self.count >= max_tasks) return null;
-
-        const index = self.count;
-        self.count += 1;
+        var index: u32 = 0;
+        while (index < self.count) : (index += 1) {
+            if (self.tasks[index] == null) break;
+        }
+        if (index >= max_tasks) return null;
 
         const task = &self.storage[index];
         task.* = .{
@@ -1144,11 +1219,162 @@ pub const Scheduler = struct {
             .state = .ready,
             .quantum = 16,
             .cpu = smp.cpuId(),
+            // A fresh slot is not in the list of the reaper: the task that
+            // used it before it was handed back left it.
+            .reap_next = null,
+            .reap_queued = false,
         };
         self.next_id += 1;
         self.tasks[index] = task;
+        if (index >= self.count) self.count = index + 1;
 
         return task;
+    }
+
+    /// Asks for the slot of a task that ended to be handed back.
+    ///
+    /// The task that calls this is still running on the slot, so nothing is
+    /// freed here: the task enters the list of the reaper and the next `reap`
+    /// — run by whoever holds the processor afterwards — releases the slot. A
+    /// task that is already in the list does not enter twice.
+    ///
+    /// The idle task is never collected: the last resort of a processor has to
+    /// exist for as long as the processor does, and `ensureIdle` would only
+    /// create another one on the same slot the moment it was asked again.
+    pub fn requestReap(self: *Scheduler, task: *Task) void {
+        self.lockState();
+        defer self.unlockState();
+        self.enqueueReap(task);
+    }
+
+    /// Puts a terminated task in the list of the reaper.
+    ///
+    /// The caller already holds the state lock.
+    fn enqueueReap(self: *Scheduler, task: *Task) void {
+        if (task.state != .terminated) return;
+        if (task.is_idle) return;
+        if (task.reap_queued) return;
+
+        task.reap_next = self.reap_head;
+        task.reap_queued = true;
+        self.reap_head = task;
+        self.reap_count += 1;
+        self.statistics.pending_reap = self.reap_count;
+    }
+
+    /// Hands back the slots of the tasks that ended.
+    ///
+    /// The function runs from the tick, which is the only context that is
+    /// neither the task being collected nor a caller that may already be inside
+    /// the scheduler for another reason. The slot of a task that a processor is
+    /// still running is left alone — it has not switched away from it yet — and
+    /// so is a slot that cannot be collected (`mayCollect`): the task stays in
+    /// the list, and the count of the tasks that are pending is what makes that
+    /// visible in the report of the boot.
+    ///
+    /// Returns how many slots went back to the pool.
+    pub fn reap(self: *Scheduler) u32 {
+        self.lockState();
+        defer self.unlockState();
+
+        var released: u32 = 0;
+        var link = &self.reap_head;
+        while (link.*) |task| {
+            if (task.state != .terminated or self.isRunning(task) or !self.mayCollect(task)) {
+                link = &task.reap_next;
+                continue;
+            }
+
+            // The task leaves the list before its slot is cleared, because the
+            // link itself lives in the slot that is about to become empty.
+            link.* = task.reap_next;
+            task.reap_queued = false;
+            self.reap_count -= 1;
+            self.releaseSlot(task);
+            released += 1;
+        }
+
+        self.statistics.reaped += released;
+        self.statistics.pending_reap = self.reap_count;
+        return released;
+    }
+
+    /// Whether a CPU is running the task right now.
+    fn isRunning(self: *const Scheduler, task: *Task) bool {
+        for (self.current) |entry| {
+            if (entry == task) return true;
+        }
+        return false;
+    }
+
+    /// Whether a task may be collected now.
+    ///
+    /// Two conditions come from the machine, and the reason they exist is that
+    /// the slot of a task holds more than a number:
+    ///
+    ///   - the kernel stack of the task still has the canary the task was
+    ///     given. A stack that was overwritten is evidence of a defect, and a
+    ///     slot that receives another task would overwrite the evidence;
+    ///   - a task that ended while it was blocked stays in the list. The slot
+    ///     holds the node that the wait queue points at, and a slot that
+    ///     becomes another task while a queue still names it is corruption.
+    ///
+    /// The canary is not checked for a task that never received a kernel stack
+    /// (the host tests create tasks without one), and it is not checked on the
+    /// host at all, where the address of a stack is an address of the test
+    /// process and not of a kernel image.
+    fn mayCollect(self: *const Scheduler, task: *Task) bool {
+        _ = self;
+        if (builtin.target.os.tag != .freestanding) return true;
+        if (task.stack_canary == 0 or task.stack_canary_address == 0) return true;
+        const stored = @as(*const u64, @ptrFromInt(task.stack_canary_address)).*;
+        return stored == task.stack_canary;
+    }
+
+    /// Returns the slot of a task to the pool.
+    ///
+    /// The slot goes back to the storage and the entry of the list becomes
+    /// null, which is what lets `allocate` hand the same index out again. The
+    /// identifier of the task is **not** reused: `next_id` only grows, so an
+    /// identifier that a caller kept from a task that ended names nothing
+    /// afterwards, exactly like the generation of an address space makes the
+    /// identity of a process the pair and not the slot.
+    fn releaseSlot(self: *Scheduler, task: *Task) void {
+        const index = self.indexOf(task);
+        if (index >= self.count) return;
+        if (self.tasks[index] != task) return;
+
+        // Every queue that still names the task is purged first. The slot is
+        // about to become a task of its own, and a queue that kept the address
+        // would hand the new task out twice — the reference is the pointer, not
+        // the identifier, so an entry of a terminated task is a reference to
+        // whatever receives the slot next.
+        self.purgeReady(task);
+
+        self.tasks[index] = null;
+        task.* = .{};
+    }
+
+    /// Removes every entry of a task from the ready queues of every CPU.
+    fn purgeReady(self: *Scheduler, task: *Task) void {
+        for (0..smp.max_cpus) |cpu_id| {
+            var write: u32 = 0;
+            var read: u32 = 0;
+            while (read < self.ready_count[cpu_id]) : (read += 1) {
+                const entry = self.ready_queue[cpu_id][read];
+                if (entry == task) continue;
+                self.ready_queue[cpu_id][write] = entry;
+                write += 1;
+            }
+            // The entries above the new tail are cleared, and the count is the
+            // number that survived: the clearing must not move the counter that
+            // the queue is measured by.
+            const survivors = write;
+            while (write < self.ready_count[cpu_id]) : (write += 1) {
+                self.ready_queue[cpu_id][write] = null;
+            }
+            self.ready_count[cpu_id] = @intCast(survivors);
+        }
     }
 };
 
@@ -1261,6 +1487,8 @@ fn resetSchedulerForTest() void {
     scheduler.ready_queue = @splat(@splat(null));
     scheduler.ready_count = @splat(0);
     scheduler.next_id = 0;
+    scheduler.reap_head = null;
+    scheduler.reap_count = 0;
     scheduler.statistics = .{};
     scheduler.state_lock = .{};
 }
@@ -2064,4 +2292,184 @@ test "a wake that lands on another CPU asks for that CPU and does not queue here
     // The host has no APIC and no second processor online, so no IPI was
     // delivered, and the counter of delivered reschedules did not move.
     try testing.expectEqual(@as(u64, 0), scheduler.statisticsOf().wake_reschedules);
+}
+
+test "a task that ended gives its slot back, and the slot is used again" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    // The whole life of a machine: a task is created, it ends, and its slot
+    // goes back to the pool. Before the reaper existed, `count` only grew and
+    // the 33rd task of the life of the machine was a creation that failed,
+    // however few tasks existed at that moment.
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stacks: [max_tasks + 1][1024]u8 align(16) = undefined;
+
+    var life: u32 = 0;
+    while (life < max_tasks + 1) : (life += 1) {
+        const task = scheduler.spawn(noopEntry, stack[0..], kernel_stacks[life][0..], 0) orelse
+            return error.NoSlot;
+        // The task ends as the switch ends it: terminated, and no processor is
+        // running it (the host never switches, so nobody is in `current`).
+        task.state = .terminated;
+        scheduler.requestReap(task);
+        try testing.expectEqual(@as(u32, 1), scheduler.statisticsOf().pending_reap);
+        try testing.expectEqual(@as(u32, 1), scheduler.reap());
+        try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().pending_reap);
+    }
+
+    // One slot existed at a time, and the report says so.
+    try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().tasks);
+    try testing.expectEqual(@as(u64, max_tasks + 1), scheduler.statisticsOf().reaped);
+}
+
+test "the slot of a task that a processor runs is not collected" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var kernel_stack: [1024]u8 align(16) = undefined;
+
+    const task = scheduler.spawn(noopEntry, stack[0..], kernel_stack[0..], 0).?;
+    task.state = .running;
+    scheduler.current[0] = task;
+
+    scheduler.terminateCurrent(7);
+
+    // The task is terminated and asks to be collected, but the processor still
+    // holds it: its frame is on that stack, and the slot cannot become another
+    // task while the processor is about to return into it.
+    try testing.expectEqual(State.terminated, task.state);
+    try testing.expectEqual(@as(u64, 7), task.exit_code);
+    try testing.expectEqual(@as(u32, 1), scheduler.statisticsOf().pending_reap);
+    try testing.expectEqual(@as(u32, 0), scheduler.reap());
+    try testing.expectEqual(@as(u32, 1), scheduler.statisticsOf().tasks);
+
+    // The processor leaves it, and the next collection takes it.
+    scheduler.current[0] = null;
+    try testing.expectEqual(@as(u32, 1), scheduler.reap());
+    try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().tasks);
+    try testing.expect(!task.reap_queued);
+}
+
+test "a tick collects the tasks that ended" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_stack: [1024]u8 align(16) = undefined;
+    var second_stack: [1024]u8 align(16) = undefined;
+
+    const survivor = scheduler.spawn(noopEntry, stack[0..], first_stack[0..], 0).?;
+    survivor.state = .running;
+    survivor.quantum = 4;
+    scheduler.current[0] = survivor;
+
+    const ending = scheduler.spawn(noopEntry, stack[0..], second_stack[0..], 0).?;
+    ending.state = .terminated;
+    scheduler.requestReap(ending);
+
+    // The clock is the context that collects: nobody else is running the code
+    // of the task that ended.
+    _ = scheduler.tick(0);
+    try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().pending_reap);
+
+    // The task that ends twice enters the list once; the second request is a
+    // no-op, and the identifier of the collected task is never reused.
+    scheduler.requestReap(ending);
+    try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().pending_reap);
+}
+
+test "the idle task is never collected" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    const idle = scheduler.ensureIdle(0).?;
+    idle.state = .terminated;
+    scheduler.requestReap(idle);
+
+    // The last resort of a processor has to exist for as long as the processor
+    // does: collecting it would leave the queue with nothing to choose on the
+    // first tick that found nothing else.
+    try testing.expectEqual(@as(u32, 0), scheduler.statisticsOf().pending_reap);
+    try testing.expectEqual(@as(u32, 0), scheduler.reap());
+    try testing.expectEqual(@as(u32, 1), scheduler.statisticsOf().tasks);
+}
+
+test "the queue never hands out a task that ended" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_stack: [1024]u8 align(16) = undefined;
+    var second_stack: [1024]u8 align(16) = undefined;
+
+    // A wake enqueues a task that ends before the processor chooses it: the
+    // queue keeps the pointer, and the choice has to skip it instead of
+    // returning a task that no longer runs.
+    const ending = scheduler.spawn(noopEntry, stack[0..], first_stack[0..], 0).?;
+    const alive = scheduler.spawn(noopEntry, stack[0..], second_stack[0..], 0).?;
+
+    scheduler.enqueueReady(ending, 0);
+    scheduler.enqueueReady(alive, 0);
+    ending.state = .terminated;
+
+    try testing.expectEqual(alive, scheduler.dequeueReady(0).?);
+    try testing.expectEqual(@as(u32, 0), scheduler.readyCount(0));
+}
+
+test "an identifier is not reused when a slot goes back to the pool" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_stack: [1024]u8 align(16) = undefined;
+    var second_stack: [1024]u8 align(16) = undefined;
+
+    const first = scheduler.spawn(noopEntry, stack[0..], first_stack[0..], 0).?;
+    const first_id = first.id;
+    first.state = .terminated;
+    scheduler.requestReap(first);
+    _ = scheduler.reap();
+
+    const second = scheduler.spawn(noopEntry, stack[0..], second_stack[0..], 0).?;
+
+    // The storage is the same, because the slot went back to the pool, and the
+    // identity is not: a caller that kept the identifier of the task that ended
+    // would otherwise act on the task that received the slot. The identity of a
+    // task is therefore its identifier, and never its address.
+    try testing.expectEqual(first, second);
+    try testing.expectEqual(first_id + 1, second.id);
+    try testing.expect(second.state == .ready);
+    try testing.expect(!second.reap_queued);
+}
+
+test "a slot that goes back to the pool leaves no queue pointing at it" {
+    resetSchedulerForTest();
+    defer resetSchedulerForTest();
+
+    var stack: [1024]u8 align(16) = undefined;
+    var first_stack: [1024]u8 align(16) = undefined;
+    var second_stack: [1024]u8 align(16) = undefined;
+
+    const ending = scheduler.spawn(noopEntry, stack[0..], first_stack[0..], 0).?;
+    const survivor = scheduler.spawn(noopEntry, stack[0..], second_stack[0..], 0).?;
+
+    // A wake enqueued the task that is now ending. The queue keeps the
+    // pointer, and the pointer is what the slot becomes when it is handed out
+    // again: an entry that stayed would make the new task run twice.
+    scheduler.enqueueReady(ending, 0);
+    scheduler.enqueueReady(survivor, 0);
+    ending.state = .terminated;
+    scheduler.requestReap(ending);
+
+    try testing.expectEqual(@as(u32, 1), scheduler.reap());
+    try testing.expectEqual(@as(u32, 1), scheduler.readyCount(0));
+
+    const replacement = scheduler.spawn(noopEntry, stack[0..], first_stack[0..], 0).?;
+    try testing.expectEqual(replacement, ending);
+
+    // The queue holds the survivor once and the replacement never.
+    try testing.expectEqual(survivor, scheduler.dequeueReady(0).?);
+    try testing.expectEqual(@as(u32, 0), scheduler.readyCount(0));
 }

@@ -97,16 +97,41 @@ jobs:
           fi
           # Fail here, before the suites, when the firmware is missing: the
           # suites would otherwise report it again for every target.
-          if ! ls /usr/share/OVMF/OVMF_CODE*.fd /usr/share/edk2/ovmf/OVMF_CODE*.fd \
-              /usr/share/edk2/x64/OVMF_CODE*.fd >/dev/null 2>&1; then
-            echo "::error title=OVMF firmware missing::qemu-system-x86 is installed but no OVMF_CODE firmware was found; the boot suites did not run."
+          #
+          # The check walks the known pairs and asks for **a** pair that exists,
+          # never for all of them: `ls a b c` fails when any argument is missing,
+          # so a distribution that installs the firmware in one of the paths
+          # would fail this step for the paths it does not use.
+          found=""
+          for pair in \
+              "/usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd" \
+              "/usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd" \
+              "/usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd" \
+              "/usr/share/edk2/ovmf/OVMF_CODE_4M.fd:/usr/share/edk2/ovmf/OVMF_VARS_4M.fd" \
+              "/usr/share/edk2/x64/OVMF_CODE.fd:/usr/share/edk2/x64/OVMF_VARS.fd" \
+              "/usr/share/edk2-ovmf/OVMF_CODE.fd:/usr/share/edk2-ovmf/OVMF_VARS.fd" \
+              "/usr/share/qemu/OVMF_CODE.fd:/usr/share/qemu/OVMF_VARS.fd"; do
+            code="${pair%%:*}"
+            vars="${pair#*:}"
+            if [ -f "$code" ] && [ -f "$vars" ]; then
+              found="$pair"
+              break
+            fi
+          done
+          if [ -z "$found" ]; then
+            echo "::error title=OVMF firmware missing::qemu-system-x86 is installed but no OVMF_CODE/OVMF_VARS pair was found; the boot suites did not run."
             exit 1
           fi
+          echo "OVMF pair: $found"
           qemu-system-x86_64 --version
 
       - name: Build the image
         run: zig build
 
+      # Each suite writes its serial console and a summary into the evidence
+      # directory, on every exit path — including the one where the firmware
+      # was not found. Without it the temporary directory of the script is
+      # removed on exit and the artifact below would be empty.
       - name: Automated boot
         run: zig build qemu-test
 
@@ -123,4 +148,7 @@ jobs:
           name: qemu-logs
           path: docs/validation/logs/
           retention-days: 7
-          if-no-files-found: warn
+          # An empty artifact is a false negative: the run produced no evidence
+          # and the workflow has to say so instead of publishing a directory
+          # that looks like a pass.
+          if-no-files-found: error

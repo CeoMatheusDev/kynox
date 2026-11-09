@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **65%** | Host suite executes and passes (**881 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green), and its QEMU job fails at the dependency install, so no boot suite has ever run |
+| Tests and validation infrastructure | **66%** | Host suite executes and passes (**890 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green); its QEMU job now installs QEMU/OVMF and reaches the boot, and each suite writes its serial console and a summary to an artifact on every exit path — the boot now reaches a real boot and fails on a page fault at 0xfee00020, whose cause was found and fixed (the process spaces were created before the local APIC was mapped) — the fix has not been retested in the CI yet |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -80,7 +80,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - zig build check runs unit, boot and storage checks. The interactive QEMU check is separate: zig build qemu-interactive-test.
 - ACPI/MADT is consumed at boot: the LAPIC base and the IOAPIC list come from the table, with validation and a logged fallback to `0xFEE00000`. The I/O APIC redirection entries for IRQ0 (PIT) and IRQ1 (keyboard) are programmed **masked**, with the GSI/polarity/trigger taken from the interrupt source overrides; delivery still comes from the 8259, and the `-Dioapic-delivery=true` option that switches it has never been booted. No interrupt has been observed through the I/O APIC, and the path has never run in a VM (audit A-03, resolved in part; see docs/specs/acpi-platform.md).
 - The system version has a single source (`VERSION` → `version.zig`, mirrored in `build.zig.zon`, guarded by `version-tests`) and the native ABI has one revision (`shared/syscall_abi.zig`, revision 1), aliased by the kernel and the SDK and checked by `abi-conformance-tests`. That closes audit A-01 and the A-04 inconsistency; it does **not** make the ABI stable, because the door has never executed in a VM. The generation name is derived from the major, never typed by hand.
-- There is no CI, and no QEMU result has been recorded in the repository. Only the host build and host test suite have executed evidence (see below). The three QEMU targets were attempted on 2026-10-31 and all stop at "no OVMF firmware found"; the procedure and the attempt table are in docs/validation/qemu.md.
+- The CI workflow exists (`.github/workflows/ci.yml`): its `build and host tests` job passes on GitHub Actions, and its `runtime` job has never run the boot suites to completion. No QEMU result has been recorded in the repository, so only the host build and host test suite have executed evidence (see below). The three QEMU targets were attempted on 2026-10-31 and all stop at "no OVMF firmware found"; the procedure and the attempt table are in docs/validation/qemu.md. The firmware check of the runtime job was itself broken until 2026-11-08, and so was the evidence path: the suites removed their temporary directory and wrote nothing to the place the workflow published, so the artifact was always empty — both are fixed, and `--evidence-dir` is documented in `docs/validation/qemu.md` §3a. See `docs/audits/2026-11-08-task-slot-reaper.md` §9 and §10.
 
 ## What's already in the tree
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (881) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (890) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 52/52 steps, **881/881 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator) |
+| `zig build test` | success — 52/52 steps, **890/890 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator → 888 with the task-slot reaper → 890 with the device page shared with a process space) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

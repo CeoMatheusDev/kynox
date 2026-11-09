@@ -13,21 +13,67 @@
 # The test is part of the automated pipeline: `zig build qemu-test`.
 #
 # Usage: qemu-interactive-test.sh --image=<path> [--timeout=<seconds>]
+#        [--evidence-dir=<path>]
+#
+# `--evidence-dir` keeps the serial console and a summary of the run; without
+# it the script is self-contained and removes its temporary directory.
 
 set -euo pipefail
 
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
+
 IMAGE=""
 TIMEOUT=60
+EVIDENCE_DIR=""
 EDGES=false
 STRESS=false
 BOUNDS=false
 BURST=false
 BURST_COUNT=16
 
+preserve_evidence() {
+    local status="$1"
+    [[ -n "$EVIDENCE_DIR" ]] || return 0
+    {
+        echo "kynox interactive graphics test — evidence"
+        echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "result: $([ "$status" -eq 0 ] && echo pass || echo fail) (exit status $status)"
+        echo "duration_seconds: $(( SECONDS - STARTED_AT ))"
+        echo "timeout_seconds: $TIMEOUT"
+        echo "image: $IMAGE"
+        echo "firmware_code: ${OVMF_CODE_PATH:-not found}"
+        echo "firmware_vars: ${OVMF_VARS_PATH:-not found}"
+        echo "qemu: $(command -v qemu-system-x86_64 2>/dev/null || echo 'not found')"
+        echo "qemu_status: $QEMU_STATUS_TEXT"
+    } >"$EVIDENCE_DIR/summary.txt"
+    if [[ -n "$SERIAL_LOG" && -f "$SERIAL_LOG" ]]; then
+        cp "$SERIAL_LOG" "$EVIDENCE_DIR/serial.log"
+    fi
+    if [[ "$status" -ne 0 && -f "$EVIDENCE_DIR/serial.log" ]]; then
+        echo "qemu-interactive-test: the serial console is in $EVIDENCE_DIR/serial.log" >&2
+        tail -n 20 "$EVIDENCE_DIR/serial.log" >&2 || true
+    fi
+    return 0
+}
+
+on_exit() {
+    local status=$?
+    ci_annotate_failed_exit "$status" "interactive graphics: the run stopped" \
+        "$(tail -n 12 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true)"
+    preserve_evidence "$status"
+    [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"
+    return 0
+}
+trap on_exit EXIT
+
 for argument in "$@"; do
     case "$argument" in
         --image=*) IMAGE="${argument#--image=}" ;;
         --timeout=*) TIMEOUT="${argument#--timeout=}" ;;
+        --evidence-dir=*) EVIDENCE_DIR="${argument#--evidence-dir=}" ;;
         --edges) EDGES=true ;;
         --stress) STRESS=true ;;
         --bounds) BOUNDS=true ;;
@@ -39,6 +85,22 @@ for argument in "$@"; do
             ;;
     esac
 done
+
+# The evidence directory is created as soon as the arguments are known, so an
+# environment without firmware still leaves the summary that says so. Every
+# variable that `preserve_evidence` reads exists from here on, and the routine
+# tolerates every file being absent.
+STARTED_AT=$SECONDS
+WORK_DIRECTORY=""
+SERIAL_LOG=""
+QEMU_STATUS_TEXT="not started"
+
+if [[ -n "$EVIDENCE_DIR" ]]; then
+    if ! mkdir -p "$EVIDENCE_DIR"; then
+        echo "qemu-interactive-test: cannot create the evidence directory $EVIDENCE_DIR" >&2
+        exit 2
+    fi
+fi
 
 if ! [[ "$BURST_COUNT" =~ ^(16|64|128|256)$ ]]; then
     echo "qemu-interactive-test: --burst-count must be 16, 64, 128 or 256" >&2
@@ -142,6 +204,9 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
     done
     echo "qemu-boot-test: the roots searched were: ${OVMF_SEARCH_ROOTS[*]}" >&2
     echo "qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware" >&2
+    ci_annotate_error \
+        "interactive graphics: no OVMF firmware" \
+        "the suite did not run: no OVMF_CODE/OVMF_VARS pair was found under ${OVMF_SEARCH_ROOTS[*]}"
     exit 2
 fi
 
@@ -151,7 +216,6 @@ OVMF_VARS_FORMAT="$(format_of "$OVMF_VARS_PATH")"
 
 # --- interactive run --------------------------------------------------------
 WORK_DIRECTORY="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIRECTORY"' EXIT
 cp "$OVMF_VARS_PATH" "$WORK_DIRECTORY/vars.fd"
 SERIAL_LOG="$WORK_DIRECTORY/serial.log"
 MONITOR_SOCKET="$WORK_DIRECTORY/monitor.sock"
@@ -165,15 +229,21 @@ qemu-system-x86_64 \
     -monitor "unix:$MONITOR_SOCKET,server=on,wait=off" \
     -display none -no-reboot >/dev/null 2>&1 &
 QEMU_PID=$!
-cleanup_qemu() {
+# The console is preserved before the emulator is stopped and the temporary
+# directory is removed: after `rm -rf` there is nothing left to copy.
+cleanup_and_preserve() {
+    local status="$1"
+    preserve_evidence "$status"
     kill "$QEMU_PID" 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
+    rm -rf "$WORK_DIRECTORY"
 }
-trap 'cleanup_qemu; rm -rf "$WORK_DIRECTORY"' EXIT
+trap 'cleanup_and_preserve $?' EXIT
 
 # The script injects I during boot, then RIGHT only after the persistent
 # loop marker. This distinguishes the permanent loop from the boot pump.
-if ! python3 - "$SERIAL_LOG" "$MONITOR_SOCKET" "$QEMU_PID" "$TIMEOUT" "$WORK_DIRECTORY" "$EDGES" "$STRESS" "$BOUNDS" "$BURST" "$BURST_COUNT" <<'PY'
+MONITOR_LOG="$WORK_DIRECTORY/monitor.out"
+if ! python3 - "$SERIAL_LOG" "$MONITOR_SOCKET" "$QEMU_PID" "$TIMEOUT" "$WORK_DIRECTORY" "$EDGES" "$STRESS" "$BOUNDS" "$BURST" "$BURST_COUNT" <<'PY' 2>&1 | tee "$MONITOR_LOG"
 import os
 import re
 import socket
@@ -565,6 +635,15 @@ PY
 then
     echo "----- serial console -----"
     cat "$SERIAL_LOG"
+    # The reason the interaction stopped is in the last line that the python
+    # monitor printed, and that line is what the annotation carries.
+    monitor_reason="$(tail -n 1 "$MONITOR_LOG" 2>/dev/null || true)"
+    ci_annotate_error \
+        "interactive graphics: the interaction did not complete" \
+        "${monitor_reason:-the monitor printed no reason}
+
+end of the serial console:
+$(tail -n 12 "$SERIAL_LOG" 2>/dev/null || true)"
     exit 1
 fi
 echo "qemu-interactive-test: all checks passed"

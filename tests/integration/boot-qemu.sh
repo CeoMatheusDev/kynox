@@ -13,20 +13,33 @@
 # The test is part of the automated pipeline: `zig build qemu-test`.
 #
 # Usage:
-#   boot-qemu.sh --image=<path> [--timeout=<seconds>]
+#   boot-qemu.sh --image=<path> [--timeout=<seconds>] [--evidence-dir=<path>]
 #   boot-qemu.sh --verify-kvdi-log=<path>
+#
+# `--evidence-dir` preserves what the run produced: the serial console, the
+# standard error of the emulator, the screenshot and a summary. Without it the
+# run is self-contained and leaves nothing behind, which is what a developer
+# wants and what the CI cannot afford: a failed boot that leaves no console is
+# a report nobody can act on, and the artifact of the workflow would be empty.
 
 set -euo pipefail
+
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
 
 IMAGE=""
 TIMEOUT=60
 VERIFY_KVDI_LOG=""
+EVIDENCE_DIR=""
 
 for argument in "$@"; do
     case "$argument" in
         --image=*) IMAGE="${argument#--image=}" ;;
         --timeout=*) TIMEOUT="${argument#--timeout=}" ;;
         --verify-kvdi-log=*) VERIFY_KVDI_LOG="${argument#--verify-kvdi-log=}" ;;
+        --evidence-dir=*) EVIDENCE_DIR="${argument#--evidence-dir=}" ;;
         *)
             echo "qemu-boot-test: unknown argument: $argument" >&2
             exit 2
@@ -35,6 +48,85 @@ for argument in "$@"; do
 done
 
 FAILURES=0
+
+# The evidence directory and the summary are set up before anything can
+# refuse to run: an environment without firmware is a result, and it is the
+# one that a CI artifact has to carry. The variables that the summary reads
+# exist from here on; `preserve_evidence` tolerates every file being absent.
+STARTED_AT=$SECONDS
+WORK_DIRECTORY=""
+SERIAL_LOG=""
+QEMU_ERROR_LOG=""
+SCREENSHOT=""
+QEMU_STATUS_TEXT="not started"
+
+if [[ -n "$EVIDENCE_DIR" ]]; then
+    if ! mkdir -p "$EVIDENCE_DIR"; then
+        echo "qemu-boot-test: cannot create the evidence directory $EVIDENCE_DIR" >&2
+        exit 2
+    fi
+fi
+
+# Copies what the run produced into `--evidence-dir`, and writes the summary.
+#
+# The trap runs on **every** exit path — an early environment error, a failed
+# check, a timeout, a clean pass — and `$1` is the status of whatever ended the
+# script. The summary is written first, so it exists even when the run produced
+# no console at all: that is the case in which the evidence matters most.
+preserve_evidence() {
+    local status="$1"
+    [[ -n "$EVIDENCE_DIR" ]] || return 0
+
+    {
+        echo "kynox boot test — evidence"
+        echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "result: $([ "$status" -eq 0 ] && echo pass || echo fail) (exit status $status)"
+        echo "duration_seconds: $(( SECONDS - STARTED_AT ))"
+        echo "timeout_seconds: $TIMEOUT"
+        echo "image: $IMAGE"
+        echo "firmware_code: ${OVMF_CODE_PATH:-not found}"
+        echo "firmware_vars: ${OVMF_VARS_PATH:-not found}"
+        echo "qemu: $(command -v qemu-system-x86_64 2>/dev/null || echo 'not found')"
+        echo "qemu_status: $QEMU_STATUS_TEXT"
+        echo "checks_failed: $FAILURES"
+        local check
+        for check in "${FAILED_CHECKS[@]+"${FAILED_CHECKS[@]}"}"; do
+            echo "failed_check: $check"
+        done
+    } >"$EVIDENCE_DIR/summary.txt"
+
+    if [[ -n "$SERIAL_LOG" && -f "$SERIAL_LOG" ]]; then
+        cp "$SERIAL_LOG" "$EVIDENCE_DIR/serial.log"
+    fi
+    if [[ -n "$QEMU_ERROR_LOG" && -f "$QEMU_ERROR_LOG" ]]; then
+        cp "$QEMU_ERROR_LOG" "$EVIDENCE_DIR/qemu.stderr"
+    fi
+    if [[ -n "$SCREENSHOT" && -f "$SCREENSHOT" ]]; then
+        cp "$SCREENSHOT" "$EVIDENCE_DIR/presentation.ppm"
+    fi
+
+    # The diagnostics of the failure are repeated in the step log because the
+    # annotation that the CI publishes carries only the tail of it.
+    if [[ "$status" -ne 0 && -f "$EVIDENCE_DIR/serial.log" ]]; then
+        echo "qemu-boot-test: the serial console is in $EVIDENCE_DIR/serial.log" >&2
+        tail -n 20 "$EVIDENCE_DIR/serial.log" >&2 || true
+    fi
+    return 0
+}
+
+# The status of whatever ended the script is read once, in the first line of
+# the trap: a command in the middle of it would replace `$?` with its own.
+# The safety net runs before the evidence is preserved, because it reads the
+# console that the evidence is about to copy.
+on_exit() {
+    local status=$?
+    ci_annotate_failed_exit "$status" "QEMU boot: the run stopped" \
+        "$(tail -n 12 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true)"
+    preserve_evidence "$status"
+    [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"
+    return 0
+}
+trap on_exit EXIT
 
 # Nomes dos checks que falharam, na ordem em que falharam.
 #
@@ -313,6 +405,9 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
     done
     echo "qemu-boot-test: the roots searched were: ${OVMF_SEARCH_ROOTS[*]}" >&2
     echo "qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware" >&2
+    ci_annotate_error \
+        "QEMU boot: no OVMF firmware" \
+        "the boot suite did not run: no OVMF_CODE/OVMF_VARS pair was found under ${OVMF_SEARCH_ROOTS[*]}"
     exit 2
 fi
 
@@ -322,6 +417,9 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "qemu-boot-test: qemu-system-x86_64 is not installed" >&2
     echo "qemu-boot-test: firmware found at $OVMF_CODE_PATH" >&2
     echo "qemu-boot-test: install QEMU (qemu-system-x86_64) and run again" >&2
+    ci_annotate_error \
+        "QEMU boot: emulator missing" \
+        "qemu-system-x86_64 is not installed; the firmware was found at $OVMF_CODE_PATH"
     exit 3
 fi
 
@@ -331,8 +429,6 @@ OVMF_VARS_FORMAT="$(format_of "$OVMF_VARS_PATH")"
 # --- run --------------------------------------------------------------------
 
 WORK_DIRECTORY="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIRECTORY"' EXIT
-
 SERIAL_LOG="$WORK_DIRECTORY/serial.log"
 QEMU_ERROR_LOG="$WORK_DIRECTORY/qemu.stderr"
 SCREENSHOT="$WORK_DIRECTORY/presentation.ppm"
@@ -515,6 +611,7 @@ done
 kill "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null
 QEMU_STATUS=$?
+QEMU_STATUS_TEXT="$QEMU_STATUS (0, 124 and 143 are the expected terminations)"
 set -e
 
 # The termination of the emulator is the expected outcome: the kernel
@@ -851,6 +948,18 @@ if [[ $FAILURES -ne 0 ]]; then
     else
         echo "qemu-boot-test: the console has no PCI, VirtIO or KVDI probe lines" >&2
     fi
+    # The annotation is the channel that survives a network that cannot read
+    # the step log. It carries the failed checks and the tail of the console,
+    # which is what a reader needs to see the diagnosis without the artifact.
+    ci_annotation="$(printf '%s\n' "${FAILED_CHECKS[@]}")"
+    console_tail="$(tail -n 12 "$SERIAL_LOG" 2>/dev/null || true)"
+    ci_annotate_error \
+        "QEMU boot: $FAILURES check(s) failed" \
+        "failed checks:
+$ci_annotation
+
+end of the serial console:
+${console_tail:-<no console>}"
     exit 1
 fi
 

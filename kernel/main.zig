@@ -787,9 +787,24 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
     // the program is copied through them, and the tables of the firmware
     // would place the copy in another physical page.
     installUserTask();
+
+    // The address spaces of the processes are created after the platform is
+    // installed, because `createAddressSpace` copies the upper levels of the
+    // tables and a block the kernel describes afterwards is not in the copy.
+    //
+    // The local APIC is the case that the CI found: `installSmp` maps it, and
+    // a process created before that map faults on 0xfee00020 — the register
+    // of the APIC identifier — the first time the kernel reads its own id with
+    // that space active. The boot reported it as an exception in kernel mode,
+    // which is fatal, and the boot stopped there.
+    //
+    // The same rule is written in `buildPageTables` for the DMA window and in
+    // `installMmioWindow` for the MMIO window; this is where the spaces are
+    // created, and the order here is the one the rule demands.
     installNativeProcess();
     installToolchainProcess();
     installClientProcess();
+
     // The system call of the user mode does not go through the interrupt
     // table: the instruction `syscall` reads the entry point and the
     // segments from the registers of model.
@@ -816,6 +831,11 @@ export fn kynox_kmain(boot: *const handoff.BootHandoff) callconv(.c) noreturn {
 
     // M0.5: inicializa as fundacoes de SMP: APIC local, timer local por CPU
     // e pilhas dos APs. Inicia os APs via SIPI.
+    //
+    // It runs after the address spaces of the processes exist, and it has to:
+    // the local APIC is mapped here, and every space created before this point
+    // would be missing the page. See the comment where the processes are
+    // created.
     installSmp();
     installIoApic();
     smp.startAps();
@@ -2447,6 +2467,24 @@ fn readVirtioCapability(
 
     return kvdi.caps.parse(body[0..length]);
 }
+
+// The order of the boot is a contract of the page tables, and this comment is
+// where it is written down:
+//
+//   * everything the kernel maps **before** `createAddressSpace` runs is in
+//     every space, because the space copies the tables of the kernel;
+//   * everything it maps **afterwards** is in the tables of the kernel only,
+//     and a process that touches it faults in kernel mode — which the kernel
+//     reports as fatal.
+//
+// The DMA window and the MMIO window avoid the second case by reserving their
+// tables while the kernel describes nothing else. The local APIC is mapped by
+// `installSmp`, and that is why the address spaces of the processes are
+// created after it: the CI found the violation as a page fault on 0xfee00020,
+// the register of the APIC identifier, with the space of a process active.
+//
+// A boot that has to map a device after the spaces exist uses
+// `mapDevicePageIn`, which completes the chain in each space.
 
 /// Builds the page tables of the kernel.
 ///
@@ -5421,6 +5459,16 @@ fn reportScheduler() void {
         average,
         statistics.minimum_switch_cycles,
         statistics.last_switch_cycles,
+    });
+    // The slots of the tasks that ended: how many went back to the pool, and
+    // how many are waiting for a processor to collect them. A pending count
+    // that does not come back to zero is a task whose slot cannot be handed
+    // out again, and the 32 tasks that bound the scheduler would be the whole
+    // life of the machine.
+    serial.printLine("[KNK] tasks: {d} slots reaped, {d} pending, {d} exist", .{
+        statistics.reaped,
+        statistics.pending_reap,
+        statistics.tasks,
     });
     // The state lock of the scheduler: how often it was needed, and how deep
     // the nested calls of one decision went. A contention of zero on a

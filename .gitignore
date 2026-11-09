@@ -6,3 +6,12 @@ pid
 
 # Local, non-reproducible tool downloads (QEMU/OVMF provisioning)
 .tools/
+
+# Console and summary written by the QEMU suites (`-Devidence-dir`). The CI
+# uploads them as an artifact; they are evidence of one run, not of the tree,
+# and they are large. docs/validation/logs/ keeps only the records that a
+# human wrote into it.
+docs/validation/logs/*.log
+docs/validation/logs/*.stderr
+docs/validation/logs/*.ppm
+docs/validation/logs/summary.txt

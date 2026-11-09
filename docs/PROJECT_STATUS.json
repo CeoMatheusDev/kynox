@@ -14,7 +14,7 @@
     "policy": "docs/VERSIONING.md",
     "tag_created": false
   },
-  "snapshot_date": "2026-11-01",
+  "snapshot_date": "2026-11-08",
   "audit_type": "source_tree_review_plus_executed_build_and_host_tests_plus_implementation_of_audit_defects_that_need_no_hypervisor",
   "toolchain": {
     "zig_version": "0.17.0",
@@ -57,12 +57,12 @@
     {
       "command": "zig build",
       "result": "success: image written (kynox-boot.efi 185344 B, kynox.img 128 MiB / 32731 clusters)",
-      "date": "2026-11-01"
+      "date": "2026-11-08"
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 881/881 tests passed (24 test artifacts; task-tests 72 covers the lock, the policy, the scheduler, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; ipc 9; docs-conformance 24; arch-tests 212, including the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
-      "date": "2026-11-01"
+      "result": "success: 52/52 steps, 890/890 tests passed (24 test artifacts; task-tests 79 covers the lock, the policy, the scheduler, the slot reaper, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; arch-tests 214, including the device-page-in-space suite, the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
+      "date": "2026-11-08"
     },
     {
       "command": "zig test kernel/task_root.zig --test-filter task.scheduler.test. (host, Zig 0.17.0)",
@@ -72,7 +72,7 @@
     {
       "command": "zig build docs-check",
       "result": "success: every relative link resolves and every document is classified in docs/ai/doc-index.json (75 documents)",
-      "date": "2026-11-01"
+      "date": "2026-11-08"
     },
     {
       "command": "zig build qemu-test",
@@ -342,13 +342,13 @@
         "a driver that asks for a vector, installs its handler and records an MSI or an MSI-X arriving"
       ],
       "tests": [
-        "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
+        "arch-tests (214 tests: segment, frame, paging, space-shared device page, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
+          "arch-tests (214 tests: segment, frame, paging, space-shared device page, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
         ],
         "commands": [
           "zig build test"
@@ -413,7 +413,8 @@
         "releaseUserPages detaches the window entries and returns only the owned frames, through an injected release callback (the architecture layer no longer imports the memory manager)",
         "destroyAddressSpaceReal returns the frames, clears the root/PDPT/PD/PT, forgets the active space and frees the slot",
         "address-space slot reuse with a per-slot generation; spaceByIdentity(id, generation) refuses a stale identity; liveSpaceCount/spaces_created expose the state",
-        "an unmap asks every other processor to drop the translation: paging.installRemoteFlush installs a hook (the boot installs smp.flushRemotePage), so the page tables keep no dependency on the APIC and the host tests run with no hook at all"
+        "an unmap asks every other processor to drop the translation: paging.installRemoteFlush installs a hook (the boot installs smp.flushRemotePage), so the page tables keep no dependency on the APIC and the host tests run with no hook at all",
+        "`paging.mapDevicePageIn(space, virtual, physical)` completes a device mapping in a process space created before the kernel mapped the page: it shares the block the way the kernel describes it, and refuses the private window of the process (`NotKernelRange`) and a page the kernel does not map (`NotMapped`)"
       ],
       "limitations": [
         "no general VM region allocator",
@@ -466,7 +467,8 @@
         "MSI-X capability decoded (kernel/arch/x86_64/msix.zig): the table size is the field plus one, the table and the PBA are located by BIR and offset, a 16-byte entry carries one vector, entries start masked and are unmasked one at a time, and the enable order fills the table while the function is masked before enabling it",
         "the kernel keeps its vectors to itself: a device may only be given a vector from 68 up, and the boot reports the candidate message (and programs it only with -Dmsi-delivery=true, because enabling MSI disables INTx of the function)",
         "LAPIC xAPIC register access, EOI, TPR and IPI primitives",
-        "a device vector is deliverable before it is programmable: the boot installs an IDT gate for every vector of 68..254 from the stub table, and the registry gives each of those vectors an owner or counts it as unhandled instead of dispatching it to a guess"
+        "a device vector is deliverable before it is programmable: the boot installs an IDT gate for every vector of 68..254 from the stub table, and the registry gives each of those vectors an owner or counts it as unhandled instead of dispatching it to a guess",
+        "the boot creates the process spaces after `installSmp`, so the local APIC mapping is in every space; the CI found the violation as a kernel-mode page fault on 0xfee00020 (the local APIC identifier register) with a process space active"
       ],
       "limitations": [
         "delivery of hardware interrupts still comes from the 8259 unless the build option ioapic-delivery=true is set, and that option has never been booted",
@@ -571,7 +573,7 @@
     },
     {
       "id": "scheduler",
-      "maturity_percent": 83,
+      "maturity_percent": 84,
       "status": "in_progress",
       "evidence": [
         "kernel/task/scheduler.zig",
@@ -606,7 +608,8 @@
         "adoptKernelTask: an AP that arrives from the trampoline gets a kernel task of its own (ring 0, its own stack, state running) and becomes current[CPU], so prepareNext has a context to save instead of returning before it reads the queue",
         "rescheduleCurrent: the handler of the reschedule IPI decides without counting a tick and without charging the slice (decideNext(forced)), so a timeout never depends on another CPU and a task's quantum never shrinks because somebody asked a question",
         "migrateTo: moves a task to the queue of another CPU (refusing a running task, a terminated one, an id above max_cpus and a move to the current owner), which is the only way a task reaches a processor other than the one that created it",
-        "wakeTask queues the awakened task on the CPU that owns it and requests a reschedule of that CPU when it is another one, instead of silently migrating it to the waker's queue"
+        "wakeTask queues the awakened task on the CPU that owns it and requests a reschedule of that CPU when it is another one, instead of silently migrating it to the waker's queue",
+        "the slot of a task that ended goes back to the pool: `requestReap` (from `terminateCurrent` and `killCurrent`) puts the task in an intrusive list that lives in the slot itself, and `reap` — run from the tick, never from the task being collected — releases it, with the ready queues purged first so a pointer to the slot cannot become the next task; a slot stays out while a CPU is running it or while the canary of its kernel stack does not hold, and `allocate` reuses the first hole"
       ],
       "limitations": [
         "effectively BSP-centric: no AP has ever run, so the lock is never contended in the kernel (it is contended on the host by four threads)",
@@ -625,7 +628,8 @@
         "a machine to observe the halt and an IPI being delivered",
         "a user of the mutex in the kernel",
         "reader/writer lock and condition variable on the same queue",
-        "per-CPU run queues with a migration protocol"
+        "per-CPU run queues with a migration protocol",
+        "the reaper has never run on a machine, there is no join/wait, and the address space of a user process that ends is never destroyed (`process.reapFull` exists and no boot path calls it)"
       ],
       "tests": [
         "task-tests (72)",
@@ -642,9 +646,9 @@
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-11-01",
+        "last_run": "2026-11-08",
         "runtime_evidence": "none_in_this_environment",
-        "notes": "the policy, the lock, the queue, the mutex and the scheduler state machine are executed on the host; the context switch itself has never run here, no two processors ever contend in the kernel, and the halt of the idle task has never executed"
+        "notes": "host tests executed on 2026-11-08; the reaper has no runtime evidence"
       }
     },
     {
@@ -1517,7 +1521,7 @@
     },
     {
       "id": "tests_validation",
-      "maturity_percent": 65,
+      "maturity_percent": 66,
       "status": "in_progress",
       "evidence": [
         "build.zig",
@@ -1525,23 +1529,27 @@
         "kernel/"
       ],
       "implemented": [
-        "24 host test artifacts, 868 tests, in zig build test",
+        "24 host test artifacts, 888 tests, in zig build test",
         "QEMU boot, two-boot storage and interactive scripts with 117 marker/pattern assertions",
         "framebuffer and presentation comparison scripts",
         "conformance artifacts: syscall ABI vs spec, system version vs manifest",
         "documented QEMU procedure and recorded attempt table (docs/validation/qemu.md)",
         "the architecture test artifact compiles again: an unnamed inline-assembly operand (fpu.zig) and an out-of-module import (paging.zig) had removed paging/ACPI/SMP/PCI tests from the suite",
-        "868 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area, +10 for the MSI capability, +8 for the MSI-X table)",
+        "888 tests measured with a fresh cache (736 after the architecture artifact was restored, +12 for the scheduler policy, +33 for the wait queue, the mutex and the policy split, +7 for the channel integration and the documentation guards, +12 for the state lock and the generic blocking primitive, +6 for the per-CPU segment and the idle task, +9 for the AP trampoline, +6 for the CPU ownership, +7 for the reschedule IPI and the migration, +9 for the TLB shootdown and its mailbox, +4 for the clock of each processor, +4 for the halt IPI and the fatal path, +5 for the extended BIOS data area, +10 for the MSI capability, +8 for the MSI-X table, +5 for the device vector space, +8 for the vector allocator, +7 for the task-slot reaper)",
         "the task subsystem is part of the suite (kernel/task_root.zig, artifact task-tests, 72 tests); the ipc artifact is filtered to its own channel tests so a module imported by two artifacts is not counted twice",
         "three dead files deleted (arch/x86_64/elf_compat.zig, fs/dir_entry.zig, fs/test_ramfs_runner.zig) and a fourth one (tests/wait_lifecycle_regression.zig) deleted because its assertions had become false",
-        "a machine-readable index of the documentation (docs/ai/doc-index.json, 73 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test"
+        "a machine-readable index of the documentation (docs/ai/doc-index.json, 73 documents) with an authority per document, generated by tools/scripts/gen-doc-index.py and verified by zig build test",
+        "the CI workflow is real: `build and host tests` passed on GitHub Actions (PR #4, run 41338112056), and the firmware check of the runtime job stopped using `ls` over seven paths — `ls` fails when any argument is missing, so the job reported \"OVMF firmware missing\" on every distribution that installs the pair in one of the paths",
+        "the three QEMU suites write their serial console, the emulator stderr, the screenshot and a summary to `--evidence-dir` (default `docs/validation/logs`, the path the workflow publishes) on every exit path, including a missing firmware or a missing emulator; before 2026-11-08 they removed their temporary directory and wrote nothing there, so the CI artifact was always empty (807 bytes in the run of PR #5)",
+        "the workflow artifact fails instead of succeeding empty (`if-no-files-found: error`), and the files of a run are ignored by Git"
       ],
       "limitations": [
         "no CI",
         "no recorded QEMU result in the repository",
         "six files unreachable from any target",
         "no fuzzing",
-        "no hardware matrix"
+        "no hardware matrix",
+        "the runtime job has never passed a boot assertion: it reached the boot on 2026-11-08 and failed after 18 minutes, and the cause is not recorded because the step log and the artifact live on hosts this environment cannot reach"
       ],
       "pending_work": [
         "run and record the QEMU suites",
@@ -1560,7 +1568,7 @@
         "commands": [
           "zig build test"
         ],
-        "last_run": "2026-11-01",
+        "last_run": "2026-11-08",
         "runtime_evidence": "none_in_this_environment",
         "notes": "host tests executed on 2026-11-01; no runtime evidence"
       }
@@ -1691,7 +1699,7 @@
     {
       "id": "A-11",
       "severity": "P3",
-      "summary": "no CI configuration",
+      "summary": "CI configuration exists and the host job passes (PR #4, run 41338112056); the runtime job never passed, and its firmware check was broken (`ls` with several paths fails when any is missing) — fixed on 2026-11-08; 2026-11-08: the runtime job now installs the dependencies and reaches the boot suite",
       "status": "open"
     },
     {
@@ -1703,13 +1711,13 @@
     {
       "id": "A-13",
       "severity": "P3",
-      "summary": "eight files unreachable from the build graph and scripts",
+      "summary": "files unreachable from the build graph; 2026-11-08: still open for the eight `tests/*_regression.zig` artifacts, which Zig refuses anyway (a `@import` outside the module path and a `///` attached to a `test`)",
       "status": "open"
     },
     {
       "id": "A-14",
       "severity": "P3",
-      "summary": "no recorded QEMU result anywhere in the repository",
+      "summary": "no recorded QEMU result anywhere in the repository; 2026-11-08: the runtime job installs QEMU/OVMF and reaches the boot, and the suites now leave evidence in the artifact (serial console + summary) on every exit path — the run failed and its cause is still unread",
       "status": "open"
     },
     {
@@ -1763,8 +1771,8 @@
     {
       "id": "K-01",
       "severity": "P1",
-      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, blockCurrentOn gives the mutex its blocking primitive, the idle task is created at boot and chosen only when nothing else can run, and the segment of the CPU (rsp0, ist1, its own table) is installed by the entry of an AP. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the trampoline is now published below 1 MiB, INIT/SIPI are sent, the AP enters the scheduler with a task of its own and a reschedule IPI can wake it with work, but no AP has answered, no IPI has been delivered and the idle task has never halted here",
-      "status": "partially_closed"
+      "summary": "the scheduler had no synchronisation and no tests. Closed for the code: a state lock with per-CPU ownership is taken by every entry point and released on every path (host tests, including four threads contending), the policy is a pure module with its own tests, blockCurrentOn gives the mutex its blocking primitive, the idle task is created at boot and chosen only when nothing else can run, and the segment of the CPU (rsp0, ist1, its own table) is installed by the entry of an AP. Open for the evidence: no AP has ever run, so no two processors contend in the kernel; the trampoline is now published below 1 MiB, INIT/SIPI are sent, the AP enters the scheduler with a task of its own and a reschedule IPI can wake it with work, but no AP has answered, no IPI has been delivered and the idle task has never halted here; 2026-11-08: the task-slot leak is closed in code — `Scheduler.reap` hands the slot of a terminated task back to the pool and the ready queues are purged before the slot is reused, with seven host tests; still open for the evidence: no AP, no IPI, no reaper run",
+      "status": "open"
     },
     {
       "id": "K-02",

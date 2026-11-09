@@ -9,18 +9,60 @@
 
 set -euo pipefail
 
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
+
 IMAGE=""
 BOOT_TIMEOUT=120
+EVIDENCE_DIR=""
 for arg in "$@"; do
     case "$arg" in
         --image=*) IMAGE="${arg#--image=}" ;;
         --timeout=*) BOOT_TIMEOUT="${arg#--timeout=}" ;;
+        --evidence-dir=*) EVIDENCE_DIR="${arg#--evidence-dir=}" ;;
         *) echo "virtio-block-test: unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
-[[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "virtio-block-test: --image is required" >&2; exit 2; }
-command -v qemu-system-x86_64 >/dev/null || { echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
-command -v timeout >/dev/null || { echo "virtio-block-test: timeout(1) is unavailable" >&2; exit 2; }
+# The evidence of a refusal to run is a result too: an environment without the
+# emulator is what the workflow artifact has to show, not an empty directory.
+STARTED_AT=$SECONDS
+WORK=""
+OVMF_CODE_PATH=""
+OVMF_VARS_PATH=""
+serial_summary() {
+    local status="$1"
+    [[ -n "$EVIDENCE_DIR" ]] || return 0
+    {
+        echo "kynox VirtIO Block persistence test — evidence"
+        echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "result: $([ "$status" -eq 0 ] && echo pass || echo fail) (exit status $status)"
+        echo "duration_seconds: $(( SECONDS - STARTED_AT ))"
+        echo "boot_timeout_seconds: $BOOT_TIMEOUT"
+        echo "image: $IMAGE"
+        echo "firmware_code: ${OVMF_CODE_PATH:-not found}"
+        echo "firmware_vars: ${OVMF_VARS_PATH:-not found}"
+        echo "qemu: $(command -v qemu-system-x86_64 2>/dev/null || echo 'not found')"
+        local stage
+        for stage in boot1 boot2; do
+            if [[ -n "$WORK" && -f "$WORK/$stage.serial" ]]; then
+                cp "$WORK/$stage.serial" "$EVIDENCE_DIR/$stage.serial"
+            fi
+            if [[ -n "$WORK" && -f "$WORK/$stage.qemu.err" ]]; then
+                cp "$WORK/$stage.qemu.err" "$EVIDENCE_DIR/$stage.qemu.stderr"
+            fi
+        done
+    } >"$EVIDENCE_DIR/summary.txt"
+    return 0
+}
+if [[ -n "$EVIDENCE_DIR" ]] && ! mkdir -p "$EVIDENCE_DIR"; then
+    echo "virtio-block-test: cannot create the evidence directory $EVIDENCE_DIR" >&2
+    exit 2
+fi
+[[ -n "$IMAGE" && -f "$IMAGE" ]] || { serial_summary 2; echo "virtio-block-test: --image is required" >&2; exit 2; }
+command -v qemu-system-x86_64 >/dev/null || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: emulator missing" "qemu-system-x86_64 is not installed"; echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
+command -v timeout >/dev/null || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: timeout(1) missing" "the suite cannot bound the boot without timeout(1)"; echo "virtio-block-test: timeout(1) is unavailable" >&2; exit 2; }
 
 OVMF_PAIRS=(
     "${OVMF_CODE:-}:${OVMF_VARS:-}"
@@ -55,21 +97,29 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
         break
     done
 fi
-[[ -n "$OVMF_CODE_PATH" ]] || { echo "virtio-block-test: no OVMF CODE/VARS pair found" >&2; exit 2; }
+[[ -n "$OVMF_CODE_PATH" ]] || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: no OVMF firmware" "no OVMF_CODE/OVMF_VARS pair was found"; echo "virtio-block-test: no OVMF CODE/VARS pair found" >&2; exit 2; }
 
 format_of() { [[ "$1" == *.qcow2 ]] && echo qcow2 || echo raw; }
 CODE_FORMAT="$(format_of "$OVMF_CODE_PATH")"
 VARS_FORMAT="$(format_of "$OVMF_VARS_PATH")"
 WORK="$(mktemp -d)"
 QEMU_PID=""
+
 cleanup() {
+    local status="$1"
+    # The status arrives as an argument, so `$?` inside here is already gone;
+    # the safety net publishes a readable annotation for a failure that did
+    # not describe itself, and stays silent on a pass.
+    ci_annotate_failed_exit "$status" "VirtIO Block persistence: the run stopped" \
+        "$(tail -n 12 "$WORK/boot1.serial" 2>/dev/null || true)"
+    serial_summary "$status"
     if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
     fi
     rm -rf "$WORK"
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 BOOT_IMAGE="$WORK/boot-image.img"
 DATA_DISK="$WORK/virtio-data.img"
@@ -93,6 +143,16 @@ fail_with_log() {
             | tail -n 80 \
             | sed 's/^/virtio-block-test: serial: /' >&2 || true
         echo "-----------------------------------------------" >&2
+    fi
+    if [[ -n "$EVIDENCE_DIR" ]]; then
+        ci_annotate_error \
+            "VirtIO Block persistence: $stage failed" \
+            "$reason
+
+end of the $stage serial console:
+$(tail -n 12 "$WORK/$stage.serial" 2>/dev/null || echo '<no console>')"
+    else
+        ci_annotate_error "VirtIO Block persistence: $stage failed" "$reason"
     fi
     if [[ -f "$WORK/$stage.qemu.err" && -s "$WORK/$stage.qemu.err" ]]; then
         sed 's/^/virtio-block-test: qemu: /' "$WORK/$stage.qemu.err" >&2
