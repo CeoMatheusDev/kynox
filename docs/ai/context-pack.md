@@ -1,6 +1,6 @@
 # Context pack — the state of the tree
 
-Everything below is measured on the tree of **2026-11-01**, with Zig **0.17.0**.
+Everything below is measured on the tree of **2026-11-08**, with Zig **0.17.0**.
 Every number has a command behind it (see [`README.md`](README.md) §4). Nothing
 here is a runtime claim: this environment has **no QEMU and no OVMF**, so every
 statement about a running system is `not_executed`.
@@ -23,12 +23,12 @@ that file wins and this one is stale — regenerate it as part of the change.
 | Command | Result on 2026-11-01 |
 |---|---|
 | `zig build` | success — `kynox-boot.efi`, `kynox-kernel`, `kynox.img` (128 MiB, FAT16 ESP, 32 731 clusters) |
-| `zig build test --summary all` | success — **52/52 steps, 881/881 tests**, 24 artifacts |
+| `zig build test --summary all` | success — **52/52 steps, 888/888 tests**, 24 artifacts |
 | `zig build docs-check` | success — every relative link resolves |
 | `gen-doc-index.py --check` | success — every document classified |
 | `zig build qemu-test` / `qemu-storage-test` / `qemu-interactive-test` | **not executed** (no QEMU, no OVMF) |
 
-Per artifact: kvdi 173 · fs-loader 154 · arch 212 · shared 64 · task 72 · kernel
+Per artifact: kvdi 173 · fs-loader 154 · arch 212 · shared 64 · task 79 · kernel
 22 · user-composition 22 · security 22 · docs-conformance 24 · damage 15 ·
 version 13 · keyboard-motion 13 · kpk 9 · compositor 9 · ipc 9 · sdk 8 ·
 abi-conformance 7 · kex 7 · display 7 · raster 5 · keyboard 4 · block-api 4 ·
@@ -47,7 +47,7 @@ operating system.
 | Virtual memory, address spaces | 56 | unmap returns the frames it owns, spaces are destroyed and reused with a generation, and an unmap asks every other processor to drop the translation (`paging.installRemoteFlush` → `smp.flushRemotePage`) |
 | ACPI, PCI, APIC | 66 | MADT drives the LAPIC; IOAPIC entries are **masked**, delivery is still the 8259; the MSI capability is programmed behind `-Dmsi-delivery` (message, layout, allocation), the MSI-X capability is decoded and its table located but never written; vectors 68..254 are deliverable with one stub each, but **no MSI or MSI-X has ever been delivered and no device vector has ever fired** |
 | SMP | 78 | CPU table from the MADT, trampoline copied and patched below 1 MiB, INIT/SIPI sent, an AP that enters the scheduler gets a task and an idle task of its own, a reschedule IPI (vector 65) can wake it, a TLB shootdown (vector 66) keeps the other processors honest, it arms **its own clock** (its local APIC timer, from the BSP's measurement), its block is placed against the **EBDA** and not only against the memory map and a worker is migrated to the first online AP; **no AP has ever answered**, so **no IPI has ever been delivered** |
-| Scheduler and task switching | 83 | EEVDF policy in a pure module, a state lock with per-CPU ownership, a generic blocking primitive, a wait queue and a mutex, an idle task per CPU, an owner per task, a reschedule that is not a tick and a migration — all tested; **no AP has ever taken a task**, the idle task has never halted here, the mutex has no user |
+| Scheduler and task switching | 84 | EEVDF policy in a pure module, a state lock with per-CPU ownership, a generic blocking primitive, a wait queue and a mutex, an idle task per CPU, an owner per task, a reschedule that is not a tick, a migration, and a **reaper** that hands the slot of a terminated task back to the pool (from the tick, never from the task itself) — all tested; **no AP has ever taken a task**, the idle task has never halted here, the mutex has no user, the reaper has never run on a machine and the address space of a user process that ends is never destroyed |
 | User mode and syscalls | 55–60 | ring 3 and ABI revision 1, contract-checked, never ran in a VM |
 | IPC and capabilities | 60 | channels and a real capability lifecycle |
 | ELF64 and KEX | 55–60 | native loading; no dynamic linking |
@@ -62,7 +62,7 @@ operating system.
 | Linux compatibility | 0 | planned |
 | Windows compatibility | 0 | planned |
 | Security hardening | 45 | capabilities and W^X |
-| Tests and validation | 65 | 24 host artifacts; no CI, no QEMU record |
+| Tests and validation | 66 | 24 host artifacts; the CI host job passes, the runtime job never has |
 | Performance | 40 | counters and TSC timing; benchmarks not in the graph |
 | Build tooling | 60 | Zig graph, image generator, zero external dependencies |
 
@@ -71,7 +71,7 @@ operating system.
 | Area | Files | State |
 |---|---|---|
 | Scheduling policy | `kernel/task/policy.zig` | pure functions, 13 tests, no globals |
-| Scheduler | `kernel/task/scheduler.zig` | EEVDF over 32 slots, quantum enforced and refilled, 18 tests, state lock taken by every entry point |
+| Scheduler | `kernel/task/scheduler.zig` | EEVDF over 32 slots, quantum enforced and refilled, a slot reaper (the terminated task asks, the tick collects), state lock taken by every entry point |
 | State lock | `kernel/task/lock.zig` | owner per CPU, depth, contentions, re-entries; 6 tests, one with four threads |
 | Wait queue | `kernel/task/wait.zig` | FIFO, deadlines, remembered wake, 11 tests; first caller is the channel |
 | Mutex | `kernel/task/mutex.zig` | owner, recursion ≤255, direct handoff, 10 tests; **no caller** |

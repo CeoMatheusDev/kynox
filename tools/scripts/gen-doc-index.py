@@ -125,6 +125,11 @@ DOCUMENTS: dict[str, dict[str, str]] = {
         "summary": "The single source of the version string; every other mention is derived from it and guarded by tests.",
     },
     # ---------------------------------------------------------------- records
+    "docs/audits/2026-11-08-task-slot-reaper.md": {
+        "kind": "implementation-record",
+        "authority": "record",
+        "summary": "The task-slot reaper: why a task cannot free the slot it runs on, the intrusive list that lives in the slot, the three conditions that keep a slot out of the pool, the purge of the ready queues, and the worker-count bug the tests found.",
+    },
     "docs/audits/2026-11-01-vector-pool.md": {
         "kind": "implementation-record",
         "authority": "record",

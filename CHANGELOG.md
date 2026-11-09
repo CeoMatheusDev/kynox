@@ -16,6 +16,53 @@ Rules used for this file:
 
 ## [Unreleased]
 
+### Added (2026-11-08) — o slot da tarefa que terminou volta ao pool
+
+- **O buraco**: `allocate` era um contador que só crescia, e `terminateCurrent`
+  marcava a tarefa como `terminated` e parava ali. Nada devolvia o índice, então
+  `count` era ao mesmo tempo "quantas tarefas existem", "quantas já existiram" e
+  "onde fica o próximo slot" — três coisas que só coincidem enquanto nenhuma
+  tarefa termina. Na 33ª tarefa da vida da máquina `allocate` devolvia `null`
+  com três tarefas vivas, e o boot reportava falta de memória.
+- **Por que a coleta não acontece no término**: `terminateCurrent` roda na pilha
+  de kernel da tarefa que está terminando, e o slot que se quer liberar contém
+  `kernel_rsp`, `stack` e o `context` salvos. Liberar ali é *use-after-free* com
+  outro nome. Quem libera é outro contexto — é o que `execution-model.md` já
+  exigia e o que faltava implementar.
+- **`Scheduler.reap`**: uma lista encadeada intrusiva (`Task.reap_next`,
+  `reap_queued`, `Scheduler.reap_head`, `reap_count`) — o nó mora na tarefa, então
+  pedir para ser coletado nunca aloca. `requestReap` é chamado por
+  `terminateCurrent` e `killCurrent`; `reap` roda a partir de `tick`, que é o
+  único contexto que não é a tarefa coletada.
+- **Três condições seguram o slot**: a tarefa está `terminated`, nenhuma CPU a
+  está executando (`isRunning`), e a canária da pilha de kernel ainda é a que ela
+  recebeu. As duas primeiras são correção; a terceira é evidência — uma pilha
+  sobrescrita é um defeito, e reutilizar o slot o apagaria.
+- **`allocate` varre o buraco**: usa o primeiro `null` de `tasks[0..count]` e só
+  cresce o prefixo quando não há buraco. Um slot abaixo do topo volta a ser
+  usado sem mexer no limite.
+- **`releaseSlot` purga as filas de prontos** antes de liberar: a fila guarda o
+  ponteiro, e o ponteiro é o que o slot vira. Sem a limpeza, uma tarefa
+  enfileirada que termina e é coletada faria a nova tarefa do mesmo slot rodar
+  duas vezes.
+- **Um bug que o teste achou**: a primeira limpeza reutilizava o índice de
+  escrita no laço que zera as entradas, e a contagem da fila voltava ao valor
+  antigo (`expected 1, found 2`). A correção guarda o novo tamanho antes do laço.
+- **`statistics.tasks` passa a dizer a verdade**: conta as entradas não nulas e
+  não devolve `count`; `statistics.reaped` e `pending_reap` entram no relatório
+  do boot numa linha própria.
+- **Sete testes de host** (888 no total, `task-tests` 72 → 79): 33 vidas de tarefa
+  em sequência com um pool de 32, o slot de uma tarefa em execução recusado, a
+  coleta pelo tick, a tarefa de idle imune, a fila que pula a terminada, o
+  identificador que não volta, e o slot recriado sem deixar ponteiro na fila.
+- **`.github/workflows/ci.yml`**: a verificação de firmware usava `ls` com sete
+  caminhos, e `ls` falha quando **qualquer** um não existe — o job `runtime`
+  falhava em toda distro que não instala o OVMF em todos eles. Um laço que para
+  no primeiro par CODE/VARS existente substitui o `ls`.
+- Documentação: `docs/audits/2026-11-08-task-slot-reaper.md`,
+  `docs/PROJECT_STATUS.{md,json}` (`scheduler` 83% → 84%, `tests_validation`
+  65% → 66%), `docs/ai/context-pack.md` e o item 10 do K3 no roadmap.
+
 Repository audit, governance and documentation for the first alpha, followed by
 the P1 blockers of the alpha readiness phase (single version source, native ABI
 contract, ACPI platform discovery) and the official identity scheme. Current

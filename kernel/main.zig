@@ -5422,6 +5422,16 @@ fn reportScheduler() void {
         statistics.minimum_switch_cycles,
         statistics.last_switch_cycles,
     });
+    // The slots of the tasks that ended: how many went back to the pool, and
+    // how many are waiting for a processor to collect them. A pending count
+    // that does not come back to zero is a task whose slot cannot be handed
+    // out again, and the 32 tasks that bound the scheduler would be the whole
+    // life of the machine.
+    serial.printLine("[KNK] tasks: {d} slots reaped, {d} pending, {d} exist", .{
+        statistics.reaped,
+        statistics.pending_reap,
+        statistics.tasks,
+    });
     // The state lock of the scheduler: how often it was needed, and how deep
     // the nested calls of one decision went. A contention of zero on a
     // single-CPU boot is the expected reading and not a defect; a refused
