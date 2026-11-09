@@ -11,15 +11,52 @@ set -euo pipefail
 
 IMAGE=""
 BOOT_TIMEOUT=120
+EVIDENCE_DIR=""
 for arg in "$@"; do
     case "$arg" in
         --image=*) IMAGE="${arg#--image=}" ;;
         --timeout=*) BOOT_TIMEOUT="${arg#--timeout=}" ;;
+        --evidence-dir=*) EVIDENCE_DIR="${arg#--evidence-dir=}" ;;
         *) echo "virtio-block-test: unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
-[[ -n "$IMAGE" && -f "$IMAGE" ]] || { echo "virtio-block-test: --image is required" >&2; exit 2; }
-command -v qemu-system-x86_64 >/dev/null || { echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
+# The evidence of a refusal to run is a result too: an environment without the
+# emulator is what the workflow artifact has to show, not an empty directory.
+STARTED_AT=$SECONDS
+WORK=""
+OVMF_CODE_PATH=""
+OVMF_VARS_PATH=""
+serial_summary() {
+    local status="$1"
+    [[ -n "$EVIDENCE_DIR" ]] || return 0
+    {
+        echo "kynox VirtIO Block persistence test — evidence"
+        echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "result: $([ "$status" -eq 0 ] && echo pass || echo fail) (exit status $status)"
+        echo "duration_seconds: $(( SECONDS - STARTED_AT ))"
+        echo "boot_timeout_seconds: $BOOT_TIMEOUT"
+        echo "image: $IMAGE"
+        echo "firmware_code: ${OVMF_CODE_PATH:-not found}"
+        echo "firmware_vars: ${OVMF_VARS_PATH:-not found}"
+        echo "qemu: $(command -v qemu-system-x86_64 2>/dev/null || echo 'not found')"
+        local stage
+        for stage in boot1 boot2; do
+            if [[ -n "$WORK" && -f "$WORK/$stage.serial" ]]; then
+                cp "$WORK/$stage.serial" "$EVIDENCE_DIR/$stage.serial"
+            fi
+            if [[ -n "$WORK" && -f "$WORK/$stage.qemu.err" ]]; then
+                cp "$WORK/$stage.qemu.err" "$EVIDENCE_DIR/$stage.qemu.stderr"
+            fi
+        done
+    } >"$EVIDENCE_DIR/summary.txt"
+    return 0
+}
+if [[ -n "$EVIDENCE_DIR" ]] && ! mkdir -p "$EVIDENCE_DIR"; then
+    echo "virtio-block-test: cannot create the evidence directory $EVIDENCE_DIR" >&2
+    exit 2
+fi
+[[ -n "$IMAGE" && -f "$IMAGE" ]] || { serial_summary 2; echo "virtio-block-test: --image is required" >&2; exit 2; }
+command -v qemu-system-x86_64 >/dev/null || { serial_summary 2; echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
 command -v timeout >/dev/null || { echo "virtio-block-test: timeout(1) is unavailable" >&2; exit 2; }
 
 OVMF_PAIRS=(
@@ -62,14 +99,17 @@ CODE_FORMAT="$(format_of "$OVMF_CODE_PATH")"
 VARS_FORMAT="$(format_of "$OVMF_VARS_PATH")"
 WORK="$(mktemp -d)"
 QEMU_PID=""
+
 cleanup() {
+    local status="$1"
+    serial_summary "$status"
     if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
     fi
     rm -rf "$WORK"
 }
-trap cleanup EXIT
+trap 'cleanup $?' EXIT
 
 BOOT_IMAGE="$WORK/boot-image.img"
 DATA_DISK="$WORK/virtio-data.img"

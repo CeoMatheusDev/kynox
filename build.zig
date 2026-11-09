@@ -731,9 +731,21 @@ pub fn build(b: *std.Build) void {
     // The steps that use the image depend on the step that builds it: the
     // test has to run against the image of the tree, and not against the
     // image that a previous run left in the installation directory.
+    // The evidence directory of the three runtime suites. The scripts remove
+    // their own temporary directory on exit, and without this the console of a
+    // failed boot is gone by the time anybody looks at it: the artifact that
+    // the CI publishes would be an empty directory. `-Devidence-dir=` changes
+    // it; the default is the path the workflow uploads.
+    const evidence_dir = b.option(
+        []const u8,
+        "evidence-dir",
+        "Directory that receives the serial console of the QEMU suites",
+    ) orelse "docs/validation/logs";
+
     const qemu_test_step = b.step("qemu-test", "Run the automated boot test in QEMU");
     const qemu_test = b.addSystemCommand(&.{ "bash", "tests/integration/boot-qemu.sh" });
     qemu_test.addPrefixedFileArg("--image=", image_path);
+    qemu_test.addArg(b.fmt("--evidence-dir={s}", .{evidence_dir}));
     qemu_test.has_side_effects = true;
     // The command reads the image, and the dependency on the step that
     // groups the two commands does not order them: without the edge below
@@ -746,6 +758,7 @@ pub fn build(b: *std.Build) void {
     const storage_test_step = b.step("qemu-storage-test", "Verify VirtIO Block I/O and persistence across two QEMU boots");
     const storage_test = b.addSystemCommand(&.{ "bash", "tests/integration/virtio-block-persistence.sh" });
     storage_test.addPrefixedFileArg("--image=", image_path);
+    storage_test.addArg(b.fmt("--evidence-dir={s}", .{evidence_dir}));
     storage_test.has_side_effects = true;
     storage_test.step.dependOn(&image_step.step);
     storage_test_step.dependOn(&image_step.step);
@@ -758,6 +771,7 @@ pub fn build(b: *std.Build) void {
     const interactive_test_step = b.step("qemu-interactive-test", "Verify persistent PS/2 graphics input in QEMU");
     const interactive_test = b.addSystemCommand(&.{ "bash", "tests/integration/interactive-qemu.sh" });
     interactive_test.addPrefixedFileArg("--image=", image_path);
+    interactive_test.addArg(b.fmt("--evidence-dir={s}", .{evidence_dir}));
     interactive_test.has_side_effects = true;
     interactive_test.step.dependOn(&image_step.step);
     interactive_test_step.dependOn(&interactive_test.step);

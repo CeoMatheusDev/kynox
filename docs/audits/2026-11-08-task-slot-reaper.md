@@ -219,7 +219,79 @@ que é único para o módulo. O que a rodada faz é registrar a leitura correta:
 CI existe, o job de host passa, o job de runtime estava quebrado por um defeito
 de shell.
 
-## 10. Documentação atualizada junto do código
+## 10. A segunda rodada: a falha de runtime não deixava evidência
+
+A PR #5 foi para o CI e o job `build and host tests` passou. O job `QEMU boot
+suites` passou a chegar **de verdade** ao boot (o passo "Install QEMU and OVMF",
+que antes falhava sempre, agora instala os pacotes) e então falhou, depois de
+**18 min 22 s**, no passo "Automated boot". O artefato `qemu-logs` que o workflow
+publica tem **807 bytes**: nenhuma evidência.
+
+### O defeito
+
+Os três scripts de integração criam o seu diretório de trabalho com `mktemp -d`
+e o apagam no `trap` de saída:
+
+```bash
+WORK_DIRECTORY="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIRECTORY"' EXIT
+SERIAL_LOG="$WORK_DIRECTORY/serial.log"
+```
+
+O workflow, por outro lado, publica `docs/validation/logs/` — um caminho que
+**nenhum** script escrevia. O artefato era, portanto, sempre vazio, e uma falha
+de boot não deixava console, nem stderr do emulador, nem captura de tela. A
+anotação do CI ainda por cima carrega apenas o fim do log do passo, então o
+diagnóstico do kernel — a linha entre 70 mil — era perdido duas vezes.
+
+Isso é o pior tipo de defeito de validação: o teste falha, e a informação que
+diria *por que* ele falhou é destruída pelo próprio teste.
+
+### A correção
+
+`--evidence-dir=<path>` nos três scripts (`boot-qemu.sh`,
+`interactive-qemu.sh`, `virtio-block-persistence.sh`), ligado ao `build.zig` por
+`-Devidence-dir=`, com o default `docs/validation/logs` — o caminho que o
+workflow publica. Em cada script:
+
+- o diretório é criado e o `trap` é instalado **antes** de qualquer recusa de
+  ambiente rodar, então "não há firmware" também deixa um resumo;
+- o resumo (`summary.txt`) é escrito **primeiro**, com data, resultado, status
+  de saída, duração, timeout, imagem, firmware, emulador e a lista dos checks
+  que falharam;
+- o console serial, o stderr do emulador e a captura de tela são copiados
+  **antes** do `rm -rf` do diretório temporário;
+- numa falha, as últimas 20 linhas do console são repetidas no log do passo, que
+  é o pedaço que a anotação do CI carrega.
+
+O `.gitignore` ignora os arquivos de execução (`*.log`, `*.stderr`, `*.ppm`,
+`summary.txt`) e preserva o registro escrito à mão que já estava ali. O workflow
+passa a usar `if-no-files-found: error`: um artefato vazio é um falso negativo, e
+o job tem de dizê-lo em vez de publicar um diretório que parece um passe.
+
+### O que foi medido
+
+| Cenário | Resultado |
+|---|---|
+| `zig build qemu-test -Devidence-dir=/tmp/ev`, sem OVMF | `summary.txt` com `result: fail (exit status 2)`, `firmware_code: not found`, `qemu: not found` |
+| `zig build qemu-test -Devidence-dir=docs/validation/logs` | `summary.txt` criado; `git status docs/validation/logs/` vazio (ignorado) |
+| `interactive-qemu.sh --evidence-dir=...`, sem OVMF | `summary.txt` com `result: fail (exit status 2)` |
+| `virtio-block-persistence.sh --evidence-dir=...`, sem QEMU | `summary.txt` com `result: fail (exit status 2)` |
+| o trap com uma saída de status 7 (harness) | `result: fail (exit status 7)` — o status real, não 0 |
+| array de checks vazio sob `set -u` | nenhuma referência inválida; `checks_failed: 0` |
+
+### O que continua sem resposta
+
+**Por que o boot falha nos 18 minutos.** O log do passo e o artefato ficam em
+`results-receiver.actions.githubusercontent.com` e
+`productionresultssa*.blob.core.windows.net`, e este ambiente não alcança nenhum
+dos dois (a conexão TLS é recusada). A correção acima é o que faz a **próxima**
+execução carregar a resposta: o `serial.log` e o `summary.txt` chegam ao
+artefato, que é servido pelo mesmo host bloqueado aqui mas acessível a qualquer
+pessoa com o navegador. Enquanto ninguém abrir esse artefato, a causa do
+`exit 1` do passo "Automated boot" é **desconhecida**, e não é honesto supor.
+
+## 11. Documentação atualizada junto do código
 
 - `docs/PROJECT_STATUS.{md,json}`: `scheduler` 83% → 84%; `tests_validation`
   65% → 66%; o achado K-01 e a lista de pendências do K3.
@@ -228,3 +300,8 @@ de shell.
 - `docs/roadmap/KERNEL_COMPLETION_ROADMAP.md`: o item 10 do K3 marcado como
   feito, com o ponteiro para este registro.
 - `tools/scripts/gen-doc-index.py`: este documento classificado (76).
+- `docs/validation/qemu.md`: o procedimento de `--evidence-dir` e o que cada
+  execução deixa para trás.
+- `build.zig`: a opção `-Devidence-dir`, com o default que o workflow publica.
+- `.github/workflows/ci.yml`: o artefato deixa de poder estar vazio
+  (`if-no-files-found: error`).

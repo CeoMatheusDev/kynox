@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 8712
+      "words": 9090
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 3285
+      "words": 3340
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 9277
+      "words": 9450
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 5668
+      "words": 5710
     },
     {
       "path": "docs/VERSIONING.md",
@@ -152,7 +152,7 @@
       "kind": "ai-context-pack",
       "authority": "current",
       "summary": "One condensed brief of the state of the tree: commands, counts, matrix, open defects and invariants.",
-      "words": 1545
+      "words": 1567
     },
     {
       "path": "docs/architecture/application-ecosystem.md",
@@ -479,7 +479,7 @@
       "kind": "implementation-record",
       "authority": "record",
       "summary": "The task-slot reaper: why a task cannot free the slot it runs on, the intrusive list that lives in the slot, the three conditions that keep a slot out of the pool, the purge of the ready queues, and the worker-count bug the tests found.",
-      "words": 2193,
+      "words": 2823,
       "date": "2026-11-08",
       "declared_status": "implementation record"
     },
@@ -679,7 +679,7 @@
       "kind": "validation-procedure",
       "authority": "reference",
       "summary": "How a QEMU run is performed and recorded, and the table of the attempts that failed in this environment.",
-      "words": 1130
+      "words": 1339
     },
     {
       "path": "llms.txt",

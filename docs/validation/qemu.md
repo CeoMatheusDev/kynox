@@ -39,7 +39,32 @@ zig build qemu-interactive-test# persistent PS/2 input and graphics
 ```
 
 Each step is `bash tests/integration/<script>`; they can be run directly with
-`--image=`, `--timeout=` and, for the boot test, `--verify-kvdi-log=<path>`.
+`--image=`, `--timeout=`, `--evidence-dir=<path>` and, for the boot test,
+`--verify-kvdi-log=<path>`.
+
+## 3a. What a run leaves behind
+
+Without `--evidence-dir` a run is self-contained: the script creates a
+temporary directory and removes it on exit, so nothing survives. With
+`--evidence-dir` (or `zig build qemu-test -Devidence-dir=<path>`, whose default
+is `docs/validation/logs`) the script writes, **on every exit path** — a pass, a
+failed assertion, a missing firmware, a missing emulator:
+
+| File | Content |
+|---|---|
+| `summary.txt` | date, result and exit status, duration, timeout, image, firmware, emulator, and one `failed_check:` line per failed assertion |
+| `serial.log` | the whole serial console of the boot |
+| `qemu.stderr` (boot, `boot1`/`boot2` in the storage test) | the standard error of the emulator |
+| `presentation.ppm` (boot) | the screenshot taken while the compositor holds the frame |
+
+The summary is written first, so it exists even when the run produced no
+console at all — the case in which it matters most. On failure the last 20
+lines of the console are also repeated in the step log, because the annotation
+that the CI publishes carries only the tail of it.
+
+The files of a run are ignored by Git (`.gitignore`): they are evidence of one
+run, not of the tree. `docs/validation/logs/` keeps the records a human wrote
+into it.
 
 ## 4. VM configuration actually used by the scripts
 

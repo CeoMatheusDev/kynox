@@ -13,21 +13,54 @@
 # The test is part of the automated pipeline: `zig build qemu-test`.
 #
 # Usage: qemu-interactive-test.sh --image=<path> [--timeout=<seconds>]
+#        [--evidence-dir=<path>]
+#
+# `--evidence-dir` keeps the serial console and a summary of the run; without
+# it the script is self-contained and removes its temporary directory.
 
 set -euo pipefail
 
 IMAGE=""
 TIMEOUT=60
+EVIDENCE_DIR=""
 EDGES=false
 STRESS=false
 BOUNDS=false
 BURST=false
 BURST_COUNT=16
 
+preserve_evidence() {
+    local status="$1"
+    [[ -n "$EVIDENCE_DIR" ]] || return 0
+    {
+        echo "kynox interactive graphics test — evidence"
+        echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "result: $([ "$status" -eq 0 ] && echo pass || echo fail) (exit status $status)"
+        echo "duration_seconds: $(( SECONDS - STARTED_AT ))"
+        echo "timeout_seconds: $TIMEOUT"
+        echo "image: $IMAGE"
+        echo "firmware_code: ${OVMF_CODE_PATH:-not found}"
+        echo "firmware_vars: ${OVMF_VARS_PATH:-not found}"
+        echo "qemu: $(command -v qemu-system-x86_64 2>/dev/null || echo 'not found')"
+        echo "qemu_status: $QEMU_STATUS_TEXT"
+    } >"$EVIDENCE_DIR/summary.txt"
+    if [[ -n "$SERIAL_LOG" && -f "$SERIAL_LOG" ]]; then
+        cp "$SERIAL_LOG" "$EVIDENCE_DIR/serial.log"
+    fi
+    if [[ "$status" -ne 0 && -f "$EVIDENCE_DIR/serial.log" ]]; then
+        echo "qemu-interactive-test: the serial console is in $EVIDENCE_DIR/serial.log" >&2
+        tail -n 20 "$EVIDENCE_DIR/serial.log" >&2 || true
+    fi
+    return 0
+}
+
+trap 'preserve_evidence $?; [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"' EXIT
+
 for argument in "$@"; do
     case "$argument" in
         --image=*) IMAGE="${argument#--image=}" ;;
         --timeout=*) TIMEOUT="${argument#--timeout=}" ;;
+        --evidence-dir=*) EVIDENCE_DIR="${argument#--evidence-dir=}" ;;
         --edges) EDGES=true ;;
         --stress) STRESS=true ;;
         --bounds) BOUNDS=true ;;
@@ -39,6 +72,22 @@ for argument in "$@"; do
             ;;
     esac
 done
+
+# The evidence directory is created as soon as the arguments are known, so an
+# environment without firmware still leaves the summary that says so. Every
+# variable that `preserve_evidence` reads exists from here on, and the routine
+# tolerates every file being absent.
+STARTED_AT=$SECONDS
+WORK_DIRECTORY=""
+SERIAL_LOG=""
+QEMU_STATUS_TEXT="not started"
+
+if [[ -n "$EVIDENCE_DIR" ]]; then
+    if ! mkdir -p "$EVIDENCE_DIR"; then
+        echo "qemu-interactive-test: cannot create the evidence directory $EVIDENCE_DIR" >&2
+        exit 2
+    fi
+fi
 
 if ! [[ "$BURST_COUNT" =~ ^(16|64|128|256)$ ]]; then
     echo "qemu-interactive-test: --burst-count must be 16, 64, 128 or 256" >&2
@@ -151,7 +200,6 @@ OVMF_VARS_FORMAT="$(format_of "$OVMF_VARS_PATH")"
 
 # --- interactive run --------------------------------------------------------
 WORK_DIRECTORY="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIRECTORY"' EXIT
 cp "$OVMF_VARS_PATH" "$WORK_DIRECTORY/vars.fd"
 SERIAL_LOG="$WORK_DIRECTORY/serial.log"
 MONITOR_SOCKET="$WORK_DIRECTORY/monitor.sock"
@@ -165,11 +213,16 @@ qemu-system-x86_64 \
     -monitor "unix:$MONITOR_SOCKET,server=on,wait=off" \
     -display none -no-reboot >/dev/null 2>&1 &
 QEMU_PID=$!
-cleanup_qemu() {
+# The console is preserved before the emulator is stopped and the temporary
+# directory is removed: after `rm -rf` there is nothing left to copy.
+cleanup_and_preserve() {
+    local status="$1"
+    preserve_evidence "$status"
     kill "$QEMU_PID" 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
+    rm -rf "$WORK_DIRECTORY"
 }
-trap 'cleanup_qemu; rm -rf "$WORK_DIRECTORY"' EXIT
+trap 'cleanup_and_preserve $?' EXIT
 
 # The script injects I during boot, then RIGHT only after the persistent
 # loop marker. This distinguishes the permanent loop from the boot pump.

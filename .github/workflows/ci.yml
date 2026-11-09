@@ -128,6 +128,10 @@ jobs:
       - name: Build the image
         run: zig build
 
+      # Each suite writes its serial console and a summary into the evidence
+      # directory, on every exit path — including the one where the firmware
+      # was not found. Without it the temporary directory of the script is
+      # removed on exit and the artifact below would be empty.
       - name: Automated boot
         run: zig build qemu-test
 
@@ -144,4 +148,7 @@ jobs:
           name: qemu-logs
           path: docs/validation/logs/
           retention-days: 7
-          if-no-files-found: warn
+          # An empty artifact is a false negative: the run produced no evidence
+          # and the workflow has to say so instead of publishing a directory
+          # that looks like a pass.
+          if-no-files-found: error

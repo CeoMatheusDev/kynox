@@ -62,7 +62,7 @@ operating system.
 | Linux compatibility | 0 | planned |
 | Windows compatibility | 0 | planned |
 | Security hardening | 45 | capabilities and W^X |
-| Tests and validation | 66 | 24 host artifacts; the CI host job passes, the runtime job never has |
+| Tests and validation | 66 | 24 host artifacts; the CI host job passes; the runtime job installs the dependencies and reaches the boot, has never passed one, and now leaves its serial console in the artifact on every exit path |
 | Performance | 40 | counters and TSC timing; benchmarks not in the graph |
 | Build tooling | 60 | Zig graph, image generator, zero external dependencies |
 

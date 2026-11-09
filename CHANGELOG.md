@@ -16,6 +16,41 @@ Rules used for this file:
 
 ## [Unreleased]
 
+### Added (2026-11-08, segunda rodada) — a falha de runtime passa a deixar evidência
+
+- **O buraco**: os três scripts de integração criam `mktemp -d` e apagam tudo no
+  `trap`, enquanto o workflow publicava `docs/validation/logs/` — um caminho que
+  nenhum script escrevia. O artefato `qemu-logs` da execução do CI na PR #5 tem
+  **807 bytes**: nada. Uma falha de boot não deixava console, nem stderr do
+  emulador, nem captura de tela, e a anotação do CI carrega só o fim do log do
+  passo. A informação que diria *por que* o teste falhou era destruída pelo
+  próprio teste.
+- **`--evidence-dir=<path>`** nos três scripts, ligado ao `build.zig` por
+  `-Devidence-dir=`, default `docs/validation/logs` (o caminho que o CI publica).
+  O `trap` é instalado e o diretório criado **antes** de qualquer recusa de
+  ambiente, então "não há firmware" também deixa resumo.
+- **`summary.txt` escrito primeiro**: data, resultado e status de saída, duração,
+  timeout, imagem, firmware, emulador e uma linha `failed_check:` por asserção
+  que falhou. Depois vêm o console serial, o stderr do emulador e a captura.
+- **Numa falha, as últimas 20 linhas do console** são repetidas no log do passo —
+  exatamente o trecho que a anotação do CI preserva.
+- **`.gitignore`** ignora os arquivos de execução (`*.log`, `*.stderr`, `*.ppm`,
+  `summary.txt`) e preserva o registro escrito à mão. **CI**: o artefato passa a
+  `if-no-files-found: error`; um artefato vazio é um falso negativo e o job tem
+  de dizê-lo.
+- **Um bug pego na revisão**: no `interactive-qemu.sh` o `mkdir` do diretório de
+  evidência ficou antes do laço que lê `--evidence-dir`, e o `trap` tentava
+  escrever num diretório com o nome vazio da variável. O setup foi movido para
+  depois do parsing e o `cleanup_qemu` órfão, removido.
+- **Medido**: sem OVMF e sem QEMU, os três scripts deixam `summary.txt` com
+  `result: fail (exit status 2)` e `firmware_code: not found`; o trap preserva o
+  status real (um harness com `exit 7` escreve `exit status 7`); o array de
+  checks vazio não quebra sob `set -u`; `git status docs/validation/logs/` fica
+  vazio depois de uma execução.
+- **O que continua desconhecido**: por que o boot falha nos 18 min. O log do
+  passo e o artefato ficam em hosts que este ambiente não alcança. A correção é
+  o que faz a próxima execução carregar a resposta.
+
 ### Added (2026-11-08) — o slot da tarefa que terminou volta ao pool
 
 - **O buraco**: `allocate` era um contador que só crescia, e `terminateCurrent`
