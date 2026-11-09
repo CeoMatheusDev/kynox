@@ -350,6 +350,85 @@ sai com 0 — o caminho 1:
 O helper também foi verificado para a ordem: uma anotação específica publicada
 antes silencia a rede, e um status 0 não publica nada.
 
+### A execução de `541f0f5`: a anotação trouxe o diagnóstico
+
+A rede de segurança publicou, e com ela veio o console:
+
+```
+[KNK] EXCEPTION 14: page fault
+[KNK]   error code: 0x0
+[KNK]   faulting address: 0xfee00020
+[DBG] map 0xfee00020: l4[0] = 0x2f0c027
+[DBG]        l3[3] = 0x3369027
+[DBG]        l2[503] = 0x33a8027
+[DBG]        l1[0] = 0x80000000fee00073 (physical 0xfee00000, user false)
+[KNK]   rip=0x184f411 cs=0x8 rflags=0x46
+```
+
+`cs=0x8` é o modo kernel: a exceção é fatal e o boot parou ali. O endereço
+`0xfee00020` é o **registrador do identificador do APIC local**
+(`ApicOffset.id`), e o `error code: 0x0` é "página não presente" numa leitura.
+
+### A causa: a ordem do boot viola uma regra que o próprio código documenta
+
+`createAddressSpace` copia os níveis superiores das tabelas do kernel:
+
+```zig
+root.* = level4;
+private_level3.* = level3;
+private_level2.* = tableOf(level3.entries[0]).*;
+```
+
+Tudo o que o kernel mapeia **depois** dessa cópia vive só nas tabelas do
+kernel, e não nos espaços que já existem. O comentário de `buildPageTables` diz
+isso para a janela de DMA, e `installMmioWindow` repete a regra para a janela de
+MMIO — reservar as tabelas antes de os espaços existirem.
+
+`installSmp` mapeia o APIC local com `mapDevicePage` e **roda depois** de
+`installUserTask`, `installNativeProcess`, `installToolchainProcess` e
+`installClientProcess`. O espaço do primeiro processo foi criado antes do mapa
+do LAPIC, então a página existe nas tabelas do kernel e falta nas do processo.
+Quando o kernel lê o próprio APIC id com esse espaço ativo
+(`smp.cpuIdForApicId` → `apic.readApicId`), o acesso atravessa o `l4` do espaço,
+encontra a tabela de nível 2 privada do processo, e a entrada de nível 1 não
+está lá. Page fault, modo kernel, boot morto.
+
+O `[DBG]` da saída é `paging.describe`, que anda as tabelas ativas — as do
+espaço do processo naquele instante. Ele mostra o `l2[503]` presente e o
+`l1[0]` presente para a página **física** 0xfee00000: essa tabela é a cópia que
+o espaço herdou, e ela descreve o bloco de 2 MiB, não o mapeamento do registro
+que o kernel publicou depois.
+
+### A correção
+
+Duas partes, e a primeira sozinha já teria evitado o defeito:
+
+1. **A ordem do boot.** Os espaços dos processos passam a ser criados depois de
+   `installSmp`, e os comentários nos dois lugares dizem por quê. Nenhum código
+   dos processos consulta o LAPIC, então a troca não cria outra dependência.
+2. **`paging.mapDevicePageIn(space, virtual, physical)`**, para quem tiver de
+   mapear dispositivo depois de os espaços existirem. A função não aloca: torna
+   o espaço capaz de descrever o bloco como o kernel o descreve — a mesma
+   partilha que `createAddressSpace` já faz para a imagem — e recusa o bloco
+   privado do processo (a janela do usuário) e a página que o kernel não mapeia.
+
+### Testes
+
+| Teste | O que fixa |
+|---|---|
+| `a device page mapped after a space exists is missing from that space` | reproduz o defeito: a página está em `translate` e **não** está em `translateIn` do espaço; `mapDevicePageIn` conserta, e as duas visões passam a concordar |
+| `a device page is refused in the private window of a process` | a janela do processo recusa (`NotKernelRange`) e uma página que o kernel não mapeia recusa (`NotMapped`) |
+
+Três defeitos apareceram na primeira tentativa da função e foram corrigidos
+antes de ela ser aceita: `tableOf` era chamado sobre uma entrada ausente (que
+no host é *panic*, não erro), a ordem dos erros invertia o diagnóstico (uma
+página ausente era reportada como "bloco de outro dono"), e a alocação de uma
+tabela de nível 1 era redundante — a cadeia partilhada já é o contrato do
+módulo.
+
+`zig build test --summary all` = 52/52 passos, **890/890 testes** (888 + 2),
+arqu-tests 214.
+
 ### O que continua sem resposta
 
 **Por que o boot falha nos 18 minutos.** O log do passo e o artefato ficam em

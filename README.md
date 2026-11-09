@@ -48,7 +48,7 @@ Percentages represent estimated **subsystem engineering maturity**, not the perc
 | Linux binary compatibility | **0%** | Planned; no Linux execution personality yet |
 | Windows binary compatibility | **0%** | Planned; no PE32+/Win64/NT/Win32 runtime yet |
 | Security hardening | **45%** | Capabilities and W^X foundations; systematic hardening remains |
-| Tests and validation infrastructure | **66%** | Host suite executes and passes (**888 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green); its QEMU job now installs QEMU/OVMF and reaches the boot, and each suite writes its serial console and a summary to an artifact on every exit path — no boot assertion has passed yet |
+| Tests and validation infrastructure | **66%** | Host suite executes and passes (**890 tests**, including a documentation link check and a planning-document guard); a CI workflow runs the build, the host suite and the docs check (green); its QEMU job now installs QEMU/OVMF and reaches the boot, and each suite writes its serial console and a summary to an artifact on every exit path — the boot now reaches a real boot and fails on a page fault at 0xfee00020, whose cause was found and fixed (the process spaces were created before the local APIC was mapped) — the fix has not been retested in the CI yet |
 | Performance and observability | **40%** | Counters (including per-interrupt-line and unhandled-line), TSC timing and a boot benchmark; benchmark sources are not in the build graph |
 | Build and developer tooling | **60%** | Zig build graph, image generator, zero external dependencies and a single version source guarded by tests; CI remains |
 
@@ -92,7 +92,7 @@ The canonical vocabulary (also used by `docs/PROJECT_STATUS.json`) is
 - RamFS, KFSX mount namespace, KNV volume serialization and block abstraction.
 - KVDI modern VirtIO transport and synchronous VirtIO Block read/write/flush path.
 - Rasterizer, framebuffer bridge, compositor, window manager, input routing and desktop scene.
-- Host unit tests (888) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
+- Host unit tests (890) and QEMU integration scripts for boot, storage persistence and interactive graphics/input.
 - Two native applications built from the SDK and embedded in the boot image (`user/hello.zig`, `user/client.zig`).
 
 ## Build
@@ -140,7 +140,7 @@ Run the commands locally before reporting them as passing. See [AGENTS.md](AGENT
 |---|---|
 | `zig version` | `0.17.0` |
 | `zig build` | success — image written; `kynox-boot.efi` 185,344 B, `kynox.img` 128 MiB (32 731 clusters) |
-| `zig build test` | success — 52/52 steps, **888/888 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator → 888 with the task-slot reaper) |
+| `zig build test` | success — 52/52 steps, **890/890 tests passed** (fresh cache; 736 → 748 with the scheduler policy tests → 781 with the wait queue, the mutex and the policy split → 788 with the channel integration and the documentation index → 800 with the state lock and the generic blocking primitive → 806 with the per-CPU segment and the idle task → 815 with the AP trampoline → 821 with the ownership of a task by a CPU → 828 with the reschedule IPI and the migration → 837 with the TLB shootdown → 841 with the clock of each processor → 845 with the halt IPI and the fatal path → 850 with the extended BIOS data area → 860 with the MSI capability → 868 with the MSI-X table → 873 with the device vector space → 881 with the vector allocator → 888 with the task-slot reaper → 890 with the device page shared with a process space) |
 | `zig build qemu-test` | **not executed** — no QEMU/OVMF in that environment |
 | `zig build qemu-storage-test` | **not executed** — same reason |
 | `zig build qemu-interactive-test` | **not executed** — same reason |

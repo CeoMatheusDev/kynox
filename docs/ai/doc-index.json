@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 9399
+      "words": 9691
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -96,7 +96,7 @@
       "kind": "overview",
       "authority": "current",
       "summary": "Public overview, the subsystem maturity matrix, the executed verification table and the known limitations.",
-      "words": 3340
+      "words": 3388
     },
     {
       "path": "VERSION",
@@ -120,7 +120,7 @@
       "kind": "status-machine-readable",
       "authority": "current",
       "summary": "The same inventory in JSON: subsystems, percentages, evidence paths, validations and findings; consumed by tests and by tooling.",
-      "words": 9450
+      "words": 9544
     },
     {
       "path": "docs/PROJECT_STATUS.md",
@@ -128,7 +128,7 @@
       "kind": "status",
       "authority": "current",
       "summary": "The evidence-based inventory: per-subsystem maturity, what is implemented, what limits it, the executed validations and the open findings.",
-      "words": 5710
+      "words": 5714
     },
     {
       "path": "docs/VERSIONING.md",
@@ -479,7 +479,7 @@
       "kind": "implementation-record",
       "authority": "record",
       "summary": "The task-slot reaper: why a task cannot free the slot it runs on, the intrusive list that lives in the slot, the three conditions that keep a slot out of the pool, the purge of the ready queues, and the worker-count bug the tests found.",
-      "words": 3471,
+      "words": 4084,
       "date": "2026-11-08",
       "declared_status": "implementation record"
     },

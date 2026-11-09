@@ -61,7 +61,7 @@
     },
     {
       "command": "zig build test --summary all (fresh cache)",
-      "result": "success: 52/52 steps, 888/888 tests passed (24 test artifacts; task-tests 79 covers the lock, the policy, the scheduler, the slot reaper, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; arch-tests 212, including the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
+      "result": "success: 52/52 steps, 890/890 tests passed (24 test artifacts; task-tests 79 covers the lock, the policy, the scheduler, the slot reaper, the idle task, the CPU ownership, the reschedule, the migration, the context, the wait queue and the mutex; arch-tests 214, including the device-page-in-space suite, the per-CPU segment, the AP trampoline, the reschedule refusals, the device vector registry and the device vector allocator; no QEMU target executed)",
       "date": "2026-11-08"
     },
     {
@@ -342,13 +342,13 @@
         "a driver that asks for a vector, installs its handler and records an MSI or an MSI-X arriving"
       ],
       "tests": [
-        "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
+        "arch-tests (214 tests: segment, frame, paging, space-shared device page, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, virtio, timer, fpu)",
         "arch-tests: interrupt registry suite (5), timer tick-policy suite (2) and the per-CPU segment suite (2, including the rsp0 of one CPU not touching another) (host)"
       ],
       "validation": {
         "status": "host_tests_passed",
         "host_tests": [
-          "arch-tests (212 tests: segment, frame, paging, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
+          "arch-tests (214 tests: segment, frame, paging, space-shared device page, spinlock, apic, acpi, smp, tlb, bda, pci, msi, msix, vector pool, virtio, timer, fpu)"
         ],
         "commands": [
           "zig build test"
@@ -413,7 +413,8 @@
         "releaseUserPages detaches the window entries and returns only the owned frames, through an injected release callback (the architecture layer no longer imports the memory manager)",
         "destroyAddressSpaceReal returns the frames, clears the root/PDPT/PD/PT, forgets the active space and frees the slot",
         "address-space slot reuse with a per-slot generation; spaceByIdentity(id, generation) refuses a stale identity; liveSpaceCount/spaces_created expose the state",
-        "an unmap asks every other processor to drop the translation: paging.installRemoteFlush installs a hook (the boot installs smp.flushRemotePage), so the page tables keep no dependency on the APIC and the host tests run with no hook at all"
+        "an unmap asks every other processor to drop the translation: paging.installRemoteFlush installs a hook (the boot installs smp.flushRemotePage), so the page tables keep no dependency on the APIC and the host tests run with no hook at all",
+        "`paging.mapDevicePageIn(space, virtual, physical)` completes a device mapping in a process space created before the kernel mapped the page: it shares the block the way the kernel describes it, and refuses the private window of the process (`NotKernelRange`) and a page the kernel does not map (`NotMapped`)"
       ],
       "limitations": [
         "no general VM region allocator",
@@ -466,7 +467,8 @@
         "MSI-X capability decoded (kernel/arch/x86_64/msix.zig): the table size is the field plus one, the table and the PBA are located by BIR and offset, a 16-byte entry carries one vector, entries start masked and are unmasked one at a time, and the enable order fills the table while the function is masked before enabling it",
         "the kernel keeps its vectors to itself: a device may only be given a vector from 68 up, and the boot reports the candidate message (and programs it only with -Dmsi-delivery=true, because enabling MSI disables INTx of the function)",
         "LAPIC xAPIC register access, EOI, TPR and IPI primitives",
-        "a device vector is deliverable before it is programmable: the boot installs an IDT gate for every vector of 68..254 from the stub table, and the registry gives each of those vectors an owner or counts it as unhandled instead of dispatching it to a guess"
+        "a device vector is deliverable before it is programmable: the boot installs an IDT gate for every vector of 68..254 from the stub table, and the registry gives each of those vectors an owner or counts it as unhandled instead of dispatching it to a guess",
+        "the boot creates the process spaces after `installSmp`, so the local APIC mapping is in every space; the CI found the violation as a kernel-mode page fault on 0xfee00020 (the local APIC identifier register) with a process space active"
       ],
       "limitations": [
         "delivery of hardware interrupts still comes from the 8259 unless the build option ioapic-delivery=true is set, and that option has never been booted",

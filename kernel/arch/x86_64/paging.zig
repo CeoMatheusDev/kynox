@@ -243,6 +243,9 @@ pub const Error = error{
     /// The entry owns a page, but no release callback is installed, so the
     /// page cannot be returned. The entry is preserved.
     ReleaseUnavailable,
+    /// The address is not part of what the kernel describes: a page belongs in
+    /// the space of a process only when the kernel maps it too.
+    NotKernelRange,
 };
 
 /// Maps a page of the kernel, with the same address in the physical and in
@@ -269,6 +272,35 @@ pub fn mapDevicePage(virtual: u64, physical: u64) Error!void {
         physical,
         Flags.present | Flags.writable | Flags.cache_disabled | Flags.no_execute,
     );
+}
+
+/// Makes the device page that the kernel maps at `virtual` reachable from the
+/// address space of a process.
+///
+/// The page has to be mapped by `mapDevicePage` first: the space shares the
+/// tables of the kernel, and this function only completes the part of the
+/// chain that the space does not have.
+///
+/// It exists because `createAddressSpace` copies the tables of the upper levels
+/// at the moment the space is created. A device page that the kernel maps
+/// afterwards — the local APIC is the case of the boot — lives in a block that
+/// the copy does not describe, and a task of that space that touches the
+/// register faults in kernel mode, which the kernel reports as fatal.
+pub fn mapDevicePageIn(space: *AddressSpace, virtual: u64, physical: u64) Error!void {
+    if (virtual & (page_size - 1) != 0) return error.UnalignedPage;
+    if (physical & (page_size - 1) != 0) return error.UnalignedPage;
+
+    // The ownership of the block is the first question: a block that the
+    // space keeps for itself — the window of the user mode — refuses a device
+    // page whatever the kernel has in it, and that is the diagnosis a reader
+    // needs. The order also keeps the reads below safe: only after this is
+    // the block of the kernel known to be one the space shares.
+    const level1 = try shareKernelBlock(space.root, virtual);
+
+    const level1_index = (virtual >> 12) & 511;
+    const kernel_entry = level1.entries[level1_index];
+    if (kernel_entry & Flags.present == 0) return error.NotMapped;
+    if ((kernel_entry & address_mask) != (physical & address_mask)) return error.NotMapped;
 }
 
 /// Maps a page of kernel data that is never executed.
@@ -344,6 +376,66 @@ fn mapPage(virtual: u64, physical: u64, flags: u64) Error!void {
     const existing = level1.entries[level1_index];
     if (existing & 1 != 0) return error.AlreadyMapped;
     level1.entries[level1_index] = (physical & address_mask) | flags;
+}
+
+/// Makes the space of a process describe the block of `virtual` the way the
+/// kernel describes it, and returns the level 1 table that both then share.
+///
+/// The tables of the upper levels of a space are private copies made by
+/// `createAddressSpace`, so a block that the kernel described after the space
+/// existed is simply missing from the copy. Nothing has to be allocated to
+/// repair that: the space shares the tables of the kernel for every block that
+/// is not the window of the user mode — which is what `createAddressSpace`
+/// already does for the image of the kernel.
+///
+/// Three cases are separated, and the difference is the contract:
+///
+///   * the space does not describe the gigabyte — the entry of the third level
+///     is copied from the kernel;
+///   * the space describes the block through a table of the kernel — nothing
+///     to do;
+///   * the space describes the block through a table of its own — that is the
+///     window of the user mode, and a device page does not belong there.
+fn shareKernelBlock(root: *PageTable, virtual: u64) Error!*PageTable {
+    const level4_index = (virtual >> 39) & 511;
+    const level3_index = (virtual >> 30) & 511;
+    const level2_index = (virtual >> 21) & 511;
+
+    if (level4_index != 0) return error.RangeTooLarge;
+
+    // The kernel is the authority: a space only reaches what the kernel
+    // reaches, and a block it does not describe has no business in a space.
+    const kernel_level2 = blockOf(&level4, virtual) orelse return error.NotMapped;
+
+    const entry4 = root.entries[level4_index];
+    if (entry4 & Flags.present == 0) return error.NotKernelRange;
+    const space_level3 = tableOf(entry4);
+    if (space_level3.entries[level3_index] & Flags.present == 0) {
+        space_level3.entries[level3_index] = level3.entries[level3_index];
+    }
+
+    const level2 = tableOf(space_level3.entries[level3_index]);
+    const entry2 = level2.entries[level2_index];
+    if (entry2 & Flags.present == 0) return error.NotMapped;
+    // An entry that is not the one of the kernel is a table that the space
+    // owns — the window of the user mode.
+    if (entry2 != kernel_level2.entries[level2_index]) return error.NotKernelRange;
+    if (entry2 & Flags.large != 0) return error.RangeTooLarge;
+
+    return tableOf(entry2);
+}
+
+/// The level 2 table that describes the megabyte block of `virtual` in `root`,
+/// or null when the chain of the upper levels does not reach one.
+fn blockOf(root: *PageTable, virtual: u64) ?*PageTable {
+    const level4_index = (virtual >> 39) & 511;
+    const level3_index = (virtual >> 30) & 511;
+
+    const entry4 = root.entries[level4_index];
+    if (entry4 & Flags.present == 0) return null;
+    const entry3 = tableOf(entry4).entries[level3_index];
+    if (entry3 & Flags.present == 0) return null;
+    return tableOf(entry3);
 }
 
 /// Reserves the page tables of a kernel virtual range without mapping pages.
@@ -1358,6 +1450,57 @@ test "a reserved kernel range is shared with a process address space" {
     try unmapKernelPage(dma_base);
     try testing.expect(translate(dma_base) == null);
     try testing.expect(translateIn(space, dma_base) == null);
+}
+
+test "a device page mapped after a space exists is missing from that space" {
+    // The CI boot failed on a page fault at 0xfee00020 — the register of the
+    // local APIC identifier — while a user process was running. The cause is
+    // the order of the boot: `createAddressSpace` copies the level 2 table of
+    // the kernel, so a level 1 table that the kernel allocates afterwards is
+    // not in the copy, and the device page that it maps is reachable only
+    // through the tables of the kernel.
+    try setup(0x400000, 0x500000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x400000 - 0x4000;
+    const space = createAddressSpace(window).?;
+
+    const lapic: u64 = 0xFEE0_0000;
+    try mapDevicePage(lapic, lapic);
+    try testing.expectEqual(@as(?u64, lapic), translate(lapic));
+    try testing.expectEqual(@as(?u64, null), translateIn(space, lapic));
+
+    // The repair is the one the boot performs: the page is written again
+    // after the spaces exist, which rebuilds the chain in the tables of the
+    // space.
+    try mapDevicePageIn(space, lapic, lapic);
+    try testing.expectEqual(@as(?u64, lapic), translateIn(space, lapic));
+    try testing.expectEqual(@as(?u64, lapic), translate(lapic));
+}
+
+test "a device page is refused in the private window of a process" {
+    // The window of the user mode has a table of its own, and the entry of the
+    // second level of the space does not point at the table of the kernel. A
+    // device page there would be a mapping the space owns — memory that the
+    // kernel does not manage — so the function refuses it.
+    try setup(0x400000, 0x500000, 0, 0);
+    resetAddressSpacesForTest();
+
+    const window: u64 = 0x400000 - 0x4000;
+    const space = createAddressSpace(window).?;
+
+    try testing.expectError(
+        error.NotKernelRange,
+        mapDevicePageIn(space, window, window),
+    );
+
+    // A page that the kernel did not map is refused as well: the space cannot
+    // reach a page that the kernel itself cannot reach.
+    const unmapped: u64 = 0xFEE0_0000;
+    try testing.expectError(
+        error.NotMapped,
+        mapDevicePageIn(space, unmapped, unmapped),
+    );
 }
 
 /// Entry point for a caller that has no address space to destroy.

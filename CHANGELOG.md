@@ -16,6 +16,36 @@ Rules used for this file:
 
 ## [Unreleased]
 
+### Fixed (2026-11-08, terceira rodada) — o page fault em 0xfee00020 que matava o boot
+
+- **O diagnóstico, finalmente com texto.** A rede de segurança da anotação
+  publicou o console do CI:
+  `EXCEPTION 14: page fault`, `faulting address: 0xfee00020`, `cs=0x8` (modo
+  kernel, portanto fatal). `0xfee00020` é o registrador do **identificador do
+  APIC local**.
+- **A causa** é a ordem do boot, que violava uma regra escrita no próprio
+  código: `createAddressSpace` copia os níveis superiores das tabelas do kernel,
+  então o que o kernel mapeia **depois** dessa cópia não existe nos espaços já
+  criados. `installSmp` mapeia o APIC local e rodava **depois** de
+  `installUserTask`/`installNativeProcess`/`installToolchainProcess`/
+  `installClientProcess`. Com o espaço do processo ativo, ler o próprio APIC id
+  atravessava a tabela de nível 2 privada e não achava a entrada de nível 1.
+  `buildPageTables` e `installMmioWindow` já documentavam a regra para o DMA e o
+  MMIO; o LAPIC era o caso que faltava.
+- **Correção em duas partes**: (1) os espaços dos processos passam a ser criados
+  depois de `installSmp`, com o motivo escrito nos dois lugares; (2)
+  `paging.mapDevicePageIn(space, virtual, physical)` para mapear um dispositivo
+  depois de os espaços existirem — completa a cadeia no espaço, recusa o bloco
+  privado do processo e a página que o kernel não mapeia.
+- **Dois testes novos** (`arch` 212 → **214**): um reproduz o defeito (a página
+  em `translate` e ausente em `translateIn`, e o conserto) e outro fixa as duas
+  recusas.
+- **Três defeitos da primeira versão da função**, corrigidos antes de aceitá-la:
+  `tableOf` sobre entrada ausente (panic no host), ordem dos erros trocando o
+  diagnóstico, e uma alocação de tabela redundante que quebrava a partilha.
+- **Validado sem cache**: `rm -rf .zig-cache zig-out`, `zig build` ok, `zig build
+  test --summary all` = 52/52 passos, **890/890 testes**.
+
 ### Added (2026-11-08, segunda rodada) — a falha de runtime passa a deixar evidência
 
 - **O buraco**: os três scripts de integração criam `mktemp -d` e apagam tudo no
