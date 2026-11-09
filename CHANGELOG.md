@@ -58,6 +58,20 @@ Rules used for this file:
   últimas 12 linhas do console nos três scripts, mais uma anotação para cada
   recusa de ambiente (sem OVMF, sem QEMU, sem `timeout(1)`). Fora do GitHub
   Actions o helper não faz nada, e `%`, CR e LF são escapados.
+- **A anotação não saiu, e isso localiza a falha.** A execução de `eb279e5`
+  falhou no "Automated boot" sem nenhuma anotação do script — só o `::error`
+  genérico do runner. Com isso, os caminhos que se descrevem (checks que
+  falham, falta de firmware, falta do emulador) **não** foram o que aconteceu:
+  sobram o boot que termina sem nenhuma saída serial (linha 620) e um comando
+  qualquer que falha sob `set -e` fora dos blocos tratados.
+- **Rede de segurança no `trap`**: `ci_annotate_failed_exit` lê o status na
+  primeira linha do trap e, quando nenhuma anotação específica saiu, publica
+  `QEMU boot: the run stopped (exit N)` com as últimas 12 linhas do console. A
+  ordem importa — um comando no meio do trap substituiria `$?` pelo próprio, e
+  por isso o status é capturado uma vez, numa função `on_exit`.
+- **Reproduzido** com um `qemu-system-x86_64` falso que não escreve nada:
+  `FAIL: serial log is empty (qemu exit status 0)` e a anotação da rede,
+  `...(exit 1)...<no console>`, com `result: fail (exit status 1)` no resumo.
 - **O que continua desconhecido**: por que o boot falha nos 18 min. O log do
   passo e o artefato ficam em hosts que este ambiente não alcança. A correção é
   o que faz a próxima execução carregar a resposta.

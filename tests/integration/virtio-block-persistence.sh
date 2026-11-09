@@ -107,6 +107,11 @@ QEMU_PID=""
 
 cleanup() {
     local status="$1"
+    # The status arrives as an argument, so `$?` inside here is already gone;
+    # the safety net publishes a readable annotation for a failure that did
+    # not describe itself, and stays silent on a pass.
+    ci_annotate_failed_exit "$status" "VirtIO Block persistence: the run stopped" \
+        "$(tail -n 12 "$WORK/boot1.serial" 2>/dev/null || true)"
     serial_summary "$status"
     if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true

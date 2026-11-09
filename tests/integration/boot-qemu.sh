@@ -114,7 +114,19 @@ preserve_evidence() {
     return 0
 }
 
-trap 'preserve_evidence $?; [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"' EXIT
+# The status of whatever ended the script is read once, in the first line of
+# the trap: a command in the middle of it would replace `$?` with its own.
+# The safety net runs before the evidence is preserved, because it reads the
+# console that the evidence is about to copy.
+on_exit() {
+    local status=$?
+    ci_annotate_failed_exit "$status" "QEMU boot: the run stopped" \
+        "$(tail -n 12 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true)"
+    preserve_evidence "$status"
+    [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"
+    return 0
+}
+trap on_exit EXIT
 
 # Nomes dos checks que falharam, na ordem em que falharam.
 #

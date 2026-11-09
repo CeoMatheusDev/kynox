@@ -59,7 +59,15 @@ preserve_evidence() {
     return 0
 }
 
-trap 'preserve_evidence $?; [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"' EXIT
+on_exit() {
+    local status=$?
+    ci_annotate_failed_exit "$status" "interactive graphics: the run stopped" \
+        "$(tail -n 12 "${SERIAL_LOG:-/dev/null}" 2>/dev/null || true)"
+    preserve_evidence "$status"
+    [[ -n "$WORK_DIRECTORY" ]] && rm -rf "$WORK_DIRECTORY"
+    return 0
+}
+trap on_exit EXIT
 
 for argument in "$@"; do
     case "$argument" in

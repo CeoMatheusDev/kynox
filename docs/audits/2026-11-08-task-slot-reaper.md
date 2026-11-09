@@ -318,6 +318,38 @@ Um detalhe que precisou de teste: `python3 ... <<PY 2>&1 | tee out` dentro de
 `if !` mantém a decisão correta, mesmo sob `set -o pipefail` — o pipeline
 inteiro falha quando o `python3` falha, e o `tee` ainda grava a razão.
 
+### A anotação não apareceu, e isso já diz onde a falha está
+
+A execução de `eb279e5` falhou de novo no passo "Automated boot" e **nenhuma
+anotação do script saiu** — o único `::error` era o genérico do runner. Isso
+delimita o problema: os caminhos que se descrevem (os checks que falham, a
+ausência de firmware, a ausência do emulador) não foram o que aconteceu.
+
+Sobram dois caminhos mudos:
+
+1. `if [[ ! -s "$SERIAL_LOG" ]]` — o boot terminou **sem nenhuma saída
+   serial** e o script sai com 1 na linha 620, antes de qualquer check rodar;
+2. um comando qualquer que falha sob `set -e` fora dos blocos tratados (um
+   `cp`, um `grep`, o monitor em python), que sai pelo mesmo caminho cego.
+
+A rede de segurança fecha os dois: uma função no `trap` lê o status **na
+primeira linha** — um comando no meio do trap substituiria `$?` pelo próprio —
+e, se nenhuma anotação específica saiu, publica ``QEMU boot: the run stopped
+(exit 1)`` com as últimas 12 linhas do console. A condição é exatamente a que
+faltava: a próxima execução diz *qual* dos dois caminhos foi, e com que
+console.
+
+Reproduzido localmente com um `qemu-system-x86_64` falso que não escreve nada e
+sai com 0 — o caminho 1:
+
+| Cenário | Saída |
+|---|---|
+| QEMU falso, sem console, `--timeout=5` | `FAIL: serial log is empty (qemu exit status 0)` e `::error title=QEMU boot: the run stopped (exit 1)::...<no console>` |
+| o mesmo, `summary.txt` | `result: fail (exit status 1)` — o status real, não o do `tail` |
+
+O helper também foi verificado para a ordem: uma anotação específica publicada
+antes silencia a rede, e um status 0 não publica nada.
+
 ### O que continua sem resposta
 
 **Por que o boot falha nos 18 minutos.** O log do passo e o artefato ficam em

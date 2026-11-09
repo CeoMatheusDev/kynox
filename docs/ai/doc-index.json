@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 9227
+      "words": 9399
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -479,7 +479,7 @@
       "kind": "implementation-record",
       "authority": "record",
       "summary": "The task-slot reaper: why a task cannot free the slot it runs on, the intrusive list that lives in the slot, the three conditions that keep a slot out of the pool, the purge of the ready queues, and the worker-count bug the tests found.",
-      "words": 3183,
+      "words": 3471,
       "date": "2026-11-08",
       "declared_status": "implementation record"
     },

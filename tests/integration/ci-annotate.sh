@@ -32,16 +32,31 @@ ci_annotate() {
     printf '::%s title=%s::%s\n' "$level" "$title" "$message"
 }
 
+# The scripts have more than one way to fail — an assertion, an empty console,
+# a refused environment — and each of them leaves through its own `exit`. This
+# flag records that the specific reason was already published, so the safety
+# net of the `EXIT` trap does not publish a second, vaguer annotation.
+CI_ANNOTATED=0
+
 ci_annotate_error() {
     ci_annotate error "$1" "$2"
+    CI_ANNOTATED=1
 }
 
 ci_annotate_warning() {
     ci_annotate warning "$1" "$2"
 }
 
-# True when the run can publish more annotations. GitHub accepts a small
-# number per step, and the callers stay inside it.
-ci_annotations_enabled() {
-    [[ "${GITHUB_ACTIONS:-}" == "true" ]]
+# The safety net: a failure that exits through a path which did not describe
+# itself still reaches the reader, with the tail of the console. It publishes
+# nothing when the reason was already given, and nothing on success.
+ci_annotate_failed_exit() {
+    local status="$1" title="$2" console="${3:-}"
+    [[ "$status" -ne 0 && "$CI_ANNOTATED" -eq 0 ]] || return 0
+    ci_annotate error "$title (exit $status)" \
+        "the run stopped without a specific report
+
+end of the console:
+${console:-<no console>}"
+    CI_ANNOTATED=1
 }
