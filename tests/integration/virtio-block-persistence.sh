@@ -9,6 +9,11 @@
 
 set -euo pipefail
 
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
+
 IMAGE=""
 BOOT_TIMEOUT=120
 EVIDENCE_DIR=""
@@ -56,8 +61,8 @@ if [[ -n "$EVIDENCE_DIR" ]] && ! mkdir -p "$EVIDENCE_DIR"; then
     exit 2
 fi
 [[ -n "$IMAGE" && -f "$IMAGE" ]] || { serial_summary 2; echo "virtio-block-test: --image is required" >&2; exit 2; }
-command -v qemu-system-x86_64 >/dev/null || { serial_summary 2; echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
-command -v timeout >/dev/null || { echo "virtio-block-test: timeout(1) is unavailable" >&2; exit 2; }
+command -v qemu-system-x86_64 >/dev/null || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: emulator missing" "qemu-system-x86_64 is not installed"; echo "virtio-block-test: qemu-system-x86_64 is unavailable" >&2; exit 2; }
+command -v timeout >/dev/null || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: timeout(1) missing" "the suite cannot bound the boot without timeout(1)"; echo "virtio-block-test: timeout(1) is unavailable" >&2; exit 2; }
 
 OVMF_PAIRS=(
     "${OVMF_CODE:-}:${OVMF_VARS:-}"
@@ -92,7 +97,7 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
         break
     done
 fi
-[[ -n "$OVMF_CODE_PATH" ]] || { echo "virtio-block-test: no OVMF CODE/VARS pair found" >&2; exit 2; }
+[[ -n "$OVMF_CODE_PATH" ]] || { serial_summary 2; ci_annotate_error "VirtIO Block persistence: no OVMF firmware" "no OVMF_CODE/OVMF_VARS pair was found"; echo "virtio-block-test: no OVMF CODE/VARS pair found" >&2; exit 2; }
 
 format_of() { [[ "$1" == *.qcow2 ]] && echo qcow2 || echo raw; }
 CODE_FORMAT="$(format_of "$OVMF_CODE_PATH")"
@@ -133,6 +138,16 @@ fail_with_log() {
             | tail -n 80 \
             | sed 's/^/virtio-block-test: serial: /' >&2 || true
         echo "-----------------------------------------------" >&2
+    fi
+    if [[ -n "$EVIDENCE_DIR" ]]; then
+        ci_annotate_error \
+            "VirtIO Block persistence: $stage failed" \
+            "$reason
+
+end of the $stage serial console:
+$(tail -n 12 "$WORK/$stage.serial" 2>/dev/null || echo '<no console>')"
+    else
+        ci_annotate_error "VirtIO Block persistence: $stage failed" "$reason"
     fi
     if [[ -f "$WORK/$stage.qemu.err" && -s "$WORK/$stage.qemu.err" ]]; then
         sed 's/^/virtio-block-test: qemu: /' "$WORK/$stage.qemu.err" >&2

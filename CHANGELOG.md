@@ -47,6 +47,17 @@ Rules used for this file:
   status real (um harness com `exit 7` escreve `exit status 7`); o array de
   checks vazio não quebra sob `set -u`; `git status docs/validation/logs/` fica
   vazio depois de uma execução.
+- **A anotação do CI passa a carregar o diagnóstico.** A execução seguinte
+  confirmou a evidência pelo número — o artefato foi de **807** para **86 240
+  bytes** e o passo "Runtime evidence" passou — mas o log do passo continua
+  inalcançável daqui: ele redireciona para um host cujo TLS é recusado. A
+  anotação é servida pela API e chegou, apontando a linha **70 257** com a
+  mensagem genérica "exit code 1"; um número de linha sem o texto não é
+  diagnóstico. `tests/integration/ci-annotate.sh` escreve o comando de fluxo
+  `::error title=...::mensagem` que vira anotação: os checks que falharam e as
+  últimas 12 linhas do console nos três scripts, mais uma anotação para cada
+  recusa de ambiente (sem OVMF, sem QEMU, sem `timeout(1)`). Fora do GitHub
+  Actions o helper não faz nada, e `%`, CR e LF são escapados.
 - **O que continua desconhecido**: por que o boot falha nos 18 min. O log do
   passo e o artefato ficam em hosts que este ambiente não alcança. A correção é
   o que faz a próxima execução carregar a resposta.

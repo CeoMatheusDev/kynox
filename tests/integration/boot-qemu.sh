@@ -24,6 +24,11 @@
 
 set -euo pipefail
 
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
+
 IMAGE=""
 TIMEOUT=60
 VERIFY_KVDI_LOG=""
@@ -388,6 +393,9 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
     done
     echo "qemu-boot-test: the roots searched were: ${OVMF_SEARCH_ROOTS[*]}" >&2
     echo "qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware" >&2
+    ci_annotate_error \
+        "QEMU boot: no OVMF firmware" \
+        "the boot suite did not run: no OVMF_CODE/OVMF_VARS pair was found under ${OVMF_SEARCH_ROOTS[*]}"
     exit 2
 fi
 
@@ -397,6 +405,9 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
     echo "qemu-boot-test: qemu-system-x86_64 is not installed" >&2
     echo "qemu-boot-test: firmware found at $OVMF_CODE_PATH" >&2
     echo "qemu-boot-test: install QEMU (qemu-system-x86_64) and run again" >&2
+    ci_annotate_error \
+        "QEMU boot: emulator missing" \
+        "qemu-system-x86_64 is not installed; the firmware was found at $OVMF_CODE_PATH"
     exit 3
 fi
 
@@ -925,6 +936,18 @@ if [[ $FAILURES -ne 0 ]]; then
     else
         echo "qemu-boot-test: the console has no PCI, VirtIO or KVDI probe lines" >&2
     fi
+    # The annotation is the channel that survives a network that cannot read
+    # the step log. It carries the failed checks and the tail of the console,
+    # which is what a reader needs to see the diagnosis without the artifact.
+    ci_annotation="$(printf '%s\n' "${FAILED_CHECKS[@]}")"
+    console_tail="$(tail -n 12 "$SERIAL_LOG" 2>/dev/null || true)"
+    ci_annotate_error \
+        "QEMU boot: $FAILURES check(s) failed" \
+        "failed checks:
+$ci_annotation
+
+end of the serial console:
+${console_tail:-<no console>}"
     exit 1
 fi
 

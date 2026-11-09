@@ -62,6 +62,15 @@ console at all — the case in which it matters most. On failure the last 20
 lines of the console are also repeated in the step log, because the annotation
 that the CI publishes carries only the tail of it.
 
+Outside GitHub Actions the scripts print and exit as always. Inside it, each
+failure also writes an `::error title=...::message` flow command, which the
+runner turns into an **annotation** — the failed checks plus the last twelve
+lines of the console, and one annotation for each environment refusal (no
+firmware, no emulator, no `timeout(1)`). The annotation is served by the API of
+the repository, and unlike the step log it does not redirect to a storage host:
+it is the one channel that survives a restricted network. The format lives in
+`tests/integration/ci-annotate.sh`.
+
 The files of a run are ignored by Git (`.gitignore`): they are evidence of one
 run, not of the tree. `docs/validation/logs/` keeps the records a human wrote
 into it.

@@ -72,7 +72,7 @@
       "kind": "changelog",
       "authority": "current",
       "summary": "What changed, dated, with the command and the result for every claim; the newest entry describes the current tree.",
-      "words": 9090
+      "words": 9227
     },
     {
       "path": "KYNOX_NATIVE.md",
@@ -479,7 +479,7 @@
       "kind": "implementation-record",
       "authority": "record",
       "summary": "The task-slot reaper: why a task cannot free the slot it runs on, the intrusive list that lives in the slot, the three conditions that keep a slot out of the pool, the purge of the ready queues, and the worker-count bug the tests found.",
-      "words": 2823,
+      "words": 3183,
       "date": "2026-11-08",
       "declared_status": "implementation record"
     },
@@ -679,7 +679,7 @@
       "kind": "validation-procedure",
       "authority": "reference",
       "summary": "How a QEMU run is performed and recorded, and the table of the attempts that failed in this environment.",
-      "words": 1339
+      "words": 1430
     },
     {
       "path": "llms.txt",

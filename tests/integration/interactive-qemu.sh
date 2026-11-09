@@ -20,6 +20,11 @@
 
 set -euo pipefail
 
+# The failure is published as an annotation as well: the console of a step is
+# not reachable from every environment, the annotations of a run are.
+# shellcheck source=tests/integration/ci-annotate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-annotate.sh"
+
 IMAGE=""
 TIMEOUT=60
 EVIDENCE_DIR=""
@@ -191,6 +196,9 @@ if [[ -z "$OVMF_CODE_PATH" ]]; then
     done
     echo "qemu-boot-test: the roots searched were: ${OVMF_SEARCH_ROOTS[*]}" >&2
     echo "qemu-boot-test: set OVMF_CODE and OVMF_VARS to point at the firmware" >&2
+    ci_annotate_error \
+        "interactive graphics: no OVMF firmware" \
+        "the suite did not run: no OVMF_CODE/OVMF_VARS pair was found under ${OVMF_SEARCH_ROOTS[*]}"
     exit 2
 fi
 
@@ -226,7 +234,8 @@ trap 'cleanup_and_preserve $?' EXIT
 
 # The script injects I during boot, then RIGHT only after the persistent
 # loop marker. This distinguishes the permanent loop from the boot pump.
-if ! python3 - "$SERIAL_LOG" "$MONITOR_SOCKET" "$QEMU_PID" "$TIMEOUT" "$WORK_DIRECTORY" "$EDGES" "$STRESS" "$BOUNDS" "$BURST" "$BURST_COUNT" <<'PY'
+MONITOR_LOG="$WORK_DIRECTORY/monitor.out"
+if ! python3 - "$SERIAL_LOG" "$MONITOR_SOCKET" "$QEMU_PID" "$TIMEOUT" "$WORK_DIRECTORY" "$EDGES" "$STRESS" "$BOUNDS" "$BURST" "$BURST_COUNT" <<'PY' 2>&1 | tee "$MONITOR_LOG"
 import os
 import re
 import socket
@@ -618,6 +627,15 @@ PY
 then
     echo "----- serial console -----"
     cat "$SERIAL_LOG"
+    # The reason the interaction stopped is in the last line that the python
+    # monitor printed, and that line is what the annotation carries.
+    monitor_reason="$(tail -n 1 "$MONITOR_LOG" 2>/dev/null || true)"
+    ci_annotate_error \
+        "interactive graphics: the interaction did not complete" \
+        "${monitor_reason:-the monitor printed no reason}
+
+end of the serial console:
+$(tail -n 12 "$SERIAL_LOG" 2>/dev/null || true)"
     exit 1
 fi
 echo "qemu-interactive-test: all checks passed"

@@ -280,6 +280,44 @@ o job tem de dizê-lo em vez de publicar um diretório que parece um passe.
 | o trap com uma saída de status 7 (harness) | `result: fail (exit status 7)` — o status real, não 0 |
 | array de checks vazio sob `set -u` | nenhuma referência inválida; `checks_failed: 0` |
 
+### A evidência chegou, mas o log continua inalcançável
+
+A execução seguinte (`b8ae418`) confirmou a correção pelo número: o artefato
+`qemu-logs` foi de **807 bytes** para **86 240 bytes** e o passo "Runtime
+evidence", antes um upload vazio, passou. O passo "Automated boot" falhou de
+novo.
+
+O log do passo, porém, não é legível deste ambiente: `.../jobs/<id>/logs`
+redireciona para `productionresultssa*.blob.core.windows.net`, e a conexão TLS é
+recusada. A **anotação** do job é servida pela própria API e chegou: uma falha,
+apontando a linha **70 257** do log, com a mensagem genérica "Process completed
+with exit code 1".
+
+Um número de linha sem o texto não é diagnóstico. Mas o fato de a anotação ser
+alcançável enquanto o log não é aponta a correção certa, e ela não depende de
+nenhum host externo.
+
+### A falha passa a se publicar como anotação
+
+O GitHub Actions lê comandos de fluxo escritos no log do passo:
+`::error title=...::mensagem`. O comando vira uma anotação, que é servida pela
+API do repositório — o mesmo canal que já funciona.
+
+`tests/integration/ci-annotate.sh` é o único lugar que escreve esse formato.
+Escapa `%`, CR e LF (os três caracteres que encerrariam o comando) e não faz
+nada quando `GITHUB_ACTIONS` não é `true`, então quem roda o script à mão vê a
+saída de sempre. Os três scripts o carregam e o usam:
+
+| Script | Anotação de falha | Anotações de recusa |
+|---|---|---|
+| `boot-qemu.sh` | os checks que falharam + as últimas 12 linhas do console | sem OVMF, sem `qemu-system-x86_64` |
+| `interactive-qemu.sh` | a razão do monitor (via `tee` em `monitor.out`) + 12 linhas do console | sem OVMF |
+| `virtio-block-persistence.sh` | o estágio e a razão + 12 linhas do console do estágio | sem `qemu-system-x86_64`, sem `timeout(1)`, sem OVMF |
+
+Um detalhe que precisou de teste: `python3 ... <<PY 2>&1 | tee out` dentro de
+`if !` mantém a decisão correta, mesmo sob `set -o pipefail` — o pipeline
+inteiro falha quando o `python3` falha, e o `tee` ainda grava a razão.
+
 ### O que continua sem resposta
 
 **Por que o boot falha nos 18 minutos.** O log do passo e o artefato ficam em
@@ -305,3 +343,5 @@ pessoa com o navegador. Enquanto ninguém abrir esse artefato, a causa do
 - `build.zig`: a opção `-Devidence-dir`, com o default que o workflow publica.
 - `.github/workflows/ci.yml`: o artefato deixa de poder estar vazio
   (`if-no-files-found: error`).
+- `tests/integration/ci-annotate.sh`: o formato de anotação do CI em um só
+  lugar, com o escape de `%`, CR e LF.
